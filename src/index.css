@@ -1,0 +1,270 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-gold: #D4A843;
+  --color-gold-dim: #9A7A30;
+  --color-bull: #00E676;
+  --color-bear: #FF1744;
+  --color-bull-dim: #00C853;
+  --color-bear-dim: #D50000;
+  --font-mono: "JetBrains Mono", "SF Mono", "Fira Code", ui-monospace, monospace;
+}
+
+:root {
+  --sidebar-width: 16rem;
+  --sidebar-width-icon: 3rem;
+
+  --primary: #D4A843;
+  --primary-foreground: #0A0C10;
+  --sidebar-primary: #D4A843;
+  --sidebar-primary-foreground: #0A0C10;
+
+  --success: #00E676;
+  --success-foreground: #0A0C10;
+  --warning: #FFB300;
+  --warning-foreground: #0A0C10;
+  --info: #29B6F6;
+  --info-foreground: #0A0C10;
+
+  --chart-1: #D4A843;
+  --chart-2: #00E676;
+  --chart-3: #FF1744;
+  --chart-4: #29B6F6;
+  --chart-5: #FFB300;
+
+  --radius: 0.5rem;
+  --background: #0A0C10;
+  --foreground: #E8EAED;
+  --card: #12151C;
+  --card-foreground: #E8EAED;
+  --popover: #12151C;
+  --popover-foreground: #E8EAED;
+  --secondary: #1A1E28;
+  --secondary-foreground: #C0C4CC;
+  --muted: #1A1E28;
+  --muted-foreground: #6B7280;
+  --accent: #1A1E28;
+  --accent-foreground: #E8EAED;
+  --destructive: #FF1744;
+  --destructive-foreground: #FFFFFF;
+  --border: #1E2330;
+  --input: #1E2330;
+  --ring: #D4A843;
+  --sidebar: #0D0F14;
+  --sidebar-foreground: #E8EAED;
+  --sidebar-accent: #1A1E28;
+  --sidebar-accent-foreground: #E8EAED;
+  --sidebar-border: #1E2330;
+  --sidebar-ring: #D4A843;
+}
+
+/* Force dark mode for trading terminal */
+.dark {
+  --primary: #D4A843;
+  --primary-foreground: #0A0C10;
+  --sidebar-primary: #D4A843;
+  --sidebar-primary-foreground: #0A0C10;
+
+  --success: #00E676;
+  --success-foreground: #0A0C10;
+  --warning: #FFB300;
+  --warning-foreground: #0A0C10;
+  --info: #29B6F6;
+  --info-foreground: #0A0C10;
+
+  --chart-1: #D4A843;
+  --chart-2: #00E676;
+  --chart-3: #FF1744;
+  --chart-4: #29B6F6;
+  --chart-5: #FFB300;
+
+  --background: #0A0C10;
+  --foreground: #E8EAED;
+  --card: #12151C;
+  --card-foreground: #E8EAED;
+  --popover: #12151C;
+  --popover-foreground: #E8EAED;
+  --secondary: #1A1E28;
+  --secondary-foreground: #C0C4CC;
+  --muted: #1A1E28;
+  --muted-foreground: #6B7280;
+  --accent: #1A1E28;
+  --accent-foreground: #E8EAED;
+  --destructive: #FF1744;
+  --destructive-foreground: #FFFFFF;
+  --border: #1E2330;
+  --input: #1E2330;
+  --ring: #D4A843;
+  --sidebar: #0D0F14;
+  --sidebar-foreground: #E8EAED;
+  --sidebar-accent: #1A1E28;
+  --sidebar-accent-foreground: #E8EAED;
+  --sidebar-border: #1E2330;
+  --sidebar-ring: #D4A843;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "tnum" 1;
+  }
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  [type="button"]:not(:disabled),
+  [type="submit"]:not(:disabled),
+  [type="reset"]:not(:disabled),
+  a[href],
+  select:not(:disabled),
+  input[type="checkbox"]:not(:disabled),
+  input[type="radio"]:not(:disabled) {
+    @apply cursor-pointer;
+  }
+}
+
+@layer components {
+  .container {
+    width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .flex {
+    min-height: 0;
+    min-width: 0;
+  }
+
+  @media (min-width: 640px) {
+    .container {
+      padding-left: 1.5rem;
+      padding-right: 1.5rem;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .container {
+      padding-left: 2rem;
+      padding-right: 2rem;
+      max-width: 1440px;
+    }
+  }
+}
+
+/* Tabular numbers for prices */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Pulse animation for live indicator */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.animate-pulse-dot {
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
+/* Price flash animations */
+@keyframes flash-green {
+  0% { background-color: rgba(0, 230, 118, 0.15); }
+  100% { background-color: transparent; }
+}
+@keyframes flash-red {
+  0% { background-color: rgba(255, 23, 68, 0.15); }
+  100% { background-color: transparent; }
+}
+.flash-green { animation: flash-green 0.6s ease-out; }
+.flash-red { animation: flash-red 0.6s ease-out; }
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0A0C10;
+}
+::-webkit-scrollbar-thumb {
+  background: #1E2330;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #2A3040;
+}
+
+/* PWA iOS safe areas */
+.safe-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Standalone PWA: extra top padding for status bar */
+@media all and (display-mode: standalone) {
+  .safe-top {
+    padding-top: max(env(safe-area-inset-top, 0px), 8px);
+  }
+}
+
+/* Prevent iOS rubber-band overscroll showing white */
+html, body {
+  overscroll-behavior: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Touch-friendly tap targets on mobile */
+@media (max-width: 640px) {
+  button, a, [role="button"] {
+    min-height: 38px;
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "name": "XAU Scalper — Gold Trading Dashboard",
+  "short_name": "XAU Scalper",
+  "description": "Real-time gold scalping dashboard with multi-timeframe analysis, trading ideas, and performance tracking.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0A0C10",
+  "theme_color": "#D4A843",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
