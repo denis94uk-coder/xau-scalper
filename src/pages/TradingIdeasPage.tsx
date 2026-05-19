@@ -22,19 +22,6 @@ const SOURCE_ICONS: Record<string, { icon: typeof Bot; label: string; color: str
 function JourneyTimeline({ log }: { log: Array<{ event: string; price: number; timestamp: number }> }) {
   if (!log || log.length === 0) return <span className="text-xs text-muted-foreground">No journey data</span>;
 
-  const steps = [
-    { key: "CREATED", label: "Created" },
-    { key: "SIGNAL_GENERATED", label: "Signal" },
-    { key: "ENTRY_TRIGGERED", label: "Entry" },
-    { key: "TP1_HIT", label: "TP1" },
-    { key: "TP2_HIT", label: "TP2" },
-    { key: "SL_HIT", label: "SL" },
-    { key: "STOPPED", label: "SL" },
-    { key: "EXPIRED", label: "Expired" },
-  ];
-
-  const eventSet = new Set(log.map((e) => e.event));
-
   return (
     <div className="flex items-center gap-1 flex-wrap">
       {log.map((entry, i) => {

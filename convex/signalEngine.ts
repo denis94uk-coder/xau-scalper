@@ -3,7 +3,7 @@
  * Runs as Convex cron actions — fetches candles, runs analysis, generates signals.
  * Also monitors active ideas for SL/TP hits every minute.
  */
-import { action, internalAction, internalMutation } from "./_generated/server";
+import { internalAction, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 

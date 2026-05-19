@@ -1,7 +1,7 @@
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { useState } from "react";
-import { ScrollText, Bot, ArrowUpRight, ArrowDownRight, Activity, AlertTriangle } from "lucide-react";
+import { ScrollText, Bot, ArrowUpRight, Activity, AlertTriangle } from "lucide-react";
 
 const EVENT_CONFIG: Record<string, { color: string; bg: string; icon: typeof Bot }> = {
   SIGNAL_GENERATED: { color: "text-cyan-400", bg: "bg-cyan-500/10", icon: Bot },
