@@ -76,6 +76,10 @@ export default defineSchema({
         v.literal("engine")
       )
     ),
+    // Signal quality grade (A/B/C)
+    grade: v.optional(v.string()),
+    // Trailing stop level (updated dynamically)
+    trailingSL: v.optional(v.number()),
     // Journey tracking
     journeyLog: v.optional(
       v.array(
@@ -103,7 +107,8 @@ export default defineSchema({
       v.literal("SL_HIT"),
       v.literal("EXPIRED"),
       v.literal("ENGINE_RUN"),
-      v.literal("MONITOR_CHECK")
+      v.literal("MONITOR_CHECK"),
+      v.literal("TRAIL_UPDATE")
     ),
     ideaId: v.optional(v.id("tradingIdeas")),
     direction: v.optional(v.union(v.literal("LONG"), v.literal("SHORT"))),
@@ -139,6 +144,13 @@ export default defineSchema({
   })
     .index("by_status", ["status"])
     .index("by_opened", ["openedAt"]),
+
+  // ─── Settings (key-value store for intel engines) ───
+  settings: defineTable({
+    key: v.string(),
+    value: v.string(), // JSON stringified
+    updatedAt: v.number(),
+  }).index("by_key", ["key"]),
 
   // User alerts
   alerts: defineTable({

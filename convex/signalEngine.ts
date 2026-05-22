@@ -1,16 +1,16 @@
 /**
  * Server-side signal engine for XAU Scalper.
+ * Full capabilities: TA analysis with grading, partial TP, ATR trailing stops.
  * Runs as Convex cron actions — fetches candles, runs analysis, generates signals.
  * Also monitors active ideas for SL/TP hits every minute.
  */
-import { internalAction, internalMutation } from "./_generated/server";
+import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 
 // ─── Constants ───
 const BINANCE_API = "https://data-api.binance.vision/api/v3";
 const SYMBOL = "PAXGUSDT";
-const MIN_CONFIDENCE = 45;
 const SIGNAL_COOLDOWN_MS = 10 * 60 * 1000; // 10 min between signals in same direction
 
 // ─── Types ───
@@ -23,7 +23,7 @@ interface Candle {
   volume: number;
 }
 
-// ─── Indicator calculations (server-side copies) ───
+// ─── Indicator calculations ───
 
 function calcEMA(data: number[], period: number): number[] {
   const ema: number[] = [];
@@ -117,8 +117,34 @@ function calcStochastic(candles: Candle[], kPeriod = 14) {
   return { k };
 }
 
+function calcBollingerBands(closes: number[], period = 20, stdDevMult = 2) {
+  const upper: number[] = [];
+  const lower: number[] = [];
+  const middle: number[] = [];
+  for (let i = period - 1; i < closes.length; i++) {
+    let sum = 0;
+    for (let j = i - period + 1; j <= i; j++) sum += closes[j];
+    const mean = sum / period;
+    let sqSum = 0;
+    for (let j = i - period + 1; j <= i; j++) sqSum += (closes[j] - mean) ** 2;
+    const stdDev = Math.sqrt(sqSum / period);
+    middle[i] = mean;
+    upper[i] = mean + stdDev * stdDevMult;
+    lower[i] = mean - stdDev * stdDevMult;
+  }
+  return { upper, lower, middle };
+}
+
 function r2(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+// ─── Signal Grading ───
+function gradeSignal(_confidence: number, extremeIndicators: number, totalStrength: number): "A" | "B" | "C" | "NO_TRADE" {
+  if (extremeIndicators >= 3 && totalStrength >= 70) return "A";
+  if (extremeIndicators >= 2 && totalStrength >= 60) return "B";
+  if (totalStrength >= 50) return "C";
+  return "NO_TRADE";
 }
 
 // ─── Full analysis function ───
@@ -132,7 +158,9 @@ function analyzeCandles(candles: Candle[]): {
   tp1: number;
   tp2: number;
   reason: string;
+  grade: "A" | "B" | "C" | "NO_TRADE";
   indicators: Record<string, number | undefined>;
+  atr: number;
 } | null {
   if (candles.length < 60) return null;
 
@@ -147,10 +175,12 @@ function analyzeCandles(candles: Candle[]): {
   const ema50 = calcEMA(closes, 50);
   const atr = calcATR(candles, 14);
   const stoch = calcStochastic(candles);
+  const bb = calcBollingerBands(closes);
 
   const currentATR = atr[last] ?? price * 0.002;
 
   let bullScore = 0, bearScore = 0;
+  let extremeBull = 0, extremeBear = 0;
   const reasons: string[] = [];
 
   // EMA alignment
@@ -175,8 +205,8 @@ function analyzeCandles(candles: Candle[]): {
   // RSI
   const lastRSI = rsi[last];
   if (lastRSI !== undefined) {
-    if (lastRSI < 30) { bullScore += 20; reasons.push(`RSI oversold ${lastRSI.toFixed(0)}`); }
-    else if (lastRSI > 70) { bearScore += 20; reasons.push(`RSI overbought ${lastRSI.toFixed(0)}`); }
+    if (lastRSI < 30) { bullScore += 20; extremeBull++; reasons.push(`RSI oversold ${lastRSI.toFixed(0)}`); }
+    else if (lastRSI > 70) { bearScore += 20; extremeBear++; reasons.push(`RSI overbought ${lastRSI.toFixed(0)}`); }
     else if (lastRSI > 50) bullScore += 5;
     else bearScore += 5;
   }
@@ -184,9 +214,9 @@ function analyzeCandles(candles: Candle[]): {
   // MACD
   if (histogram[last] !== undefined && histogram[last - 1] !== undefined) {
     if (histogram[last] > 0 && histogram[last - 1] <= 0) {
-      bullScore += 20; reasons.push("MACD bull cross");
+      bullScore += 20; extremeBull++; reasons.push("MACD bull cross");
     } else if (histogram[last] < 0 && histogram[last - 1] >= 0) {
-      bearScore += 20; reasons.push("MACD bear cross");
+      bearScore += 20; extremeBear++; reasons.push("MACD bear cross");
     } else if (histogram[last] > 0) {
       bullScore += 8;
     } else {
@@ -197,8 +227,23 @@ function analyzeCandles(candles: Candle[]): {
   // Stochastic
   const lastK = stoch.k[last];
   if (lastK !== undefined) {
-    if (lastK < 20) { bullScore += 15; reasons.push(`Stoch oversold`); }
-    else if (lastK > 80) { bearScore += 15; reasons.push(`Stoch overbought`); }
+    if (lastK < 20) { bullScore += 15; extremeBull++; reasons.push("Stoch oversold"); }
+    else if (lastK > 80) { bearScore += 15; extremeBear++; reasons.push("Stoch overbought"); }
+  }
+
+  // Bollinger Bands
+  if (bb.upper[last] !== undefined && bb.lower[last] !== undefined) {
+    const bbWidth = bb.upper[last] - bb.lower[last];
+    const pricePos = (price - bb.lower[last]) / bbWidth; // 0 = lower band, 1 = upper band
+    if (pricePos <= 0.05) {
+      bullScore += 18; extremeBull++; reasons.push("BB lower band touch");
+    } else if (pricePos >= 0.95) {
+      bearScore += 18; extremeBear++; reasons.push("BB upper band touch");
+    } else if (pricePos < 0.3) {
+      bullScore += 8; reasons.push("BB lower zone");
+    } else if (pricePos > 0.7) {
+      bearScore += 8; reasons.push("BB upper zone");
+    }
   }
 
   const total = bullScore + bearScore;
@@ -211,21 +256,28 @@ function analyzeCandles(candles: Candle[]): {
   if (bias === "NEUTRAL") return null;
 
   const direction = bias === "BULLISH" ? "LONG" as const : "SHORT" as const;
-  const confidence = Math.min(90, Math.round(Math.max(bullScore, bearScore) * 1.2));
+  const confidence = Math.min(95, Math.round(Math.max(bullScore, bearScore) * 1.2));
 
-  if (confidence < MIN_CONFIDENCE) return null;
+  // Grade the signal
+  const extremeCount = direction === "LONG" ? extremeBull : extremeBear;
+  const strength = Math.max(bullScore, bearScore);
+  const grade = gradeSignal(confidence, extremeCount, strength);
 
+  // Only generate tradeable signals (A or B grade)
+  if (grade === "NO_TRADE") return null;
+
+  // TP/SL with partial TP system: TP1 @ 1.2R, TP2 @ 2.5R
   let sl: number, tp1: number, tp2: number;
   if (direction === "LONG") {
     sl = r2(price - currentATR * 1.5);
     const risk = price - sl;
-    tp1 = r2(price + risk * 1.5);
-    tp2 = r2(price + risk * 2.5);
+    tp1 = r2(price + risk * 1.2);  // Partial TP at 1.2R
+    tp2 = r2(price + risk * 2.5);  // Full TP at 2.5R
   } else {
     sl = r2(price + currentATR * 1.5);
     const risk = sl - price;
-    tp1 = r2(price - risk * 1.5);
-    tp2 = r2(price - risk * 2.5);
+    tp1 = r2(price - risk * 1.2);  // Partial TP at 1.2R
+    tp2 = r2(price - risk * 2.5);  // Full TP at 2.5R
   }
 
   return {
@@ -238,6 +290,8 @@ function analyzeCandles(candles: Candle[]): {
     tp1,
     tp2,
     reason: reasons.join(" · "),
+    grade,
+    atr: r2(currentATR),
     indicators: {
       rsi: lastRSI ? r2(lastRSI) : undefined,
       stochK: lastK ? r2(lastK) : undefined,
@@ -245,6 +299,8 @@ function analyzeCandles(candles: Candle[]): {
       ema9: ema9[last] ? r2(ema9[last]) : undefined,
       ema21: ema21[last] ? r2(ema21[last]) : undefined,
       atr: currentATR ? r2(currentATR) : undefined,
+      bbUpper: bb.upper[last] ? r2(bb.upper[last]) : undefined,
+      bbLower: bb.lower[last] ? r2(bb.lower[last]) : undefined,
     },
   };
 }
@@ -284,7 +340,8 @@ export const _logJournal = internalMutation({
       v.literal("SL_HIT"),
       v.literal("EXPIRED"),
       v.literal("ENGINE_RUN"),
-      v.literal("MONITOR_CHECK")
+      v.literal("MONITOR_CHECK"),
+      v.literal("TRAIL_UPDATE")
     ),
     ideaId: v.optional(v.id("tradingIdeas")),
     direction: v.optional(v.union(v.literal("LONG"), v.literal("SHORT"))),
@@ -314,6 +371,7 @@ export const _createSignal = internalMutation({
     bias: v.string(),
     biasStrength: v.number(),
     spotPrice: v.number(),
+    grade: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     // Check cooldown — don't create signal if same direction within cooldown
@@ -335,6 +393,7 @@ export const _createSignal = internalMutation({
       ...args,
       source: "engine",
       status: "ACTIVE",
+      grade: args.grade,
       createdAt: now,
       journeyLog: [
         {
@@ -353,7 +412,7 @@ export const _createSignal = internalMutation({
   },
 });
 
-// ─── Internal mutation: update idea with journey ───
+// ─── Internal mutation: update idea with journey (full close) ───
 export const _updateIdeaJourney = internalMutation({
   args: {
     id: v.id("tradingIdeas"),
@@ -401,6 +460,7 @@ export const _addJourneyEvent = internalMutation({
     event: v.string(),
     price: v.number(),
     pnlPoints: v.optional(v.number()),
+    trailingSL: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const idea = await ctx.db.get(args.id);
@@ -415,6 +475,7 @@ export const _addJourneyEvent = internalMutation({
 
     const patch: any = { journeyLog, status: args.status };
     if (args.pnlPoints !== undefined) patch.pnlPoints = args.pnlPoints;
+    if (args.trailingSL !== undefined) patch.trailingSL = args.trailingSL;
     if (args.status !== "ACTIVE" && args.status !== "TP1_HIT") {
       patch.resolvedAt = Date.now();
     }
@@ -423,8 +484,32 @@ export const _addJourneyEvent = internalMutation({
   },
 });
 
+// ─── Internal mutation: update trailing stop level ───
+export const _updateTrailingSL = internalMutation({
+  args: {
+    id: v.id("tradingIdeas"),
+    trailingSL: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const idea = await ctx.db.get(args.id);
+    if (!idea) return;
+
+    const journeyLog = idea.journeyLog ?? [];
+    journeyLog.push({
+      event: "TRAIL_SL_UPDATE",
+      price: args.trailingSL,
+      timestamp: Date.now(),
+    });
+
+    await ctx.db.patch(args.id, {
+      trailingSL: args.trailingSL,
+      journeyLog,
+    });
+  },
+});
+
 // ═══════════════════════════════════════
-// CRON ACTION: Generate signals (every 15 min)
+// CRON ACTION: Generate signals (every 5 min)
 // ═══════════════════════════════════════
 export const generateSignals = internalAction({
   args: {},
@@ -438,59 +523,71 @@ export const generateSignals = internalAction({
     }
 
     try {
-      // Fetch 15-min candles for primary analysis
-      const candles15m = await fetchCandles("15m", 200);
+      // Fetch candles for analysis
       const candles5m = await fetchCandles("5m", 200);
-      const price = candles15m[candles15m.length - 1]?.close;
+      const candles15m = await fetchCandles("15m", 200);
+      const price = candles5m[candles5m.length - 1]?.close;
 
       if (!price) return;
 
-      // Analyze on 15-minute timeframe
-      const analysis = analyzeCandles(candles15m);
-
-      // Cross-confirm with 5-minute
+      // Primary analysis on 5-minute (scalper timeframe)
       const analysis5m = analyzeCandles(candles5m);
+
+      // Cross-confirm with 15-minute
+      const analysis15m = analyzeCandles(candles15m);
 
       // Log engine run
       await ctx.runMutation(internal.signalEngine._logJournal, {
         eventType: "ENGINE_RUN",
         price,
-        details: `15m: ${analysis?.bias ?? "N/A"} (${analysis?.confidence ?? 0}%) | 5m: ${analysis5m?.bias ?? "N/A"} (${analysis5m?.confidence ?? 0}%)`,
+        details: `5m: ${analysis5m?.bias ?? "N/A"} ${analysis5m?.grade ?? "-"} (${analysis5m?.confidence ?? 0}%) | 15m: ${analysis15m?.bias ?? "N/A"} ${analysis15m?.grade ?? "-"} (${analysis15m?.confidence ?? 0}%)`,
         metadata: JSON.stringify({
-          analysis15m: analysis ? { bias: analysis.bias, confidence: analysis.confidence, indicators: analysis.indicators } : null,
-          analysis5m: analysis5m ? { bias: analysis5m.bias, confidence: analysis5m.confidence } : null,
+          analysis5m: analysis5m ? { bias: analysis5m.bias, confidence: analysis5m.confidence, grade: analysis5m.grade, indicators: analysis5m.indicators } : null,
+          analysis15m: analysis15m ? { bias: analysis15m.bias, confidence: analysis15m.confidence, grade: analysis15m.grade } : null,
         }),
       });
 
-      // Only generate if both timeframes agree
-      if (!analysis || !analysis5m) return;
-      if (analysis.direction !== analysis5m.direction) return;
+      // Need at least the 5m signal
+      if (!analysis5m) return;
+
+      // Multi-TF confluence: both must agree on direction
+      if (analysis15m && analysis15m.direction !== analysis5m.direction) return;
+
+      // Only trade A or B grade signals
+      if (analysis5m.grade !== "A" && analysis5m.grade !== "B") return;
 
       // Boost confidence if multi-TF confluence
-      const finalConfidence = Math.min(95, analysis.confidence + 10);
+      const finalConfidence = analysis15m
+        ? Math.min(95, analysis5m.confidence + 10)
+        : analysis5m.confidence;
+
+      // Upgrade grade if 15m confirms
+      const finalGrade = analysis15m && analysis5m.grade === "B" && analysis15m.grade === "A"
+        ? "A" : analysis5m.grade;
 
       // Create the signal
       const ideaId = await ctx.runMutation(internal.signalEngine._createSignal, {
-        direction: analysis.direction,
-        entryPrice: analysis.entryPrice,
-        stopLoss: analysis.stopLoss,
-        tp1: analysis.tp1,
-        tp2: analysis.tp2,
+        direction: analysis5m.direction,
+        entryPrice: analysis5m.entryPrice,
+        stopLoss: analysis5m.stopLoss,
+        tp1: analysis5m.tp1,
+        tp2: analysis5m.tp2,
         confidence: finalConfidence,
-        reason: `[ENGINE] ${analysis.reason}`,
-        timeframe: "15m+5m",
-        bias: analysis.bias,
-        biasStrength: analysis.biasStrength,
+        reason: `[ENGINE] ${analysis5m.reason}${analysis15m ? " · 15m confirms" : ""}`,
+        timeframe: analysis15m ? "5m+15m" : "5m",
+        bias: analysis5m.bias,
+        biasStrength: analysis5m.biasStrength,
         spotPrice: price,
+        grade: finalGrade,
       });
 
       if (ideaId) {
         await ctx.runMutation(internal.signalEngine._logJournal, {
           eventType: "SIGNAL_GENERATED",
           ideaId,
-          direction: analysis.direction,
-          price: analysis.entryPrice,
-          details: `${analysis.direction} @ ${analysis.entryPrice} | SL: ${analysis.stopLoss} | TP1: ${analysis.tp1} | TP2: ${analysis.tp2} | Confidence: ${finalConfidence}%`,
+          direction: analysis5m.direction,
+          price: analysis5m.entryPrice,
+          details: `${finalGrade} ${analysis5m.direction} @ ${analysis5m.entryPrice} | SL: ${analysis5m.stopLoss} | TP1: ${analysis5m.tp1} | TP2: ${analysis5m.tp2} | Conf: ${finalConfidence}% | ATR: ${analysis5m.atr}`,
         });
       }
     } catch (e: any) {
@@ -501,6 +598,7 @@ export const generateSignals = internalAction({
 
 // ═══════════════════════════════════════
 // CRON ACTION: Monitor active ideas (every 1 min)
+// Full partial TP + ATR trailing stop logic
 // ═══════════════════════════════════════
 export const monitorIdeas = internalAction({
   args: {},
@@ -516,7 +614,17 @@ export const monitorIdeas = internalAction({
     try {
       const price = await fetchCurrentPrice();
 
-      // Get all active ideas (we query from a helper)
+      // Also fetch current ATR for trailing stops
+      let currentATR = 0;
+      try {
+        const candles5m = await fetchCandles("5m", 30);
+        const atrArr = calcATR(candles5m, 14);
+        currentATR = atrArr[atrArr.length - 1] ?? 0;
+      } catch {
+        // If ATR fetch fails, we'll skip trailing updates
+      }
+
+      // Get all active ideas
       const activeIdeas = await ctx.runQuery(
         internal.signalEngine._getActiveIdeas,
         {}
@@ -527,80 +635,141 @@ export const monitorIdeas = internalAction({
       let hits = 0;
 
       for (const idea of activeIdeas) {
-        let event: string | null = null;
-        let newStatus: "TP1_HIT" | "TP2_HIT" | "STOPPED" | null = null;
-        let pnl = 0;
-        let exitPrice = price;
+        const isLong = idea.direction === "LONG";
+        const effectiveSL = idea.trailingSL ?? idea.stopLoss;
 
-        if (idea.direction === "LONG") {
-          if (price >= idea.tp2) {
-            newStatus = "TP2_HIT"; event = "TP2_HIT";
-            pnl = idea.tp2 - idea.entryPrice; exitPrice = idea.tp2;
-          } else if (price >= idea.tp1 && idea.status === "ACTIVE") {
-            newStatus = "TP1_HIT"; event = "TP1_HIT";
-            pnl = idea.tp1 - idea.entryPrice; exitPrice = idea.tp1;
-          } else if (price <= idea.stopLoss) {
-            newStatus = "STOPPED"; event = "SL_HIT";
-            pnl = idea.stopLoss - idea.entryPrice; exitPrice = idea.stopLoss;
-          }
-        } else {
-          // SHORT
-          if (price <= idea.tp2) {
-            newStatus = "TP2_HIT"; event = "TP2_HIT";
-            pnl = idea.entryPrice - idea.tp2; exitPrice = idea.tp2;
-          } else if (price <= idea.tp1 && idea.status === "ACTIVE") {
-            newStatus = "TP1_HIT"; event = "TP1_HIT";
-            pnl = idea.entryPrice - idea.tp1; exitPrice = idea.tp1;
-          } else if (price >= idea.stopLoss) {
-            newStatus = "STOPPED"; event = "SL_HIT";
-            pnl = idea.entryPrice - idea.stopLoss; exitPrice = idea.stopLoss;
-          }
+        // === Check SL first (use trailing SL if set) ===
+        const slHit = isLong ? price <= effectiveSL : price >= effectiveSL;
+        if (slHit) {
+          hits++;
+          const pnl = r2(isLong ? effectiveSL - idea.entryPrice : idea.entryPrice - effectiveSL);
+
+          await ctx.runMutation(internal.signalEngine._updateIdeaJourney, {
+            id: idea._id,
+            status: "STOPPED",
+            pnlPoints: pnl,
+            exitPrice: effectiveSL,
+            event: idea.trailingSL ? "TRAIL_SL_HIT" : "SL_HIT",
+          });
+
+          await ctx.runMutation(internal.signalEngine._logJournal, {
+            eventType: "SL_HIT",
+            ideaId: idea._id,
+            direction: idea.direction,
+            price: effectiveSL,
+            details: `${idea.direction} ${idea.trailingSL ? "TRAIL " : ""}SL @ ${effectiveSL.toFixed(2)} | Entry: ${idea.entryPrice.toFixed(2)} | P&L: ${pnl >= 0 ? "+" : ""}${pnl} pts`,
+          });
+          continue;
         }
 
-        if (newStatus && event) {
-          hits++;
-          const roundedPnl = r2(pnl);
+        // === Check TP2 (full close) — for ideas already at TP1_HIT ===
+        if (idea.status === "TP1_HIT") {
+          const tp2Hit = isLong ? price >= idea.tp2 : price <= idea.tp2;
+          if (tp2Hit) {
+            hits++;
+            const pnl = r2(isLong ? idea.tp2 - idea.entryPrice : idea.entryPrice - idea.tp2);
 
-          // For TP1_HIT, keep tracking toward TP2
-          if (newStatus === "TP1_HIT") {
+            await ctx.runMutation(internal.signalEngine._updateIdeaJourney, {
+              id: idea._id,
+              status: "TP2_HIT",
+              pnlPoints: pnl,
+              exitPrice: idea.tp2,
+              event: "TP2_HIT",
+            });
+
+            await ctx.runMutation(internal.signalEngine._logJournal, {
+              eventType: "TP2_HIT",
+              ideaId: idea._id,
+              direction: idea.direction,
+              price: idea.tp2,
+              details: `${idea.direction} TP2 @ ${idea.tp2.toFixed(2)} | Entry: ${idea.entryPrice.toFixed(2)} | P&L: +${pnl} pts`,
+            });
+            continue;
+          }
+
+          // === ATR Trailing Stop (only after TP1 hit) ===
+          if (currentATR > 0) {
+            const trailDistance = currentATR * 2;
+            const newTrailSL = isLong
+              ? r2(price - trailDistance)
+              : r2(price + trailDistance);
+
+            const currentTrailSL = idea.trailingSL ?? (isLong ? idea.entryPrice : idea.entryPrice);
+
+            // Only update if trailing SL improved (moved in favorable direction)
+            const shouldUpdate = isLong
+              ? newTrailSL > currentTrailSL
+              : newTrailSL < currentTrailSL;
+
+            if (shouldUpdate) {
+              await ctx.runMutation(internal.signalEngine._updateTrailingSL, {
+                id: idea._id,
+                trailingSL: newTrailSL,
+              });
+            }
+          }
+          continue;
+        }
+
+        // === Check TP1 (partial close — move SL to breakeven) ===
+        if (idea.status === "ACTIVE") {
+          const tp1Hit = isLong ? price >= idea.tp1 : price <= idea.tp1;
+          if (tp1Hit) {
+            hits++;
+            const pnl = r2(isLong ? idea.tp1 - idea.entryPrice : idea.entryPrice - idea.tp1);
+
+            // Move to TP1_HIT status and set trailing SL to breakeven
             await ctx.runMutation(internal.signalEngine._addJourneyEvent, {
               id: idea._id,
               status: "TP1_HIT",
               event: "TP1_HIT",
-              price: exitPrice,
-              pnlPoints: roundedPnl,
+              price: idea.tp1,
+              pnlPoints: pnl,
+              trailingSL: idea.entryPrice, // Move SL to breakeven
             });
-          } else {
-            // TP2 or SL — fully close
-            await ctx.runMutation(internal.signalEngine._updateIdeaJourney, {
-              id: idea._id,
-              status: newStatus,
-              pnlPoints: roundedPnl,
-              exitPrice,
-              event,
+
+            await ctx.runMutation(internal.signalEngine._logJournal, {
+              eventType: "TP1_HIT",
+              ideaId: idea._id,
+              direction: idea.direction,
+              price: idea.tp1,
+              details: `${idea.direction} TP1 @ ${idea.tp1.toFixed(2)} | Entry: ${idea.entryPrice.toFixed(2)} | P&L: +${pnl} pts | SL → BE @ ${idea.entryPrice.toFixed(2)} | Now trailing to TP2`,
             });
+            continue;
           }
 
-          // Log to journal
-          const journalType = event === "SL_HIT" ? "SL_HIT" as const :
-            event === "TP1_HIT" ? "TP1_HIT" as const : "TP2_HIT" as const;
+          // === Check TP2 directly (rare but possible on gap) ===
+          const tp2Hit = isLong ? price >= idea.tp2 : price <= idea.tp2;
+          if (tp2Hit) {
+            hits++;
+            const pnl = r2(isLong ? idea.tp2 - idea.entryPrice : idea.entryPrice - idea.tp2);
 
-          await ctx.runMutation(internal.signalEngine._logJournal, {
-            eventType: journalType,
-            ideaId: idea._id,
-            direction: idea.direction,
-            price: exitPrice,
-            details: `${idea.direction} ${event} @ ${exitPrice} | Entry: ${idea.entryPrice} | P&L: ${roundedPnl >= 0 ? "+" : ""}${roundedPnl} pts`,
-          });
+            await ctx.runMutation(internal.signalEngine._updateIdeaJourney, {
+              id: idea._id,
+              status: "TP2_HIT",
+              pnlPoints: pnl,
+              exitPrice: idea.tp2,
+              event: "TP2_HIT",
+            });
+
+            await ctx.runMutation(internal.signalEngine._logJournal, {
+              eventType: "TP2_HIT",
+              ideaId: idea._id,
+              direction: idea.direction,
+              price: idea.tp2,
+              details: `${idea.direction} TP2 (gap) @ ${idea.tp2.toFixed(2)} | Entry: ${idea.entryPrice.toFixed(2)} | P&L: +${pnl} pts`,
+            });
+            continue;
+          }
         }
       }
 
-      // Log monitor check periodically (every 5 min worth)
+      // Log monitor check if anything happened
       if (hits > 0) {
         await ctx.runMutation(internal.signalEngine._logJournal, {
           eventType: "MONITOR_CHECK",
           price,
-          details: `Checked ${activeIdeas.length} active ideas, ${hits} triggered @ ${price}`,
+          details: `Checked ${activeIdeas.length} active ideas, ${hits} triggered @ ${price.toFixed(2)}${currentATR > 0 ? ` | ATR: ${currentATR.toFixed(2)}` : ""}`,
         });
       }
     } catch (e: any) {
@@ -609,9 +778,7 @@ export const monitorIdeas = internalAction({
   },
 });
 
-// ─── Internal query: get active ideas (for use in actions) ───
-import { internalQuery } from "./_generated/server";
-
+// ─── Internal query: get active ideas ───
 export const _getActiveIdeas = internalQuery({
   args: {},
   handler: async (ctx) => {

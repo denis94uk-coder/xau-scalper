@@ -22,12 +22,14 @@ export const logIdea = mutation({
         v.literal("engine")
       )
     ),
+    grade: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
     return await ctx.db.insert("tradingIdeas", {
       ...args,
       source: args.source ?? "dashboard",
+      grade: args.grade,
       status: "ACTIVE",
       createdAt: now,
       journeyLog: [

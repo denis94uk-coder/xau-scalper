@@ -1,5 +1,50 @@
 // Technical indicator calculations for scalping
 
+// ────────────────────────────
+// Session helpers
+// ────────────────────────────
+export type SessionName = "ASIAN" | "LONDON" | "NEW_YORK" | "OFF_HOURS";
+
+export interface SessionInfo {
+  name: SessionName;
+  label: string;
+  isKillZone: boolean;
+  /** Kill-zone description (empty outside kill zones) */
+  kzLabel: string;
+  /** 0-1 progress through current session */
+  progress: number;
+  /** UTC hour */
+  utcHour: number;
+}
+
+/** Detect which session a UTC timestamp falls into + whether it's a kill zone */
+export function getSession(timestampMs: number): SessionInfo {
+  const d = new Date(timestampMs);
+  const h = d.getUTCHours();
+  const m = d.getUTCMinutes();
+  const hm = h + m / 60;
+
+  // Asian: 00:00–08:00 UTC
+  if (hm >= 0 && hm < 8) {
+    return { name: "ASIAN", label: "Asian", isKillZone: false, kzLabel: "", progress: hm / 8, utcHour: h };
+  }
+  // London: 08:00–13:30 UTC  |  Kill zone 08:00–09:30
+  if (hm >= 8 && hm < 13.5) {
+    const isKZ = hm >= 8 && hm < 9.5;
+    return { name: "LONDON", label: "London", isKillZone: isKZ, kzLabel: isKZ ? "London Open KZ" : "", progress: (hm - 8) / 5.5, utcHour: h };
+  }
+  // NY: 13:30–21:00 UTC  |  Kill zone 13:30–15:00
+  if (hm >= 13.5 && hm < 21) {
+    const isKZ = hm >= 13.5 && hm < 15;
+    return { name: "NEW_YORK", label: "New York", isKillZone: isKZ, kzLabel: isKZ ? "NY Open KZ" : "", progress: (hm - 13.5) / 7.5, utcHour: h };
+  }
+  // Off-hours 21:00–00:00
+  return { name: "OFF_HOURS", label: "Off-Hours", isKillZone: false, kzLabel: "", progress: (hm - 21) / 3, utcHour: h };
+}
+
+// ────────────────────────────
+// Core types
+// ────────────────────────────
 export interface Candle {
   time: number;
   open: number;

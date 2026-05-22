@@ -17,6 +17,12 @@ import {
 import { PriceTicker } from "@/components/dashboard/PriceTicker";
 import { ScalpingToolbar } from "@/components/dashboard/ScalpingToolbar";
 import { MiniChart } from "@/components/dashboard/MultiTimeframeView";
+import { SessionBar } from "@/components/dashboard/SessionBar";
+import { MarketSessionBar } from "@/components/dashboard/MarketSessionBar";
+import { RegimeIndicator } from "@/components/dashboard/RegimeIndicator";
+import { MacroCorrelation } from "@/components/dashboard/MacroCorrelation";
+import { NewsShield } from "@/components/dashboard/NewsShield";
+import { LiquiditySweepPanel } from "@/components/dashboard/LiquiditySweepPanel";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -161,16 +167,52 @@ function DashboardContent() {
     analysis15m;
 
   return (
-    <div className="flex flex-col gap-3 p-3 sm:p-4 max-w-[1440px] mx-auto w-full">
-      {/* ① Market Sessions — thin horizontal bar */}
+    <div className="flex flex-col gap-3 p-3 sm:p-4 max-w-[1440px] mx-auto w-full min-w-0 overflow-hidden">
+      {/* ① Session Bar — Kill Zone timeline */}
+      <SessionBar />
+
+      {/* ② Market Sessions — Open/Closed status */}
       <MarketSessionBar />
 
-      {/* ② Price Ticker + Refresh */}
+      {/* ③ Engine Badge — own row */}
+      <div
+        className="flex items-center gap-3 px-4 py-2 rounded-xl border transition-all"
+        style={{ backgroundColor: "rgba(212,168,67,0.04)", borderColor: "rgba(212,168,67,0.13)" }}
+      >
+        <span className="text-lg font-bold font-mono tracking-wide" style={{ color: "#D4A843" }}>
+          XAU Scalper
+        </span>
+        <span
+          className="flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-md"
+          style={{ backgroundColor: "rgba(212,168,67,0.08)", color: "#D4A843" }}
+        >
+          <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: "#D4A843" }} />
+          LIVE ENGINE
+        </span>
+        <span className="text-xs text-muted-foreground hidden sm:inline">
+          TA Multi-Indicator — ATR Trailing
+        </span>
+        <div className="flex items-center gap-3 ml-auto">
+          <div className="flex items-center gap-1">
+            <span className="text-[10px] text-muted-foreground">SL</span>
+            <span className="text-[11px] font-mono text-zinc-300">1.5× ATR below entry</span>
+          </div>
+          <div className="w-px h-4 bg-border" />
+          <div className="flex items-center gap-1">
+            <span className="text-[10px] text-muted-foreground">TP</span>
+            <span className="text-[11px] font-mono text-zinc-300">Partial TP1 @ 1.2R, TP2 @ 2.5R</span>
+          </div>
+          <div className="w-px h-4 bg-border" />
+          <span className="text-[11px] font-mono text-[#D4A843]">RSI · MACD · EMA · BB · Stoch</span>
+        </div>
+      </div>
+
+      {/* ④ Price Ticker + Refresh */}
       <div className="flex flex-col sm:flex-row gap-3">
-        <div className="flex-1">
+        <div className="flex-1 min-w-0 overflow-hidden">
           <PriceTicker data={priceData} />
         </div>
-        <div className="flex items-center gap-2 self-end sm:self-center">
+        <div className="flex items-center gap-2 self-end sm:self-center flex-wrap min-w-0">
           {dataSource && (
             <span className="text-[10px] text-muted-foreground/50 font-mono">
               via {dataSource}
@@ -200,12 +242,20 @@ function DashboardContent() {
         </div>
       </div>
 
-      {/* ③ Signal Panel — compact horizontal row */}
+      {/* ⑤ Signal Panel — compact horizontal row */}
       {signal && activeCandles.length > 50 && (
         <CompactSignalPanel signal={signal} candles={activeCandles} />
       )}
 
-      {/* ④ Scalping Bias & Entry/Exit Tool */}
+      {/* ⑥ Intel Panels — 2×2 grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 min-w-0">
+        <div className="min-w-0 overflow-hidden"><RegimeIndicator /></div>
+        <div className="min-w-0 overflow-hidden"><MacroCorrelation /></div>
+        <div className="min-w-0 overflow-hidden"><NewsShield /></div>
+        <div className="min-w-0 overflow-hidden"><LiquiditySweepPanel /></div>
+      </div>
+
+      {/* ⑦ Scalping Bias & Entry/Exit Tool */}
       <ScalpingToolbar
         analysis1m={analysis1m}
         analysis3m={analysis3m}
@@ -259,76 +309,6 @@ export default function DashboardPage() {
     <ErrorBoundary>
       <DashboardContent />
     </ErrorBoundary>
-  );
-}
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// ① Market Sessions — thin row
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function MarketSessionBar() {
-  const [now, setNow] = useState(new Date());
-
-  useEffect(() => {
-    const interval = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const utcHour = now.getUTCHours();
-  const utcDay = now.getUTCDay(); // 0=Sun, 6=Sat
-
-  // Forex/Gold markets: closed from Friday ~22:00 UTC to Sunday ~21:00 UTC
-  const isWeekendClosed = (() => {
-    if (utcDay === 6) return true; // All Saturday is closed
-    if (utcDay === 0 && utcHour < 21) return true; // Sunday before 21:00 UTC (Sydney open)
-    if (utcDay === 5 && utcHour >= 22) return true; // Friday after 22:00 UTC (NY close)
-    return false;
-  })();
-
-  const sessions = [
-    { name: "Sydney", open: 21, close: 6, color: "#AB47BC" },
-    { name: "Tokyo", open: 0, close: 9, color: "#29B6F6" },
-    { name: "London", open: 7, close: 16, color: "#D4A843" },
-    { name: "New York", open: 13, close: 22, color: "#00E676" },
-  ];
-
-  const isActive = (open: number, close: number) => {
-    if (isWeekendClosed) return false;
-    if (open < close) return utcHour >= open && utcHour < close;
-    return utcHour >= open || utcHour < close;
-  };
-
-  return (
-    <div className="flex items-center gap-4 sm:gap-6 px-3 py-1.5 rounded-lg bg-card/60 border border-border/50 overflow-x-auto">
-      {sessions.map((s) => {
-        const active = isActive(s.open, s.close);
-        return (
-          <div key={s.name} className="flex items-center gap-1.5 shrink-0">
-            <div
-              className={`w-1.5 h-1.5 rounded-full ${active ? "animate-pulse-dot" : "opacity-25"}`}
-              style={{ backgroundColor: s.color }}
-            />
-            <span
-              className={`text-[11px] font-medium ${active ? "text-foreground" : "text-muted-foreground/50"}`}
-            >
-              {s.name}
-            </span>
-            <span
-              className={`text-[10px] font-mono ${active ? "text-[#00E676]" : "text-muted-foreground/30"}`}
-            >
-              {active ? "OPEN" : "CLOSED"}
-            </span>
-          </div>
-        );
-      })}
-
-      <div className="ml-auto shrink-0">
-        <span className="text-[11px] font-mono tabular-nums text-muted-foreground/60">
-          {now.getUTCHours().toString().padStart(2, "0")}:
-          {now.getUTCMinutes().toString().padStart(2, "0")}:
-          {now.getUTCSeconds().toString().padStart(2, "0")} UTC
-        </span>
-      </div>
-    </div>
   );
 }
 

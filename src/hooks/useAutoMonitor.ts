@@ -1,6 +1,7 @@
 /**
  * Auto-monitor hook: checks live price every 30s against ACTIVE trading ideas.
- * Auto-marks TP1/TP2 hit or stopped, and fires browser notifications if enabled.
+ * Aware of partial TP + trailing stops — server engine does the heavy lifting,
+ * this is a client-side backup for faster UI feedback.
  */
 import { useEffect, useRef, useCallback, useState } from "react";
 import { useQuery, useMutation } from "convex/react";
@@ -25,7 +26,7 @@ const MONITOR_INTERVAL_MS = 30_000; // 30 seconds
 const ALERT_SOUND_URL = "data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbsGczHj+R0NvKdEMtRYS+0dR8RjhEeLS/wJBgUWB3oq2jfVdNYnudoZNxXU9xkqqbiHBcWGR8g3FyZm1nc3Z0a1VLWGVxaW1wdXR+iJOWjHVgWWBqc4CRl5OIe3V2eH2CiY2LhX56eHh6foOLkpOIeXBsb3d+hIqMi4mEfnl5en5+goiNj4yGfXdyc3uDio6Oj4yFfnd1eX+Ei42Ni4V+eXd5f4SMj46LhH54d3l+hIuPj4uFfnh3eX+Ej4+OioR9eHZ5f4WNkI6Kg3x4dnn/";
 
 export function useAutoMonitor() {
-  const activeIdeas = useQuery(api.tradingIdeas.listActiveIdeas);
+  const activeIdeas = useQuery(api.tradingIdeas.listActiveIdeas, {});
   const updateStatus = useMutation(api.tradingIdeas.updateIdeaStatus);
 
   // Alerts toggle — persisted in localStorage
@@ -103,39 +104,39 @@ export function useAutoMonitor() {
         // Skip already processed
         if (processedRef.current.has(idea._id)) continue;
 
+        const isLong = idea.direction === "LONG";
+        // Use trailing SL if set, otherwise original SL
+        const effectiveSL = idea.trailingSL ?? idea.stopLoss;
+
         let newStatus: StatusType | null = null;
         let pnl = 0;
         let exitPrice = currentPrice;
 
-        if (idea.direction === "LONG") {
-          // Check TP2 first (further target)
-          if (currentPrice >= idea.tp2) {
+        // Check SL (with trailing awareness)
+        const slHit = isLong ? currentPrice <= effectiveSL : currentPrice >= effectiveSL;
+        if (slHit) {
+          newStatus = "STOPPED";
+          pnl = isLong ? effectiveSL - idea.entryPrice : idea.entryPrice - effectiveSL;
+          exitPrice = effectiveSL;
+        }
+
+        // Check TP2 (for ideas already at TP1_HIT or gap through)
+        if (!newStatus) {
+          const tp2Hit = isLong ? currentPrice >= idea.tp2 : currentPrice <= idea.tp2;
+          if (tp2Hit) {
             newStatus = "TP2_HIT";
-            pnl = idea.tp2 - idea.entryPrice;
+            pnl = isLong ? idea.tp2 - idea.entryPrice : idea.entryPrice - idea.tp2;
             exitPrice = idea.tp2;
-          } else if (currentPrice >= idea.tp1) {
-            newStatus = "TP1_HIT";
-            pnl = idea.tp1 - idea.entryPrice;
-            exitPrice = idea.tp1;
-          } else if (currentPrice <= idea.stopLoss) {
-            newStatus = "STOPPED";
-            pnl = idea.stopLoss - idea.entryPrice;
-            exitPrice = idea.stopLoss;
           }
-        } else {
-          // SHORT
-          if (currentPrice <= idea.tp2) {
-            newStatus = "TP2_HIT";
-            pnl = idea.entryPrice - idea.tp2;
-            exitPrice = idea.tp2;
-          } else if (currentPrice <= idea.tp1) {
+        }
+
+        // Check TP1 (only for ACTIVE status)
+        if (!newStatus && idea.status === "ACTIVE") {
+          const tp1Hit = isLong ? currentPrice >= idea.tp1 : currentPrice <= idea.tp1;
+          if (tp1Hit) {
             newStatus = "TP1_HIT";
-            pnl = idea.entryPrice - idea.tp1;
+            pnl = isLong ? idea.tp1 - idea.entryPrice : idea.entryPrice - idea.tp1;
             exitPrice = idea.tp1;
-          } else if (currentPrice >= idea.stopLoss) {
-            newStatus = "STOPPED";
-            pnl = idea.entryPrice - idea.stopLoss;
-            exitPrice = idea.stopLoss;
           }
         }
 
@@ -167,10 +168,12 @@ export function useAutoMonitor() {
           const emoji = isWin ? "✅" : "🛑";
           const label =
             newStatus === "TP1_HIT"
-              ? "TP1 Hit"
+              ? "TP1 Hit (SL → BE)"
               : newStatus === "TP2_HIT"
-                ? "TP2 Hit"
-                : "Stop Loss Hit";
+                ? "TP2 Hit (Full Close)"
+                : idea.trailingSL
+                  ? "Trailing Stop Hit"
+                  : "Stop Loss Hit";
 
           sendNotification(
             `${emoji} ${idea.direction} ${label}`,

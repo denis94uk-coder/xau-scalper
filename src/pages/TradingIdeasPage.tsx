@@ -19,6 +19,12 @@ const SOURCE_ICONS: Record<string, { icon: typeof Bot; label: string; color: str
   experimental: { icon: FlaskConical, label: "EXP", color: "text-purple-400" },
 };
 
+const GRADE_COLORS: Record<string, string> = {
+  A: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
+  B: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+  C: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
+};
+
 function JourneyTimeline({ log }: { log: Array<{ event: string; price: number; timestamp: number }> }) {
   if (!log || log.length === 0) return <span className="text-xs text-muted-foreground">No journey data</span>;
 
@@ -211,6 +217,13 @@ export function TradingIdeasPage() {
                   {/* Source */}
                   <SrcIcon className={`w-3.5 h-3.5 ${src.color} shrink-0`} />
 
+                  {/* Grade */}
+                  {idea.grade && GRADE_COLORS[idea.grade] && (
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${GRADE_COLORS[idea.grade]}`}>
+                      {idea.grade}
+                    </span>
+                  )}
+
                   {/* Entry price */}
                   <span className="text-sm font-mono font-medium w-20">
                     {idea.entryPrice.toFixed(2)}
@@ -274,12 +287,21 @@ export function TradingIdeasPage() {
                         <div className="font-mono">{idea.entryPrice.toFixed(2)}</div>
                       </div>
                       <div>
-                        <span className="text-red-400">Stop Loss</span>
+                        <span className="text-red-400">
+                          {idea.trailingSL ? "Trailing SL" : "Stop Loss"}
+                        </span>
                         <div className="font-mono text-red-400">
-                          {idea.stopLoss.toFixed(2)}
-                          <span className="text-muted-foreground ml-1">
-                            ({Math.abs(idea.entryPrice - idea.stopLoss).toFixed(1)} pts)
-                          </span>
+                          {(idea.trailingSL ?? idea.stopLoss).toFixed(2)}
+                          {idea.trailingSL && (
+                            <span className="text-orange-400 ml-1 text-[10px]">
+                              (orig: {idea.stopLoss.toFixed(2)})
+                            </span>
+                          )}
+                          {!idea.trailingSL && (
+                            <span className="text-muted-foreground ml-1">
+                              ({Math.abs(idea.entryPrice - idea.stopLoss).toFixed(1)} pts)
+                            </span>
+                          )}
                         </div>
                       </div>
                       <div>
