@@ -103,7 +103,7 @@ function SweepCard({ sweep, formatTime }: { sweep: any; formatTime: (ts: number)
       </p>
 
       {sweep.actionable && (
-        <div className="flex items-center gap-3 text-[9px] font-mono">
+        <div className="flex items-center gap-2 sm:gap-3 text-[9px] font-mono flex-wrap">
           <span className="text-muted-foreground/40">
             Entry <span className="text-foreground/80">${sweep.suggestedEntry.toFixed(1)}</span>
           </span>

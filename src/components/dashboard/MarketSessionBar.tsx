@@ -2,10 +2,10 @@ import { useEffect, useState } from "react";
 
 /** Simple open/closed status for each major forex session (UTC-based) */
 const SESSIONS = [
-  { name: "Sydney", open: 21, close: 6, color: "#AB47BC" },
-  { name: "Tokyo", open: 0, close: 9, color: "#29B6F6" },
-  { name: "London", open: 7, close: 16, color: "#D4A843" },
-  { name: "New York", open: 13, close: 22, color: "#00E676" },
+  { name: "Sydney", short: "SYD", open: 21, close: 6, color: "#AB47BC" },
+  { name: "Tokyo", short: "TKY", open: 0, close: 9, color: "#29B6F6" },
+  { name: "London", short: "LDN", open: 7, close: 16, color: "#D4A843" },
+  { name: "New York", short: "NY", open: 13, close: 22, color: "#00E676" },
 ];
 
 function isActive(open: number, close: number, utcHour: number, isWeekend: boolean) {
@@ -33,22 +33,24 @@ export function MarketSessionBar() {
   })();
 
   return (
-    <div className="flex items-center gap-4 sm:gap-6 px-3 py-1.5 rounded-lg bg-card/60 border border-border/50 overflow-x-auto">
+    <div className="flex items-center gap-2 sm:gap-4 md:gap-6 px-2 sm:px-3 py-1.5 rounded-lg bg-card/60 border border-border/50 overflow-x-auto min-w-0">
       {SESSIONS.map((s) => {
         const active = isActive(s.open, s.close, utcHour, isWeekendClosed);
         return (
-          <div key={s.name} className="flex items-center gap-1.5 shrink-0">
+          <div key={s.name} className="flex items-center gap-1 sm:gap-1.5 shrink-0">
             <div
               className={`w-1.5 h-1.5 rounded-full ${active ? "animate-pulse-dot" : "opacity-25"}`}
               style={{ backgroundColor: s.color }}
             />
+            {/* Full name on sm+, short name on mobile */}
             <span
-              className={`text-[11px] font-medium ${active ? "text-foreground" : "text-muted-foreground/50"}`}
+              className={`text-[10px] sm:text-[11px] font-medium ${active ? "text-foreground" : "text-muted-foreground/50"}`}
             >
-              {s.name}
+              <span className="hidden sm:inline">{s.name}</span>
+              <span className="sm:hidden">{s.short}</span>
             </span>
             <span
-              className={`text-[10px] font-mono ${active ? "text-[#00E676]" : "text-muted-foreground/30"}`}
+              className={`text-[9px] sm:text-[10px] font-mono ${active ? "text-[#00E676]" : "text-muted-foreground/30"}`}
             >
               {active ? "OPEN" : "CLOSED"}
             </span>
@@ -57,7 +59,7 @@ export function MarketSessionBar() {
       })}
 
       <div className="ml-auto shrink-0">
-        <span className="text-[11px] font-mono tabular-nums text-muted-foreground/60">
+        <span className="text-[10px] sm:text-[11px] font-mono tabular-nums text-muted-foreground/60">
           {now.getUTCHours().toString().padStart(2, "0")}:
           {now.getUTCMinutes().toString().padStart(2, "0")}:
           {now.getUTCSeconds().toString().padStart(2, "0")} UTC

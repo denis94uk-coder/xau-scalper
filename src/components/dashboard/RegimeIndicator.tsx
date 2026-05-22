@@ -29,7 +29,7 @@ export function RegimeIndicator() {
     >
       {/* Header row */}
       <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-w-0">
           <span className="text-lg">{cfg.icon}</span>
           <span className="text-[11px] font-bold font-mono tracking-wider" style={{ color: cfg.color }}>
             {cfg.label}
@@ -38,7 +38,7 @@ export function RegimeIndicator() {
             {regime.confidence}% conf
           </span>
         </div>
-        <span className="text-[9px] text-muted-foreground/40 font-mono">
+        <span className="text-[9px] text-muted-foreground/40 font-mono shrink-0 ml-2">
           {ageMinutes < 1 ? "just now" : `${ageMinutes}m ago`}
         </span>
       </div>
@@ -48,7 +48,7 @@ export function RegimeIndicator() {
         {regime.description}
       </p>
 
-      {/* Metrics grid */}
+      {/* Metrics grid — 2 cols on mobile, 4 on sm+ */}
       <div className="grid grid-cols-4 gap-2">
         <MetricPill label="ATR Ratio" value={regime.atrRatio.toFixed(2)} highlight={regime.atrRatio > 1.3} color={cfg.color} />
         <MetricPill label="ADX" value={regime.adxProxy.toFixed(0)} highlight={regime.adxProxy > 30} color={cfg.color} />
@@ -75,12 +75,12 @@ export function RegimeIndicator() {
 
 function MetricPill({ label, value, highlight, color }: { label: string; value: string; highlight: boolean; color: string }) {
   return (
-    <div className="text-center">
-      <div className={`text-[11px] font-mono font-bold ${highlight ? "" : "text-muted-foreground"}`}
+    <div className="text-center min-w-0">
+      <div className={`text-[11px] font-mono font-bold truncate ${highlight ? "" : "text-muted-foreground"}`}
            style={highlight ? { color } : undefined}>
         {value}
       </div>
-      <div className="text-[8px] text-muted-foreground/40 uppercase tracking-wider">{label}</div>
+      <div className="text-[8px] text-muted-foreground/40 uppercase tracking-wider truncate">{label}</div>
     </div>
   );
 }

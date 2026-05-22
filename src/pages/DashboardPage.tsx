@@ -78,27 +78,64 @@ function DashboardContent() {
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [dataSource, setDataSource] = useState<string>("");
 
-  const loadData = useCallback(async (showRefresh = false) => {
+  // Phase 1: Load price + active timeframe first (fast initial paint)
+  const loadCritical = useCallback(async (tf: Timeframe, showRefresh = false) => {
     try {
       if (showRefresh) setRefreshing(true);
-
-      const [priceResult, c1Result, c3Result, c5Result, c15Result] =
-        await Promise.allSettled([
-          fetchGoldPrice(),
-          fetchGoldCandles("1m"),
-          fetchGoldCandles("3m"),
-          fetchGoldCandles("5m"),
-          fetchGoldCandles("15m"),
-        ]);
-
+      const [priceResult, candleResult] = await Promise.allSettled([
+        fetchGoldPrice(),
+        fetchGoldCandles(tf),
+      ]);
       if (priceResult.status === "fulfilled") {
         setPriceData(priceResult.value);
         setDataSource(priceResult.value.source);
       }
-      if (c1Result.status === "fulfilled") setCandles1m(c1Result.value);
-      if (c3Result.status === "fulfilled") setCandles3m(c3Result.value);
-      if (c5Result.status === "fulfilled") setCandles5m(c5Result.value);
-      if (c15Result.status === "fulfilled") setCandles15m(c15Result.value);
+      if (candleResult.status === "fulfilled") {
+        const setters: Record<Timeframe, (c: Candle[]) => void> = {
+          "1m": setCandles1m, "3m": setCandles3m, "5m": setCandles5m, "15m": setCandles15m
+        };
+        setters[tf](candleResult.value);
+      }
+      setLastRefresh(new Date());
+    } catch (err) {
+      console.error("Failed to load critical data:", err);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  // Phase 2: Background-load remaining timeframes (non-blocking)
+  const loadRemaining = useCallback(async (activeTf: Timeframe) => {
+    const allTfs: Timeframe[] = ["1m", "3m", "5m", "15m"];
+    const remaining = allTfs.filter(tf => tf !== activeTf);
+    const setters: Record<Timeframe, (c: Candle[]) => void> = {
+      "1m": setCandles1m, "3m": setCandles3m, "5m": setCandles5m, "15m": setCandles15m
+    };
+    const results = await Promise.allSettled(remaining.map(tf => fetchGoldCandles(tf)));
+    remaining.forEach((tf, i) => {
+      if (results[i].status === "fulfilled") {
+        setters[tf]((results[i] as PromiseFulfilledResult<Candle[]>).value);
+      }
+    });
+  }, []);
+
+  // Full reload (for refresh button & interval)
+  const loadAll = useCallback(async (showRefresh = false) => {
+    try {
+      if (showRefresh) setRefreshing(true);
+      const [priceResult, c1, c3, c5, c15] = await Promise.allSettled([
+        fetchGoldPrice(), fetchGoldCandles("1m"), fetchGoldCandles("3m"),
+        fetchGoldCandles("5m"), fetchGoldCandles("15m"),
+      ]);
+      if (priceResult.status === "fulfilled") {
+        setPriceData(priceResult.value);
+        setDataSource(priceResult.value.source);
+      }
+      if (c1.status === "fulfilled") setCandles1m(c1.value);
+      if (c3.status === "fulfilled") setCandles3m(c3.value);
+      if (c5.status === "fulfilled") setCandles5m(c5.value);
+      if (c15.status === "fulfilled") setCandles15m(c15.value);
       setLastRefresh(new Date());
     } catch (err) {
       console.error("Failed to load data:", err);
@@ -108,11 +145,13 @@ function DashboardContent() {
     }
   }, []);
 
+  // Initial mount: fast critical load, then background rest
   useEffect(() => {
-    loadData();
-    const interval = setInterval(() => loadData(), 30000);
+    loadCritical(activeTimeframe).then(() => loadRemaining(activeTimeframe));
+    const interval = setInterval(() => loadAll(), 30000);
     return () => clearInterval(interval);
-  }, [loadData]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const activeCandles =
     activeTimeframe === "1m"
@@ -174,36 +213,38 @@ function DashboardContent() {
       {/* ② Market Sessions — Open/Closed status */}
       <MarketSessionBar />
 
-      {/* ③ Engine Badge — own row */}
+      {/* ③ Engine Badge — own row, mobile-responsive */}
       <div
-        className="flex items-center gap-3 px-4 py-2 rounded-xl border transition-all"
+        className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 rounded-xl border transition-all"
         style={{ backgroundColor: "rgba(212,168,67,0.04)", borderColor: "rgba(212,168,67,0.13)" }}
       >
-        <span className="text-lg font-bold font-mono tracking-wide" style={{ color: "#D4A843" }}>
-          XAU Scalper
-        </span>
-        <span
-          className="flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-md"
-          style={{ backgroundColor: "rgba(212,168,67,0.08)", color: "#D4A843" }}
-        >
-          <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: "#D4A843" }} />
-          LIVE ENGINE
-        </span>
-        <span className="text-xs text-muted-foreground hidden sm:inline">
-          TA Multi-Indicator — ATR Trailing
-        </span>
-        <div className="flex items-center gap-3 ml-auto">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-base sm:text-lg font-bold font-mono tracking-wide shrink-0" style={{ color: "#D4A843" }}>
+            XAU Scalper
+          </span>
+          <span
+            className="flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-md shrink-0"
+            style={{ backgroundColor: "rgba(212,168,67,0.08)", color: "#D4A843" }}
+          >
+            <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: "#D4A843" }} />
+            LIVE ENGINE
+          </span>
+          <span className="text-xs text-muted-foreground hidden md:inline truncate">
+            TA Multi-Indicator — ATR Trailing
+          </span>
+        </div>
+        <div className="flex items-center gap-2 sm:gap-3 sm:ml-auto flex-wrap">
           <div className="flex items-center gap-1">
             <span className="text-[10px] text-muted-foreground">SL</span>
-            <span className="text-[11px] font-mono text-zinc-300">1.5× ATR below entry</span>
+            <span className="text-[10px] sm:text-[11px] font-mono text-zinc-300">1.5× ATR</span>
           </div>
-          <div className="w-px h-4 bg-border" />
+          <div className="w-px h-4 bg-border hidden sm:block" />
           <div className="flex items-center gap-1">
             <span className="text-[10px] text-muted-foreground">TP</span>
-            <span className="text-[11px] font-mono text-zinc-300">Partial TP1 @ 1.2R, TP2 @ 2.5R</span>
+            <span className="text-[10px] sm:text-[11px] font-mono text-zinc-300">1.2R / 2.5R</span>
           </div>
-          <div className="w-px h-4 bg-border" />
-          <span className="text-[11px] font-mono text-[#D4A843]">RSI · MACD · EMA · BB · Stoch</span>
+          <div className="w-px h-4 bg-border hidden sm:block" />
+          <span className="text-[10px] sm:text-[11px] font-mono text-[#D4A843]">RSI · MACD · EMA · BB · Stoch</span>
         </div>
       </div>
 
@@ -226,7 +267,7 @@ function DashboardContent() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => loadData(true)}
+            onClick={() => loadAll(true)}
             disabled={refreshing}
             className="h-8 text-xs border-border bg-card hover:bg-secondary"
           >
@@ -247,8 +288,8 @@ function DashboardContent() {
         <CompactSignalPanel signal={signal} candles={activeCandles} />
       )}
 
-      {/* ⑥ Intel Panels — 2×2 grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 min-w-0">
+      {/* ⑥ Intel Panels — 2×2 grid on desktop, stacked on mobile */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 min-w-0">
         <div className="min-w-0 overflow-hidden"><RegimeIndicator /></div>
         <div className="min-w-0 overflow-hidden"><MacroCorrelation /></div>
         <div className="min-w-0 overflow-hidden"><NewsShield /></div>
@@ -361,7 +402,7 @@ function CompactSignalPanel({
 
   return (
     <div
-      className="rounded-xl border p-3 flex flex-col lg:flex-row gap-3 lg:gap-0 lg:items-center"
+      className="rounded-xl border p-2 sm:p-3 flex flex-col gap-2 sm:gap-3"
       style={{
         backgroundColor:
           signal.type === "BUY"
@@ -378,24 +419,24 @@ function CompactSignalPanel({
       }}
     >
       {/* Signal Badge */}
-      <div className="flex items-center gap-3 lg:pr-5 lg:border-r lg:border-border/30 shrink-0">
+      <div className="flex items-center gap-2 sm:gap-3 shrink-0">
         <div
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg border"
+          className="flex items-center gap-2 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border"
           style={{
             borderColor: `${signalColor}40`,
             backgroundColor: `${signalColor}10`,
           }}
         >
           <span
-            className="text-lg font-bold font-mono tracking-wider"
+            className="text-base sm:text-lg font-bold font-mono tracking-wider"
             style={{ color: signalColor }}
           >
             {signal.type}
           </span>
         </div>
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1 min-w-0">
           <div className="flex items-center gap-1.5">
-            <div className="w-16 h-1.5 bg-secondary/50 rounded-full overflow-hidden">
+            <div className="w-12 sm:w-16 h-1.5 bg-secondary/50 rounded-full overflow-hidden">
               <div
                 className="h-full rounded-full transition-all"
                 style={{
@@ -411,14 +452,14 @@ function CompactSignalPanel({
               {signal.strength}%
             </span>
           </div>
-          <span className="text-[10px] text-muted-foreground truncate max-w-[180px]">
+          <span className="text-[9px] sm:text-[10px] text-muted-foreground truncate">
             {signal.reasons[0] ?? ""}
           </span>
         </div>
       </div>
 
       {/* Indicator Pills */}
-      <div className="flex items-center gap-2 flex-wrap lg:px-5">
+      <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
         <IndicatorPill
           label="RSI"
           value={rsiVal}
@@ -446,10 +487,10 @@ function CompactSignalPanel({
         <IndicatorPill label="EMA 9" value={ema9Val} format={2} />
         <IndicatorPill label="EMA 21" value={ema21Val} format={2} />
         <IndicatorPill label="ATR" value={atrVal} format={2} color="#D4A843" />
-        <div className="flex items-center gap-1 px-2 py-1 rounded bg-secondary/30">
-          <span className="text-[10px] text-muted-foreground">Trend</span>
+        <div className="flex items-center gap-1 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded bg-secondary/30">
+          <span className="text-[9px] sm:text-[10px] text-muted-foreground">Trend</span>
           <span
-            className={`text-xs font-mono font-bold ${
+            className={`text-[10px] sm:text-xs font-mono font-bold ${
               ema9Val !== undefined &&
               ema21Val !== undefined &&
               ema9Val > ema21Val
@@ -482,10 +523,10 @@ function IndicatorPill({
 }) {
   if (value === undefined || isNaN(value)) return null;
   return (
-    <div className="flex items-center gap-1 px-2 py-1 rounded bg-secondary/30">
-      <span className="text-[10px] text-muted-foreground">{label}</span>
+    <div className="flex items-center gap-1 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded bg-secondary/30">
+      <span className="text-[9px] sm:text-[10px] text-muted-foreground">{label}</span>
       <span
-        className="text-xs font-mono tabular-nums font-semibold"
+        className="text-[10px] sm:text-xs font-mono tabular-nums font-semibold"
         style={{ color: color ?? "var(--foreground)" }}
       >
         {value.toFixed(format)}
@@ -524,37 +565,41 @@ function PivotPointsRow({
   ];
 
   return (
-    <div className="flex items-center gap-2 sm:gap-4 px-4 py-2.5 rounded-xl bg-card border border-border overflow-x-auto">
-      <span className="text-[10px] font-medium text-muted-foreground tracking-wider uppercase shrink-0">
-        Pivots
-      </span>
-      <div className="w-px h-5 bg-border shrink-0" />
-      {levels.map((level) => {
-        const isNear =
-          currentPrice > 0 &&
-          Math.abs(currentPrice - level.value) / currentPrice < 0.001;
-        return (
-          <div
-            key={level.label}
-            className={`flex items-center gap-1.5 shrink-0 px-2 py-0.5 rounded ${
-              isNear ? "bg-[#D4A843]/10" : ""
-            }`}
-          >
-            <span
-              className="text-[10px] font-mono font-bold"
-              style={{ color: level.color }}
+    <div className="rounded-xl bg-card border border-border px-3 sm:px-4 py-2 sm:py-2.5">
+      <div className="flex items-center gap-1.5 mb-1 sm:mb-0 sm:inline-flex sm:mr-2">
+        <span className="text-[10px] font-medium text-muted-foreground tracking-wider uppercase shrink-0">
+          Pivots
+        </span>
+        <div className="w-px h-4 bg-border shrink-0 hidden sm:block" />
+      </div>
+      <div className="flex flex-wrap items-center gap-1 sm:gap-1.5">
+        {levels.map((level) => {
+          const isNear =
+            currentPrice > 0 &&
+            Math.abs(currentPrice - level.value) / currentPrice < 0.001;
+          return (
+            <div
+              key={level.label}
+              className={`flex items-center gap-1 sm:gap-1.5 shrink-0 px-1.5 sm:px-2 py-0.5 rounded ${
+                isNear ? "bg-[#D4A843]/10" : ""
+              }`}
             >
-              {level.label}
-            </span>
-            <span className="text-xs font-mono tabular-nums text-foreground">
-              {level.value.toFixed(2)}
-            </span>
-            {isNear && (
-              <span className="text-[9px] text-[#D4A843] font-medium">◄</span>
-            )}
-          </div>
-        );
-      })}
+              <span
+                className="text-[9px] sm:text-[10px] font-mono font-bold"
+                style={{ color: level.color }}
+              >
+                {level.label}
+              </span>
+              <span className="text-[10px] sm:text-xs font-mono tabular-nums text-foreground">
+                {level.value.toFixed(2)}
+              </span>
+              {isNear && (
+                <span className="text-[9px] text-[#D4A843] font-medium">◄</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

@@ -60,9 +60,9 @@ export function ScalpingToolbar({
       style={{ backgroundColor: colors.bg, borderColor: colors.border }}
     >
       {/* Row 1: Bias + Multi-TF + Confluence */}
-      <div className="flex flex-col lg:flex-row gap-3 lg:gap-6 lg:items-center">
-        {/* Bias Badge */}
-        <div className="flex items-center gap-3">
+      <div className="flex flex-col gap-3">
+        {/* Bias Badge + strength */}
+        <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
             <div
               className="w-2.5 h-2.5 rounded-full animate-pulse-dot"
@@ -88,13 +88,10 @@ export function ScalpingToolbar({
           </div>
         </div>
 
-        {/* Separator */}
-        <div className="hidden lg:block w-px h-8 bg-border/40" />
-
-        {/* Multi-TF alignment */}
-        <div className="flex items-center gap-3">
+        {/* Multi-TF alignment + Confluence */}
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <span className="text-[10px] text-muted-foreground tracking-wider uppercase">Timeframes</span>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1 sm:gap-1.5">
             {tfBiases.map((tf) => {
               const b = tf.analysis?.bias;
               const c = b === "BULLISH" ? "#00E676" : b === "BEARISH" ? "#FF1744" : "#6B7280";
@@ -102,12 +99,12 @@ export function ScalpingToolbar({
               return (
                 <div
                   key={tf.label}
-                  className="flex items-center gap-1 px-2 py-0.5 rounded bg-secondary/40"
+                  className="flex items-center gap-1 px-1.5 sm:px-2 py-0.5 rounded bg-secondary/40"
                 >
-                  <span className="text-[10px] font-mono text-muted-foreground">
+                  <span className="text-[9px] sm:text-[10px] font-mono text-muted-foreground">
                     {tf.label}
                   </span>
-                  <span className="text-xs font-bold font-mono" style={{ color: c }}>
+                  <span className="text-[10px] sm:text-xs font-bold font-mono" style={{ color: c }}>
                     {arrow}
                   </span>
                 </div>
@@ -115,7 +112,7 @@ export function ScalpingToolbar({
             })}
           </div>
           <div
-            className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-wider ${
+            className={`px-2 py-0.5 rounded text-[9px] sm:text-[10px] font-bold tracking-wider ${
               confluence === "STRONG"
                 ? "bg-[#00E676]/15 text-[#00E676]"
                 : confluence === "MODERATE"
@@ -127,11 +124,8 @@ export function ScalpingToolbar({
           </div>
         </div>
 
-        {/* Separator */}
-        <div className="hidden lg:block w-px h-8 bg-border/40" />
-
         {/* Key S/R levels */}
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
           {activeAnalysis.keyResistances.length > 0 && (
             <div className="flex items-center gap-1.5">
               <span className="text-[10px] text-muted-foreground">R:</span>
@@ -267,7 +261,7 @@ function EntryCard({
       </div>
 
       {/* Price Levels */}
-      <div className="grid grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         <PriceLevel
           label="ENTRY"
           value={entry.entryPrice}

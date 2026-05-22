@@ -1,0 +1,18 @@
+{
+  "cookies": [],
+  "origins": [
+    {
+      "origin": "http://localhost:4173",
+      "localStorage": [
+        {
+          "name": "__convexAuthJWT_httpsamiablesalmon668convexcloud",
+          "value": "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJqeDc3YXh2MzlhNDEzZms5M2Z5MjdzNGJiMTg2cXludHxqaDcwYnliOXF3cHM2NTk0Z2o2Z2c4NW50MTg2cHltYiIsImlhdCI6MTc3ODc3NzM3OSwiaXNzIjoiaHR0cHM6Ly9hbWlhYmxlLXNhbG1vbi02NjguY29udmV4LnNpdGUiLCJhdWQiOiJjb252ZXgiLCJleHAiOjE3Nzg3ODA5Nzl9.SxUp1htkAeKfwrn_fByuMsMgL6RXlqj4_FB6ARy2F5oAlB7Jb1ibPB_6LweEsxHNWfEG_WxdhxCVZpSZaknKBBq8nRFY-a-Itgz2PXS6ONetzFwLB9qDW66AWS7EeS-CJ80yw9S2gkzQHpDxI-U-Z5CQus1i5kpPeCKh9qZzrUKbTctpYS0loIASCffNKE1KGvvtFH6iRIJf-eR_kgIkZr_g2brFQXlEyqvYQHb1rvX_2fL_4G7H6lqoTaFn_kN9Ol4r2M6H_oJFl8Ld4CpG4WwPKaiN-JcEN471s_EPzLv14_SVJI1fA2M7pJSpU3jc8uwarUCuauYWcicDzTkfGg"
+        },
+        {
+          "name": "__convexAuthRefreshToken_httpsamiablesalmon668convexcloud",
+          "value": "jd7cfz3xp2587frd8zmh6afqx586qcft|jh70byb9qwps6594gj6gg85nt186pymb"
+        }
+      ]
+    }
+  ]
+}

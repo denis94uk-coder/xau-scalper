@@ -56,12 +56,12 @@ export function MacroCorrelation() {
     <div className="rounded-lg bg-secondary/20 border border-white/5 p-3">
       {/* Header */}
       <div className="flex items-center justify-between mb-2.5">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-w-0">
           <span className="text-[10px] font-mono font-bold text-muted-foreground/70 uppercase tracking-wider">
             🌍 Macro Correlations
           </span>
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 shrink-0">
           <span className="text-[9px]">{biasIcon}</span>
           <span className="text-[10px] font-mono font-bold" style={{ color: biasColor }}>
             {macro.overallMacroBias}
@@ -72,8 +72,8 @@ export function MacroCorrelation() {
         </div>
       </div>
 
-      {/* Asset grid */}
-      <div className="grid grid-cols-3 gap-2 mb-2">
+      {/* Asset grid — 3 columns, responsive sizing */}
+      <div className="grid grid-cols-3 gap-1.5 sm:gap-2 mb-2">
         {assets.map((asset) => (
           <AssetCard key={asset.label} asset={asset} />
         ))}
@@ -90,7 +90,7 @@ export function MacroCorrelation() {
                    color: asset.divType === "BULLISH_GOLD" ? "#00E676" : "#FF5252",
                  }}>
               <span>⚠️</span>
-              <span className="font-mono">
+              <span className="font-mono truncate">
                 {asset.label} divergence → {asset.divType === "BULLISH_GOLD" ? "Gold may rally" : "Gold may correct"}
               </span>
             </div>
@@ -111,21 +111,21 @@ function AssetCard({ asset }: { asset: MacroAsset }) {
   const changeSign = asset.change > 0 ? "+" : "";
 
   return (
-    <div className={`rounded-md p-2 bg-white/[0.02] border ${
+    <div className={`rounded-md p-1.5 sm:p-2 bg-white/[0.02] border ${
       asset.divergence ? "border-amber-500/30" : "border-white/5"
-    } transition-colors`}>
+    } transition-colors min-w-0`}>
       <div className="flex items-center justify-between mb-1">
-        <span className="text-[9px] font-mono text-muted-foreground/50">{asset.icon} {asset.label}</span>
+        <span className="text-[8px] sm:text-[9px] font-mono text-muted-foreground/50 truncate">{asset.icon} {asset.label}</span>
         {asset.divergence && <span className="text-[8px]">⚠️</span>}
       </div>
-      <div className="text-[12px] font-mono font-bold text-foreground/90">
+      <div className="text-[11px] sm:text-[12px] font-mono font-bold text-foreground/90 truncate">
         {asset.label === "US10Y" ? `${asset.price.toFixed(2)}%` : asset.price.toFixed(2)}
       </div>
       <div className="flex items-center justify-between mt-0.5">
-        <span className="text-[9px] font-mono" style={{ color: changeColor }}>
+        <span className="text-[8px] sm:text-[9px] font-mono" style={{ color: changeColor }}>
           {changeSign}{asset.change.toFixed(2)}%
         </span>
-        <span className="text-[8px] font-mono text-muted-foreground/40">
+        <span className="text-[7px] sm:text-[8px] font-mono text-muted-foreground/40 hidden sm:inline">
           {asset.relationship}
         </span>
       </div>

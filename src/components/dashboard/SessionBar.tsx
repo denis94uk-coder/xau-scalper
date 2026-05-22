@@ -21,7 +21,6 @@ function utcToLocalHour(utcH: number, offsetMinutes: number): number {
 /** Get the offset in minutes from UTC for a given timezone */
 function getTimezoneOffsetMinutes(tz: string): number {
   const now = new Date();
-  // Get parts in UTC and in target tz
   const utcParts = new Intl.DateTimeFormat("en-US", {
     timeZone: "UTC",
     hour: "numeric",
@@ -49,7 +48,6 @@ function getTimezoneOffsetMinutes(tz: string): number {
   const tzMinutes = get(tzParts, "day") * 24 * 60 + get(tzParts, "hour") * 60 + get(tzParts, "minute");
 
   let diff = tzMinutes - utcMinutes;
-  // Handle day boundary wrap
   if (diff > 12 * 60) diff -= 24 * 60;
   if (diff < -12 * 60) diff += 24 * 60;
   return diff;
@@ -74,12 +72,10 @@ export function SessionBar() {
   const now = new Date();
   const offsetMin = getTimezoneOffsetMinutes(timezone);
 
-  // Current time in user's TZ as decimal for the marker
   const utcH = now.getUTCHours() + now.getUTCMinutes() / 60;
   const localH = utcToLocalHour(utcH, offsetMin);
   const progress = (localH / 24) * 100;
 
-  // Convert session boundaries to local TZ for display
   const localSessions = SESSIONS_UTC.map((s) => {
     const start = utcToLocalHour(s.start, offsetMin);
     const end = utcToLocalHour(s.end, offsetMin);
@@ -88,10 +84,8 @@ export function SessionBar() {
     return { ...s, start, end, kzStart, kzEnd };
   });
 
-  // Sort sessions so they render left-to-right on the timeline
   const sortedSessions = [...localSessions].sort((a, b) => a.start - b.start);
 
-  // Build continuous timeline segments handling wrapping
   const segments = sortedSessions.map((s) => {
     const duration = s.end >= s.start ? s.end - s.start : 24 - s.start + s.end;
     const left = (s.start / 24) * 100;
@@ -99,13 +93,13 @@ export function SessionBar() {
     return { ...s, left, width, duration };
   });
 
-  // London / NY kill zone times in local
   const londonKz = localSessions.find((s) => s.name === "LONDON");
   const nyKz = localSessions.find((s) => s.name === "NEW_YORK");
 
   return (
-    <div className="rounded-xl border border-border bg-card p-3">
-      <div className="flex items-center justify-between mb-2">
+    <div className="rounded-xl border border-border bg-card p-2 sm:p-3">
+      {/* Header — stacks on very small screens */}
+      <div className="flex flex-wrap items-center justify-between gap-1 mb-2">
         <div className="flex items-center gap-2">
           <span className="text-[10px] font-medium text-muted-foreground tracking-wider uppercase">Market Session</span>
           <span
@@ -115,7 +109,7 @@ export function SessionBar() {
               backgroundColor: session.isKillZone ? "rgba(255,214,0,0.12)" : "rgba(255,255,255,0.05)",
             }}
           >
-            {session.label} {session.isKillZone ? "⚡ KILL ZONE" : ""}
+            {session.label}
           </span>
         </div>
         <span className="text-[10px] font-mono text-muted-foreground">
@@ -127,9 +121,7 @@ export function SessionBar() {
       <div className="relative h-5 rounded-lg overflow-hidden bg-secondary/20 border border-border/30">
         {segments.map((s) => {
           const isActive = s.name === session.name;
-          // Handle wrap-around (session spans midnight)
           if (s.end < s.start) {
-            // Render as two segments
             const w1 = ((24 - s.start) / 24) * 100;
             const w2 = (s.end / 24) * 100;
             return (
@@ -144,7 +136,7 @@ export function SessionBar() {
                   }}
                 >
                   <span
-                    className="text-[8px] font-mono font-bold tracking-wider"
+                    className="text-[7px] sm:text-[8px] font-mono font-bold tracking-wider truncate px-0.5"
                     style={{ color: isActive ? s.color : `${s.color}80` }}
                   >
                     {s.label}
@@ -174,7 +166,7 @@ export function SessionBar() {
               }}
             >
               <span
-                className="text-[8px] font-mono font-bold tracking-wider"
+                className="text-[7px] sm:text-[8px] font-mono font-bold tracking-wider truncate px-0.5"
                 style={{ color: isActive ? s.color : `${s.color}80` }}
               >
                 {s.label}
@@ -183,7 +175,7 @@ export function SessionBar() {
           );
         })}
 
-        {/* Kill zone highlights in local time */}
+        {/* Kill zone highlights */}
         {segments
           .filter((s) => s.kzStart !== undefined && s.kzEnd !== undefined)
           .map((s) => {
@@ -213,8 +205,8 @@ export function SessionBar() {
         </div>
       </div>
 
-      {/* Kill zone legend — show times in user's TZ */}
-      <div className="flex items-center gap-3 mt-1.5">
+      {/* Kill zone legend — wraps on mobile */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5">
         <div className="flex items-center gap-1">
           <div className="w-2 h-2 rounded-sm" style={{ backgroundColor: "rgba(255,214,0,0.4)" }} />
           <span className="text-[8px] text-muted-foreground">Kill Zone</span>
@@ -224,7 +216,7 @@ export function SessionBar() {
           {nyKz ? `${fmtH(nyKz.kzStart!)}–${fmtH(nyKz.kzEnd!)}` : "—"} {tzAbbrev}
         </span>
         {!session.isKillZone && session.name !== "OFF_HOURS" && (
-          <span className="text-[8px] text-yellow-500/70 ml-auto">⚠ Outside kill zone — signals may be weaker</span>
+          <span className="text-[8px] text-yellow-500/70 sm:ml-auto">⚠ Outside kill zone — signals may be weaker</span>
         )}
       </div>
     </div>
