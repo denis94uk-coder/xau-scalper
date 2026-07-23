@@ -103,19 +103,31 @@ async function runTest(testFile: string): Promise<TestResult> {
   });
 }
 
+function runUnitTests(): Promise<number> {
+  return new Promise(resolve => {
+    console.log(
+      "🧪 No e2e file given — running unit tests (bun test convex/lib)\n",
+    );
+    const proc = spawn("bun", ["test", "convex/lib"], {
+      cwd: projectRoot,
+      stdio: "inherit",
+    });
+    proc.on("close", code => resolve(code ?? 1));
+    proc.on("error", err => {
+      console.error("Failed to run unit tests:", err);
+      resolve(1);
+    });
+  });
+}
+
 async function main() {
   const args = process.argv.slice(2);
 
+  // With no e2e test file, fall back to the fast unit-test suite so
+  // `bun run test` is always meaningful (and CI-friendly) on its own.
   if (args.length === 0) {
-    console.log("Usage: bun run test <test-file.ts> [test-file2.ts ...]");
-    console.log("Example: bun run test scripts/demo-test.ts");
-    console.log("\nThis script:");
-    console.log("  1. Starts the Vite preview server (serves built files)");
-    console.log("  2. Waits for it to be ready");
-    console.log("  3. Runs your test file(s) with APP_URL set correctly");
-    console.log("  4. Stops the server when done");
-    console.log("\nMake sure to run 'bun run sync:build' first!");
-    process.exit(1);
+    const code = await runUnitTests();
+    process.exit(code);
   }
 
   console.log("🚀 Starting preview server...");

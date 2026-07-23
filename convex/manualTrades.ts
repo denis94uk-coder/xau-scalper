@@ -29,7 +29,7 @@ export const closeTrade = mutation({
     status: v.union(
       v.literal("WIN"),
       v.literal("LOSS"),
-      v.literal("BREAKEVEN")
+      v.literal("BREAKEVEN"),
     ),
     notes: v.optional(v.string()),
   },
@@ -80,10 +80,10 @@ export const listTrades = query({
 // List open trades
 export const listOpenTrades = query({
   args: {},
-  handler: async (ctx) => {
+  handler: async ctx => {
     return await ctx.db
       .query("manualTrades")
-      .withIndex("by_status", (q) => q.eq("status", "OPEN"))
+      .withIndex("by_status", q => q.eq("status", "OPEN"))
       .collect();
   },
 });
@@ -91,31 +91,31 @@ export const listOpenTrades = query({
 // Get trade stats
 export const getStats = query({
   args: {},
-  handler: async (ctx) => {
+  handler: async ctx => {
     const all = await ctx.db.query("manualTrades").collect();
-    const closed = all.filter((t) => t.status !== "OPEN");
+    const closed = all.filter(t => t.status !== "OPEN");
 
-    const wins = closed.filter((t) => t.status === "WIN");
-    const losses = closed.filter((t) => t.status === "LOSS");
-    const breakevens = closed.filter((t) => t.status === "BREAKEVEN");
+    const wins = closed.filter(t => t.status === "WIN");
+    const losses = closed.filter(t => t.status === "LOSS");
+    const breakevens = closed.filter(t => t.status === "BREAKEVEN");
 
     const totalPnl = closed.reduce((sum, t) => sum + (t.pnlPoints ?? 0), 0);
     const totalPnlDollars = closed.reduce(
       (sum, t) => sum + (t.pnlDollars ?? 0),
-      0
+      0,
     );
-    const winRate =
-      closed.length > 0 ? (wins.length / closed.length) * 100 : 0;
+    const winRate = closed.length > 0 ? (wins.length / closed.length) * 100 : 0;
 
     const grossProfit = wins.reduce(
       (sum, t) => sum + Math.abs(t.pnlPoints ?? 0),
-      0
+      0,
     );
     const grossLoss = losses.reduce(
       (sum, t) => sum + Math.abs(t.pnlPoints ?? 0),
-      0
+      0,
     );
-    const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : 0;
+    const profitFactor =
+      grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : 0;
 
     const avgWin =
       wins.length > 0

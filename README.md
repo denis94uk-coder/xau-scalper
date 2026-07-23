@@ -104,6 +104,8 @@ grep VITE_CONVEX_URL .env.local
 | `bun run sync`                     | Push Convex functions once (no watching)       |
 | `bun run sync:build`               | Push Convex + build frontend in one command    |
 | `bun run test <file>`              | Run e2e test (starts server, runs test, stops) |
+| `bun run test:unit`                | Run shared-strategy unit tests (`bun test`)    |
+| `bun run backtest -- <flags>`      | Backtest the strategy on historical klines     |
 | `bun run logs`                     | Tail Convex backend logs (streaming)           |
 | `bun run logs:fetch`               | Fetch recent logs and exit (agent-friendly)    |
 | `bun run check`                    | Lint + format check with Biome                 |
@@ -286,6 +288,86 @@ import { usePersistFn } from "@/hooks/usePersistFn";
 import { useComposition } from "@/hooks/useComposition";
 import { useSidebar } from "@/components/ui/sidebar";
 ```
+
+## Signal Engine — Multi-Asset & Backtesting
+
+The server-side scalping engine is now **multi-asset**. All strategy logic lives
+in a single Convex-free module so the live engine and the backtester share the
+exact same code and can never drift apart.
+
+### Where things live
+
+| File                          | Responsibility                                                        |
+| ----------------------------- | --------------------------------------------------------------------- |
+| `convex/lib/strategy.ts`      | Pure indicators, `analyzeCandles`, grading, TP/SL math, `StrategyConfig` |
+| `convex/lib/assets.ts`        | The **asset registry** (one entry per tradable symbol)                |
+| `convex/signalEngine.ts`      | Convex crons that call the shared strategy per asset                  |
+| `scripts/backtest.ts`         | Standalone harness that replays history through the same strategy     |
+
+The strategy is fully parameterised via `StrategyConfig` (RSI thresholds, ATR SL
+multiplier, TP1/TP2 R-multiples, grade thresholds, cooldown, EMA/Bollinger
+periods, ATR trailing multiple, …). `DEFAULT_STRATEGY_CONFIG` keeps the original
+hardcoded numbers, so gold (`PAXGUSDT`) behaviour is unchanged — this is verified
+by a fixture test in `convex/lib/__tests__/`.
+
+### Adding a new asset
+
+Append an entry to `ASSETS` in `convex/lib/assets.ts`:
+
+```ts
+{
+  id: "SOLUSDT",              // stable id stored on every record's `asset` field
+  displaySymbol: "SOL/USD",   // shown in the UI
+  dataSourceSymbol: "SOLUSDT", // symbol queried on the data source
+  dataSource: "binance",      // keyless / free feed
+  sessionType: "24_7",
+  pricePrecision: 2,           // decimals used for entry/SL/TP rounding
+  config: DEFAULT_STRATEGY_CONFIG, // or a per-asset tuned config
+  enabled: true,
+}
+```
+
+Nothing else needs to change: the `generateSignals` and `monitorIdeas` crons
+iterate `getEnabledAssets()` automatically, each fetching its own candles and
+monitoring only its own open ideas. Signal cooldown is scoped per asset.
+
+Registered Tier-1 assets (all on the free keyless Binance feed): `PAXGUSDT`
+(gold), `BTCUSDT`, `ETHUSDT`, `BNBUSDT`, `LINKUSDT`, `AAVEUSDT`, `TAOUSDT`.
+
+### Running the backtest
+
+The harness fetches paginated historical klines from the free Binance endpoint
+(1000 candles per request) and replays them through the **same** signal + exit
+logic the live `monitorIdeas` cron uses (entry → TP1 partial + move-to-BE → ATR
+trailing → TP2 / SL):
+
+```bash
+bun run backtest -- --asset BTCUSDT --from 2024-01-01 --to 2024-06-01 --interval 5m
+```
+
+Flags (all optional; defaults shown): `--asset PAXGUSDT`, `--from 2024-01-01`,
+`--to 2024-06-01`, `--interval 5m`. It prints total trades, win rate, net
+points, average win/loss, max drawdown and profit factor.
+
+Run the strategy parity unit tests with:
+
+```bash
+bun run test:unit
+```
+
+## Code navigation with Graphify
+
+For AI-assisted navigation of this codebase you can build a local knowledge
+graph with [Graphify](https://pypi.org/project/graphifyy/):
+
+```bash
+pip install graphifyy   # PyPI package name is `graphifyy`
+graphify                # CLI is `graphify` — turns the repo into a local graph
+```
+
+Graphify indexes the code into a queryable graph (functions, imports, call
+sites) that AI tools can traverse to answer "where is X used?" style questions.
+Its output directory `graphify-out/` is git-ignored.
 
 ## Environment Variables
 

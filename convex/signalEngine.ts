@@ -4,310 +4,33 @@
  * Runs as Convex cron actions — fetches candles, runs analysis, generates signals.
  * Also monitors active ideas for SL/TP hits every minute.
  */
-import { internalAction, internalMutation, internalQuery } from "./_generated/server";
+
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
+import {
+  internalAction,
+  internalMutation,
+  internalQuery,
+} from "./_generated/server";
+import { DEFAULT_ASSET_ID, getAsset, getEnabledAssets } from "./lib/assets";
+import {
+  analyzeCandles,
+  type Candle,
+  calcATR,
+  DEFAULT_STRATEGY_CONFIG,
+  roundTo,
+} from "./lib/strategy";
 
 // ─── Constants ───
 const BINANCE_API = "https://data-api.binance.vision/api/v3";
-const SYMBOL = "PAXGUSDT";
-const SIGNAL_COOLDOWN_MS = 10 * 60 * 1000; // 10 min between signals in same direction
-
-// ─── Types ───
-interface Candle {
-  time: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-}
-
-// ─── Indicator calculations ───
-
-function calcEMA(data: number[], period: number): number[] {
-  const ema: number[] = [];
-  const m = 2 / (period + 1);
-  let sum = 0;
-  for (let i = 0; i < period && i < data.length; i++) sum += data[i];
-  ema[period - 1] = sum / period;
-  for (let i = period; i < data.length; i++) {
-    ema[i] = (data[i] - ema[i - 1]) * m + ema[i - 1];
-  }
-  return ema;
-}
-
-function calcRSI(closes: number[], period = 14): number[] {
-  const rsi: number[] = [];
-  const gains: number[] = [];
-  const losses: number[] = [];
-  for (let i = 1; i < closes.length; i++) {
-    const d = closes[i] - closes[i - 1];
-    gains[i] = d > 0 ? d : 0;
-    losses[i] = d < 0 ? -d : 0;
-  }
-  let avgG = 0, avgL = 0;
-  for (let i = 1; i <= period; i++) { avgG += gains[i] || 0; avgL += losses[i] || 0; }
-  avgG /= period; avgL /= period;
-  rsi[period] = avgL === 0 ? 100 : 100 - 100 / (1 + avgG / avgL);
-  for (let i = period + 1; i < closes.length; i++) {
-    avgG = (avgG * (period - 1) + (gains[i] || 0)) / period;
-    avgL = (avgL * (period - 1) + (losses[i] || 0)) / period;
-    rsi[i] = avgL === 0 ? 100 : 100 - 100 / (1 + avgG / avgL);
-  }
-  return rsi;
-}
-
-function calcMACD(closes: number[]) {
-  const fast = calcEMA(closes, 12);
-  const slow = calcEMA(closes, 26);
-  const macdLine: number[] = [];
-  for (let i = 0; i < closes.length; i++) {
-    if (fast[i] !== undefined && slow[i] !== undefined) macdLine[i] = fast[i] - slow[i];
-  }
-  const vals = macdLine.filter(v => v !== undefined);
-  const sig = calcEMA(vals, 9);
-  const signal: number[] = [];
-  const histogram: number[] = [];
-  let idx = 0;
-  for (let i = 0; i < closes.length; i++) {
-    if (macdLine[i] !== undefined) {
-      if (sig[idx] !== undefined) {
-        signal[i] = sig[idx];
-        histogram[i] = macdLine[i] - sig[idx];
-      }
-      idx++;
-    }
-  }
-  return { macd: macdLine, signal, histogram };
-}
-
-function calcATR(candles: Candle[], period = 14): number[] {
-  if (candles.length === 0) return [];
-  const tr: number[] = [];
-  tr[0] = candles[0].high - candles[0].low;
-  for (let i = 1; i < candles.length; i++) {
-    tr[i] = Math.max(
-      candles[i].high - candles[i].low,
-      Math.abs(candles[i].high - candles[i - 1].close),
-      Math.abs(candles[i].low - candles[i - 1].close)
-    );
-  }
-  const atr: number[] = [];
-  let s = 0;
-  for (let i = 0; i < period; i++) s += tr[i];
-  atr[period - 1] = s / period;
-  for (let i = period; i < candles.length; i++) {
-    atr[i] = (atr[i - 1] * (period - 1) + tr[i]) / period;
-  }
-  return atr;
-}
-
-function calcStochastic(candles: Candle[], kPeriod = 14) {
-  const k: number[] = [];
-  for (let i = kPeriod - 1; i < candles.length; i++) {
-    let hi = -Infinity, lo = Infinity;
-    for (let j = i - kPeriod + 1; j <= i; j++) {
-      if (candles[j].high > hi) hi = candles[j].high;
-      if (candles[j].low < lo) lo = candles[j].low;
-    }
-    const range = hi - lo;
-    k[i] = range === 0 ? 50 : ((candles[i].close - lo) / range) * 100;
-  }
-  return { k };
-}
-
-function calcBollingerBands(closes: number[], period = 20, stdDevMult = 2) {
-  const upper: number[] = [];
-  const lower: number[] = [];
-  const middle: number[] = [];
-  for (let i = period - 1; i < closes.length; i++) {
-    let sum = 0;
-    for (let j = i - period + 1; j <= i; j++) sum += closes[j];
-    const mean = sum / period;
-    let sqSum = 0;
-    for (let j = i - period + 1; j <= i; j++) sqSum += (closes[j] - mean) ** 2;
-    const stdDev = Math.sqrt(sqSum / period);
-    middle[i] = mean;
-    upper[i] = mean + stdDev * stdDevMult;
-    lower[i] = mean - stdDev * stdDevMult;
-  }
-  return { upper, lower, middle };
-}
-
-function r2(n: number): number {
-  return Math.round(n * 100) / 100;
-}
-
-// ─── Signal Grading ───
-function gradeSignal(_confidence: number, extremeIndicators: number, totalStrength: number): "A" | "B" | "C" | "NO_TRADE" {
-  if (extremeIndicators >= 3 && totalStrength >= 70) return "A";
-  if (extremeIndicators >= 2 && totalStrength >= 60) return "B";
-  if (totalStrength >= 50) return "C";
-  return "NO_TRADE";
-}
-
-// ─── Full analysis function ───
-function analyzeCandles(candles: Candle[]): {
-  bias: "BULLISH" | "BEARISH" | "NEUTRAL";
-  biasStrength: number;
-  confidence: number;
-  direction: "LONG" | "SHORT";
-  entryPrice: number;
-  stopLoss: number;
-  tp1: number;
-  tp2: number;
-  reason: string;
-  grade: "A" | "B" | "C" | "NO_TRADE";
-  indicators: Record<string, number | undefined>;
-  atr: number;
-} | null {
-  if (candles.length < 60) return null;
-
-  const closes = candles.map(c => c.close);
-  const last = candles.length - 1;
-  const price = closes[last];
-
-  const rsi = calcRSI(closes, 14);
-  const { histogram } = calcMACD(closes);
-  const ema9 = calcEMA(closes, 9);
-  const ema21 = calcEMA(closes, 21);
-  const ema50 = calcEMA(closes, 50);
-  const atr = calcATR(candles, 14);
-  const stoch = calcStochastic(candles);
-  const bb = calcBollingerBands(closes);
-
-  const currentATR = atr[last] ?? price * 0.002;
-
-  let bullScore = 0, bearScore = 0;
-  let extremeBull = 0, extremeBear = 0;
-  const reasons: string[] = [];
-
-  // EMA alignment
-  if (ema9[last] !== undefined && ema21[last] !== undefined && ema50[last] !== undefined) {
-    if (ema9[last] > ema21[last] && ema21[last] > ema50[last]) {
-      bullScore += 25; reasons.push("EMAs bullish");
-    } else if (ema9[last] < ema21[last] && ema21[last] < ema50[last]) {
-      bearScore += 25; reasons.push("EMAs bearish");
-    } else if (ema9[last] > ema21[last]) {
-      bullScore += 10; reasons.push("EMA 9>21");
-    } else {
-      bearScore += 10; reasons.push("EMA 9<21");
-    }
-  }
-
-  // Price vs EMA21
-  if (ema21[last] !== undefined) {
-    if (price > ema21[last]) bullScore += 10;
-    else bearScore += 10;
-  }
-
-  // RSI
-  const lastRSI = rsi[last];
-  if (lastRSI !== undefined) {
-    if (lastRSI < 30) { bullScore += 20; extremeBull++; reasons.push(`RSI oversold ${lastRSI.toFixed(0)}`); }
-    else if (lastRSI > 70) { bearScore += 20; extremeBear++; reasons.push(`RSI overbought ${lastRSI.toFixed(0)}`); }
-    else if (lastRSI > 50) bullScore += 5;
-    else bearScore += 5;
-  }
-
-  // MACD
-  if (histogram[last] !== undefined && histogram[last - 1] !== undefined) {
-    if (histogram[last] > 0 && histogram[last - 1] <= 0) {
-      bullScore += 20; extremeBull++; reasons.push("MACD bull cross");
-    } else if (histogram[last] < 0 && histogram[last - 1] >= 0) {
-      bearScore += 20; extremeBear++; reasons.push("MACD bear cross");
-    } else if (histogram[last] > 0) {
-      bullScore += 8;
-    } else {
-      bearScore += 8;
-    }
-  }
-
-  // Stochastic
-  const lastK = stoch.k[last];
-  if (lastK !== undefined) {
-    if (lastK < 20) { bullScore += 15; extremeBull++; reasons.push("Stoch oversold"); }
-    else if (lastK > 80) { bearScore += 15; extremeBear++; reasons.push("Stoch overbought"); }
-  }
-
-  // Bollinger Bands
-  if (bb.upper[last] !== undefined && bb.lower[last] !== undefined) {
-    const bbWidth = bb.upper[last] - bb.lower[last];
-    const pricePos = (price - bb.lower[last]) / bbWidth; // 0 = lower band, 1 = upper band
-    if (pricePos <= 0.05) {
-      bullScore += 18; extremeBull++; reasons.push("BB lower band touch");
-    } else if (pricePos >= 0.95) {
-      bearScore += 18; extremeBear++; reasons.push("BB upper band touch");
-    } else if (pricePos < 0.3) {
-      bullScore += 8; reasons.push("BB lower zone");
-    } else if (pricePos > 0.7) {
-      bearScore += 8; reasons.push("BB upper zone");
-    }
-  }
-
-  const total = bullScore + bearScore;
-  if (total === 0) return null;
-
-  const biasStrength = Math.round((Math.abs(bullScore - bearScore) / total) * 100);
-  const bias: "BULLISH" | "BEARISH" | "NEUTRAL" =
-    biasStrength < 15 ? "NEUTRAL" : bullScore > bearScore ? "BULLISH" : "BEARISH";
-
-  if (bias === "NEUTRAL") return null;
-
-  const direction = bias === "BULLISH" ? "LONG" as const : "SHORT" as const;
-  const confidence = Math.min(95, Math.round(Math.max(bullScore, bearScore) * 1.2));
-
-  // Grade the signal
-  const extremeCount = direction === "LONG" ? extremeBull : extremeBear;
-  const strength = Math.max(bullScore, bearScore);
-  const grade = gradeSignal(confidence, extremeCount, strength);
-
-  // Only generate tradeable signals (A or B grade)
-  if (grade === "NO_TRADE") return null;
-
-  // TP/SL with partial TP system: TP1 @ 1.2R, TP2 @ 2.5R
-  let sl: number, tp1: number, tp2: number;
-  if (direction === "LONG") {
-    sl = r2(price - currentATR * 1.5);
-    const risk = price - sl;
-    tp1 = r2(price + risk * 1.2);  // Partial TP at 1.2R
-    tp2 = r2(price + risk * 2.5);  // Full TP at 2.5R
-  } else {
-    sl = r2(price + currentATR * 1.5);
-    const risk = sl - price;
-    tp1 = r2(price - risk * 1.2);  // Partial TP at 1.2R
-    tp2 = r2(price - risk * 2.5);  // Full TP at 2.5R
-  }
-
-  return {
-    bias,
-    biasStrength,
-    confidence,
-    direction,
-    entryPrice: r2(price),
-    stopLoss: sl,
-    tp1,
-    tp2,
-    reason: reasons.join(" · "),
-    grade,
-    atr: r2(currentATR),
-    indicators: {
-      rsi: lastRSI ? r2(lastRSI) : undefined,
-      stochK: lastK ? r2(lastK) : undefined,
-      macdHist: histogram[last] ? r2(histogram[last]) : undefined,
-      ema9: ema9[last] ? r2(ema9[last]) : undefined,
-      ema21: ema21[last] ? r2(ema21[last]) : undefined,
-      atr: currentATR ? r2(currentATR) : undefined,
-      bbUpper: bb.upper[last] ? r2(bb.upper[last]) : undefined,
-      bbLower: bb.lower[last] ? r2(bb.lower[last]) : undefined,
-    },
-  };
-}
 
 // ─── Fetch candles from Binance ───
-async function fetchCandles(interval: string, limit = 200): Promise<Candle[]> {
-  const url = `${BINANCE_API}/klines?symbol=${SYMBOL}&interval=${interval}&limit=${limit}`;
+async function fetchCandles(
+  symbol: string,
+  interval: string,
+  limit = 200,
+): Promise<Candle[]> {
+  const url = `${BINANCE_API}/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Binance API ${res.status}`);
   const data = await res.json();
@@ -321,8 +44,8 @@ async function fetchCandles(interval: string, limit = 200): Promise<Candle[]> {
   }));
 }
 
-async function fetchCurrentPrice(): Promise<number> {
-  const url = `${BINANCE_API}/ticker/price?symbol=${SYMBOL}`;
+async function fetchCurrentPrice(symbol: string): Promise<number> {
+  const url = `${BINANCE_API}/ticker/price?symbol=${symbol}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Binance ticker ${res.status}`);
   const data = await res.json();
@@ -341,13 +64,14 @@ export const _logJournal = internalMutation({
       v.literal("EXPIRED"),
       v.literal("ENGINE_RUN"),
       v.literal("MONITOR_CHECK"),
-      v.literal("TRAIL_UPDATE")
+      v.literal("TRAIL_UPDATE"),
     ),
     ideaId: v.optional(v.id("tradingIdeas")),
     direction: v.optional(v.union(v.literal("LONG"), v.literal("SHORT"))),
     price: v.optional(v.number()),
     details: v.string(),
     metadata: v.optional(v.string()),
+    asset: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     await ctx.db.insert("signalJournal", {
@@ -372,20 +96,29 @@ export const _createSignal = internalMutation({
     biasStrength: v.number(),
     spotPrice: v.number(),
     grade: v.optional(v.string()),
+    asset: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    // Check cooldown — don't create signal if same direction within cooldown
+    // Resolve per-asset cooldown (falls back to the default gold config).
+    const assetId = args.asset ?? DEFAULT_ASSET_ID;
+    const cooldownMs =
+      getAsset(assetId)?.config.cooldownMs ??
+      DEFAULT_STRATEGY_CONFIG.cooldownMs;
+
+    // Check cooldown — don't create signal if same direction within cooldown.
+    // Cooldown is scoped PER asset so one asset can't block another.
     const recent = await ctx.db
       .query("tradingIdeas")
-      .withIndex("by_source_created", (q) => q.eq("source", "engine"))
+      .withIndex("by_source_created", q => q.eq("source", "engine"))
       .order("desc")
-      .take(5);
+      .take(50);
 
     const now = Date.now();
     const duplicate = recent.find(
-      (r) =>
+      r =>
+        (r.asset ?? DEFAULT_ASSET_ID) === assetId &&
         r.direction === args.direction &&
-        now - r.createdAt < SIGNAL_COOLDOWN_MS
+        now - r.createdAt < cooldownMs,
     );
     if (duplicate) return null;
 
@@ -420,7 +153,7 @@ export const _updateIdeaJourney = internalMutation({
       v.literal("TP1_HIT"),
       v.literal("TP2_HIT"),
       v.literal("STOPPED"),
-      v.literal("EXPIRED")
+      v.literal("EXPIRED"),
     ),
     pnlPoints: v.number(),
     exitPrice: v.number(),
@@ -455,7 +188,7 @@ export const _addJourneyEvent = internalMutation({
       v.literal("TP1_HIT"),
       v.literal("TP2_HIT"),
       v.literal("STOPPED"),
-      v.literal("EXPIRED")
+      v.literal("EXPIRED"),
     ),
     event: v.string(),
     price: v.number(),
@@ -513,7 +246,7 @@ export const _updateTrailingSL = internalMutation({
 // ═══════════════════════════════════════
 export const generateSignals = internalAction({
   args: {},
-  handler: async (ctx) => {
+  handler: async ctx => {
     // Skip weekends (forex closed)
     const now = new Date();
     const day = now.getUTCDay();
@@ -522,76 +255,114 @@ export const generateSignals = internalAction({
       return; // Market closed
     }
 
-    try {
-      // Fetch candles for analysis
-      const candles5m = await fetchCandles("5m", 200);
-      const candles15m = await fetchCandles("15m", 200);
-      const price = candles5m[candles5m.length - 1]?.close;
+    // Iterate every enabled asset — each analyses its own feed independently.
+    for (const asset of getEnabledAssets()) {
+      try {
+        // Fetch candles for analysis
+        const candles5m = await fetchCandles(asset.dataSourceSymbol, "5m", 200);
+        const candles15m = await fetchCandles(
+          asset.dataSourceSymbol,
+          "15m",
+          200,
+        );
+        const price = candles5m[candles5m.length - 1]?.close;
 
-      if (!price) return;
+        if (!price) continue;
 
-      // Primary analysis on 5-minute (scalper timeframe)
-      const analysis5m = analyzeCandles(candles5m);
+        // Primary analysis on 5-minute (scalper timeframe)
+        const analysis5m = analyzeCandles(
+          candles5m,
+          asset.config,
+          asset.pricePrecision,
+        );
 
-      // Cross-confirm with 15-minute
-      const analysis15m = analyzeCandles(candles15m);
+        // Cross-confirm with 15-minute
+        const analysis15m = analyzeCandles(
+          candles15m,
+          asset.config,
+          asset.pricePrecision,
+        );
 
-      // Log engine run
-      await ctx.runMutation(internal.signalEngine._logJournal, {
-        eventType: "ENGINE_RUN",
-        price,
-        details: `5m: ${analysis5m?.bias ?? "N/A"} ${analysis5m?.grade ?? "-"} (${analysis5m?.confidence ?? 0}%) | 15m: ${analysis15m?.bias ?? "N/A"} ${analysis15m?.grade ?? "-"} (${analysis15m?.confidence ?? 0}%)`,
-        metadata: JSON.stringify({
-          analysis5m: analysis5m ? { bias: analysis5m.bias, confidence: analysis5m.confidence, grade: analysis5m.grade, indicators: analysis5m.indicators } : null,
-          analysis15m: analysis15m ? { bias: analysis15m.bias, confidence: analysis15m.confidence, grade: analysis15m.grade } : null,
-        }),
-      });
-
-      // Need at least the 5m signal
-      if (!analysis5m) return;
-
-      // Multi-TF confluence: both must agree on direction
-      if (analysis15m && analysis15m.direction !== analysis5m.direction) return;
-
-      // Only trade A or B grade signals
-      if (analysis5m.grade !== "A" && analysis5m.grade !== "B") return;
-
-      // Boost confidence if multi-TF confluence
-      const finalConfidence = analysis15m
-        ? Math.min(95, analysis5m.confidence + 10)
-        : analysis5m.confidence;
-
-      // Upgrade grade if 15m confirms
-      const finalGrade = analysis15m && analysis5m.grade === "B" && analysis15m.grade === "A"
-        ? "A" : analysis5m.grade;
-
-      // Create the signal
-      const ideaId = await ctx.runMutation(internal.signalEngine._createSignal, {
-        direction: analysis5m.direction,
-        entryPrice: analysis5m.entryPrice,
-        stopLoss: analysis5m.stopLoss,
-        tp1: analysis5m.tp1,
-        tp2: analysis5m.tp2,
-        confidence: finalConfidence,
-        reason: `[ENGINE] ${analysis5m.reason}${analysis15m ? " · 15m confirms" : ""}`,
-        timeframe: analysis15m ? "5m+15m" : "5m",
-        bias: analysis5m.bias,
-        biasStrength: analysis5m.biasStrength,
-        spotPrice: price,
-        grade: finalGrade,
-      });
-
-      if (ideaId) {
+        // Log engine run
         await ctx.runMutation(internal.signalEngine._logJournal, {
-          eventType: "SIGNAL_GENERATED",
-          ideaId,
-          direction: analysis5m.direction,
-          price: analysis5m.entryPrice,
-          details: `${finalGrade} ${analysis5m.direction} @ ${analysis5m.entryPrice} | SL: ${analysis5m.stopLoss} | TP1: ${analysis5m.tp1} | TP2: ${analysis5m.tp2} | Conf: ${finalConfidence}% | ATR: ${analysis5m.atr}`,
+          eventType: "ENGINE_RUN",
+          price,
+          asset: asset.id,
+          details: `[${asset.displaySymbol}] 5m: ${analysis5m?.bias ?? "N/A"} ${analysis5m?.grade ?? "-"} (${analysis5m?.confidence ?? 0}%) | 15m: ${analysis15m?.bias ?? "N/A"} ${analysis15m?.grade ?? "-"} (${analysis15m?.confidence ?? 0}%)`,
+          metadata: JSON.stringify({
+            asset: asset.id,
+            analysis5m: analysis5m
+              ? {
+                  bias: analysis5m.bias,
+                  confidence: analysis5m.confidence,
+                  grade: analysis5m.grade,
+                  indicators: analysis5m.indicators,
+                }
+              : null,
+            analysis15m: analysis15m
+              ? {
+                  bias: analysis15m.bias,
+                  confidence: analysis15m.confidence,
+                  grade: analysis15m.grade,
+                }
+              : null,
+          }),
         });
+
+        // Need at least the 5m signal
+        if (!analysis5m) continue;
+
+        // Multi-TF confluence: both must agree on direction
+        if (analysis15m && analysis15m.direction !== analysis5m.direction)
+          continue;
+
+        // Only trade A or B grade signals
+        if (analysis5m.grade !== "A" && analysis5m.grade !== "B") continue;
+
+        // Boost confidence if multi-TF confluence
+        const finalConfidence = analysis15m
+          ? Math.min(95, analysis5m.confidence + 10)
+          : analysis5m.confidence;
+
+        // Upgrade grade if 15m confirms
+        const finalGrade =
+          analysis15m && analysis5m.grade === "B" && analysis15m.grade === "A"
+            ? "A"
+            : analysis5m.grade;
+
+        // Create the signal
+        const ideaId = await ctx.runMutation(
+          internal.signalEngine._createSignal,
+          {
+            direction: analysis5m.direction,
+            entryPrice: analysis5m.entryPrice,
+            stopLoss: analysis5m.stopLoss,
+            tp1: analysis5m.tp1,
+            tp2: analysis5m.tp2,
+            confidence: finalConfidence,
+            reason: `[ENGINE] ${analysis5m.reason}${analysis15m ? " · 15m confirms" : ""}`,
+            timeframe: analysis15m ? "5m+15m" : "5m",
+            bias: analysis5m.bias,
+            biasStrength: analysis5m.biasStrength,
+            spotPrice: price,
+            grade: finalGrade,
+            asset: asset.id,
+          },
+        );
+
+        if (ideaId) {
+          await ctx.runMutation(internal.signalEngine._logJournal, {
+            eventType: "SIGNAL_GENERATED",
+            ideaId,
+            direction: analysis5m.direction,
+            price: analysis5m.entryPrice,
+            asset: asset.id,
+            details: `[${asset.displaySymbol}] ${finalGrade} ${analysis5m.direction} @ ${analysis5m.entryPrice} | SL: ${analysis5m.stopLoss} | TP1: ${analysis5m.tp1} | TP2: ${analysis5m.tp2} | Conf: ${finalConfidence}% | ATR: ${analysis5m.atr}`,
+          });
+        }
+      } catch (e: any) {
+        console.error(`Signal engine error [${asset.id}]:`, e.message);
       }
-    } catch (e: any) {
-      console.error("Signal engine error:", e.message);
     }
   },
 });
@@ -602,7 +373,7 @@ export const generateSignals = internalAction({
 // ═══════════════════════════════════════
 export const monitorIdeas = internalAction({
   args: {},
-  handler: async (ctx) => {
+  handler: async ctx => {
     // Skip weekends
     const now = new Date();
     const day = now.getUTCDay();
@@ -611,169 +382,199 @@ export const monitorIdeas = internalAction({
       return;
     }
 
-    try {
-      const price = await fetchCurrentPrice();
+    // Fetch every open idea once, then process per asset so each idea is
+    // checked against its OWN asset's live price and ATR.
+    const allIdeas = await ctx.runQuery(
+      internal.signalEngine._getActiveIdeas,
+      {},
+    );
+    if (!allIdeas || allIdeas.length === 0) return;
 
-      // Also fetch current ATR for trailing stops
-      let currentATR = 0;
-      try {
-        const candles5m = await fetchCandles("5m", 30);
-        const atrArr = calcATR(candles5m, 14);
-        currentATR = atrArr[atrArr.length - 1] ?? 0;
-      } catch {
-        // If ATR fetch fails, we'll skip trailing updates
-      }
-
-      // Get all active ideas
-      const activeIdeas = await ctx.runQuery(
-        internal.signalEngine._getActiveIdeas,
-        {}
+    for (const asset of getEnabledAssets()) {
+      const r = (n: number) => roundTo(n, asset.pricePrecision);
+      const activeIdeas = allIdeas.filter(
+        idea => (idea.asset ?? DEFAULT_ASSET_ID) === asset.id,
       );
+      if (activeIdeas.length === 0) continue;
 
-      if (!activeIdeas || activeIdeas.length === 0) return;
+      try {
+        const price = await fetchCurrentPrice(asset.dataSourceSymbol);
 
-      let hits = 0;
-
-      for (const idea of activeIdeas) {
-        const isLong = idea.direction === "LONG";
-        const effectiveSL = idea.trailingSL ?? idea.stopLoss;
-
-        // === Check SL first (use trailing SL if set) ===
-        const slHit = isLong ? price <= effectiveSL : price >= effectiveSL;
-        if (slHit) {
-          hits++;
-          const pnl = r2(isLong ? effectiveSL - idea.entryPrice : idea.entryPrice - effectiveSL);
-
-          await ctx.runMutation(internal.signalEngine._updateIdeaJourney, {
-            id: idea._id,
-            status: "STOPPED",
-            pnlPoints: pnl,
-            exitPrice: effectiveSL,
-            event: idea.trailingSL ? "TRAIL_SL_HIT" : "SL_HIT",
-          });
-
-          await ctx.runMutation(internal.signalEngine._logJournal, {
-            eventType: "SL_HIT",
-            ideaId: idea._id,
-            direction: idea.direction,
-            price: effectiveSL,
-            details: `${idea.direction} ${idea.trailingSL ? "TRAIL " : ""}SL @ ${effectiveSL.toFixed(2)} | Entry: ${idea.entryPrice.toFixed(2)} | P&L: ${pnl >= 0 ? "+" : ""}${pnl} pts`,
-          });
-          continue;
+        // Also fetch current ATR for trailing stops
+        let currentATR = 0;
+        try {
+          const candles5m = await fetchCandles(
+            asset.dataSourceSymbol,
+            "5m",
+            30,
+          );
+          const atrArr = calcATR(candles5m, asset.config.atrPeriod);
+          currentATR = atrArr[atrArr.length - 1] ?? 0;
+        } catch {
+          // If ATR fetch fails, we'll skip trailing updates
         }
 
-        // === Check TP2 (full close) — for ideas already at TP1_HIT ===
-        if (idea.status === "TP1_HIT") {
-          const tp2Hit = isLong ? price >= idea.tp2 : price <= idea.tp2;
-          if (tp2Hit) {
+        let hits = 0;
+
+        for (const idea of activeIdeas) {
+          const isLong = idea.direction === "LONG";
+          const effectiveSL = idea.trailingSL ?? idea.stopLoss;
+
+          // === Check SL first (use trailing SL if set) ===
+          const slHit = isLong ? price <= effectiveSL : price >= effectiveSL;
+          if (slHit) {
             hits++;
-            const pnl = r2(isLong ? idea.tp2 - idea.entryPrice : idea.entryPrice - idea.tp2);
+            const pnl = r(
+              isLong
+                ? effectiveSL - idea.entryPrice
+                : idea.entryPrice - effectiveSL,
+            );
 
             await ctx.runMutation(internal.signalEngine._updateIdeaJourney, {
               id: idea._id,
-              status: "TP2_HIT",
+              status: "STOPPED",
               pnlPoints: pnl,
-              exitPrice: idea.tp2,
-              event: "TP2_HIT",
+              exitPrice: effectiveSL,
+              event: idea.trailingSL ? "TRAIL_SL_HIT" : "SL_HIT",
             });
 
             await ctx.runMutation(internal.signalEngine._logJournal, {
-              eventType: "TP2_HIT",
+              eventType: "SL_HIT",
               ideaId: idea._id,
               direction: idea.direction,
-              price: idea.tp2,
-              details: `${idea.direction} TP2 @ ${idea.tp2.toFixed(2)} | Entry: ${idea.entryPrice.toFixed(2)} | P&L: +${pnl} pts`,
+              price: effectiveSL,
+              details: `${idea.direction} ${idea.trailingSL ? "TRAIL " : ""}SL @ ${effectiveSL.toFixed(2)} | Entry: ${idea.entryPrice.toFixed(2)} | P&L: ${pnl >= 0 ? "+" : ""}${pnl} pts`,
             });
             continue;
           }
 
-          // === ATR Trailing Stop (only after TP1 hit) ===
-          if (currentATR > 0) {
-            const trailDistance = currentATR * 2;
-            const newTrailSL = isLong
-              ? r2(price - trailDistance)
-              : r2(price + trailDistance);
+          // === Check TP2 (full close) — for ideas already at TP1_HIT ===
+          if (idea.status === "TP1_HIT") {
+            const tp2Hit = isLong ? price >= idea.tp2 : price <= idea.tp2;
+            if (tp2Hit) {
+              hits++;
+              const pnl = r(
+                isLong
+                  ? idea.tp2 - idea.entryPrice
+                  : idea.entryPrice - idea.tp2,
+              );
 
-            const currentTrailSL = idea.trailingSL ?? (isLong ? idea.entryPrice : idea.entryPrice);
-
-            // Only update if trailing SL improved (moved in favorable direction)
-            const shouldUpdate = isLong
-              ? newTrailSL > currentTrailSL
-              : newTrailSL < currentTrailSL;
-
-            if (shouldUpdate) {
-              await ctx.runMutation(internal.signalEngine._updateTrailingSL, {
+              await ctx.runMutation(internal.signalEngine._updateIdeaJourney, {
                 id: idea._id,
-                trailingSL: newTrailSL,
+                status: "TP2_HIT",
+                pnlPoints: pnl,
+                exitPrice: idea.tp2,
+                event: "TP2_HIT",
+              });
+
+              await ctx.runMutation(internal.signalEngine._logJournal, {
+                eventType: "TP2_HIT",
+                ideaId: idea._id,
+                direction: idea.direction,
+                price: idea.tp2,
+                details: `${idea.direction} TP2 @ ${idea.tp2.toFixed(2)} | Entry: ${idea.entryPrice.toFixed(2)} | P&L: +${pnl} pts`,
+              });
+              continue;
+            }
+
+            // === ATR Trailing Stop (only after TP1 hit) ===
+            if (currentATR > 0) {
+              const trailDistance =
+                currentATR * asset.config.atrTrailMultiplier;
+              const newTrailSL = isLong
+                ? r(price - trailDistance)
+                : r(price + trailDistance);
+
+              const currentTrailSL =
+                idea.trailingSL ?? (isLong ? idea.entryPrice : idea.entryPrice);
+
+              // Only update if trailing SL improved (moved in favorable direction)
+              const shouldUpdate = isLong
+                ? newTrailSL > currentTrailSL
+                : newTrailSL < currentTrailSL;
+
+              if (shouldUpdate) {
+                await ctx.runMutation(internal.signalEngine._updateTrailingSL, {
+                  id: idea._id,
+                  trailingSL: newTrailSL,
+                });
+              }
+            }
+            continue;
+          }
+
+          // === Check TP1 (partial close — move SL to breakeven) ===
+          if (idea.status === "ACTIVE") {
+            const tp1Hit = isLong ? price >= idea.tp1 : price <= idea.tp1;
+            if (tp1Hit) {
+              hits++;
+              const pnl = r(
+                isLong
+                  ? idea.tp1 - idea.entryPrice
+                  : idea.entryPrice - idea.tp1,
+              );
+
+              // Move to TP1_HIT status and set trailing SL to breakeven
+              await ctx.runMutation(internal.signalEngine._addJourneyEvent, {
+                id: idea._id,
+                status: "TP1_HIT",
+                event: "TP1_HIT",
+                price: idea.tp1,
+                pnlPoints: pnl,
+                trailingSL: idea.entryPrice, // Move SL to breakeven
+              });
+
+              await ctx.runMutation(internal.signalEngine._logJournal, {
+                eventType: "TP1_HIT",
+                ideaId: idea._id,
+                direction: idea.direction,
+                price: idea.tp1,
+                details: `${idea.direction} TP1 @ ${idea.tp1.toFixed(2)} | Entry: ${idea.entryPrice.toFixed(2)} | P&L: +${pnl} pts | SL → BE @ ${idea.entryPrice.toFixed(2)} | Now trailing to TP2`,
+              });
+              continue;
+            }
+
+            // === Check TP2 directly (rare but possible on gap) ===
+            const tp2Hit = isLong ? price >= idea.tp2 : price <= idea.tp2;
+            if (tp2Hit) {
+              hits++;
+              const pnl = r(
+                isLong
+                  ? idea.tp2 - idea.entryPrice
+                  : idea.entryPrice - idea.tp2,
+              );
+
+              await ctx.runMutation(internal.signalEngine._updateIdeaJourney, {
+                id: idea._id,
+                status: "TP2_HIT",
+                pnlPoints: pnl,
+                exitPrice: idea.tp2,
+                event: "TP2_HIT",
+              });
+
+              await ctx.runMutation(internal.signalEngine._logJournal, {
+                eventType: "TP2_HIT",
+                ideaId: idea._id,
+                direction: idea.direction,
+                price: idea.tp2,
+                details: `${idea.direction} TP2 (gap) @ ${idea.tp2.toFixed(2)} | Entry: ${idea.entryPrice.toFixed(2)} | P&L: +${pnl} pts`,
               });
             }
           }
-          continue;
         }
 
-        // === Check TP1 (partial close — move SL to breakeven) ===
-        if (idea.status === "ACTIVE") {
-          const tp1Hit = isLong ? price >= idea.tp1 : price <= idea.tp1;
-          if (tp1Hit) {
-            hits++;
-            const pnl = r2(isLong ? idea.tp1 - idea.entryPrice : idea.entryPrice - idea.tp1);
-
-            // Move to TP1_HIT status and set trailing SL to breakeven
-            await ctx.runMutation(internal.signalEngine._addJourneyEvent, {
-              id: idea._id,
-              status: "TP1_HIT",
-              event: "TP1_HIT",
-              price: idea.tp1,
-              pnlPoints: pnl,
-              trailingSL: idea.entryPrice, // Move SL to breakeven
-            });
-
-            await ctx.runMutation(internal.signalEngine._logJournal, {
-              eventType: "TP1_HIT",
-              ideaId: idea._id,
-              direction: idea.direction,
-              price: idea.tp1,
-              details: `${idea.direction} TP1 @ ${idea.tp1.toFixed(2)} | Entry: ${idea.entryPrice.toFixed(2)} | P&L: +${pnl} pts | SL → BE @ ${idea.entryPrice.toFixed(2)} | Now trailing to TP2`,
-            });
-            continue;
-          }
-
-          // === Check TP2 directly (rare but possible on gap) ===
-          const tp2Hit = isLong ? price >= idea.tp2 : price <= idea.tp2;
-          if (tp2Hit) {
-            hits++;
-            const pnl = r2(isLong ? idea.tp2 - idea.entryPrice : idea.entryPrice - idea.tp2);
-
-            await ctx.runMutation(internal.signalEngine._updateIdeaJourney, {
-              id: idea._id,
-              status: "TP2_HIT",
-              pnlPoints: pnl,
-              exitPrice: idea.tp2,
-              event: "TP2_HIT",
-            });
-
-            await ctx.runMutation(internal.signalEngine._logJournal, {
-              eventType: "TP2_HIT",
-              ideaId: idea._id,
-              direction: idea.direction,
-              price: idea.tp2,
-              details: `${idea.direction} TP2 (gap) @ ${idea.tp2.toFixed(2)} | Entry: ${idea.entryPrice.toFixed(2)} | P&L: +${pnl} pts`,
-            });
-            continue;
-          }
+        // Log monitor check if anything happened
+        if (hits > 0) {
+          await ctx.runMutation(internal.signalEngine._logJournal, {
+            eventType: "MONITOR_CHECK",
+            price,
+            asset: asset.id,
+            details: `[${asset.displaySymbol}] Checked ${activeIdeas.length} active ideas, ${hits} triggered @ ${price.toFixed(2)}${currentATR > 0 ? ` | ATR: ${currentATR.toFixed(2)}` : ""}`,
+          });
         }
+      } catch (e: any) {
+        console.error(`Monitor error [${asset.id}]:`, e.message);
       }
-
-      // Log monitor check if anything happened
-      if (hits > 0) {
-        await ctx.runMutation(internal.signalEngine._logJournal, {
-          eventType: "MONITOR_CHECK",
-          price,
-          details: `Checked ${activeIdeas.length} active ideas, ${hits} triggered @ ${price.toFixed(2)}${currentATR > 0 ? ` | ATR: ${currentATR.toFixed(2)}` : ""}`,
-        });
-      }
-    } catch (e: any) {
-      console.error("Monitor error:", e.message);
     }
   },
 });
@@ -781,15 +582,15 @@ export const monitorIdeas = internalAction({
 // ─── Internal query: get active ideas ───
 export const _getActiveIdeas = internalQuery({
   args: {},
-  handler: async (ctx) => {
+  handler: async ctx => {
     // Get both ACTIVE and TP1_HIT (still tracking toward TP2)
     const active = await ctx.db
       .query("tradingIdeas")
-      .withIndex("by_status", (q) => q.eq("status", "ACTIVE"))
+      .withIndex("by_status", q => q.eq("status", "ACTIVE"))
       .collect();
     const tp1Hit = await ctx.db
       .query("tradingIdeas")
-      .withIndex("by_status", (q) => q.eq("status", "TP1_HIT"))
+      .withIndex("by_status", q => q.eq("status", "TP1_HIT"))
       .collect();
     return [...active, ...tp1Hit];
   },

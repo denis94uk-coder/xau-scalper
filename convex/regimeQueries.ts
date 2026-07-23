@@ -1,5 +1,5 @@
-import { query, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
+import { internalMutation, query } from "./_generated/server";
 
 // Queries and mutations for regime detection (no "use node")
 
@@ -25,7 +25,7 @@ export const saveRegime = internalMutation({
   handler: async (ctx, args) => {
     const existing = await ctx.db
       .query("settings")
-      .withIndex("by_key", (q) => q.eq("key", "marketRegime"))
+      .withIndex("by_key", q => q.eq("key", "marketRegime"))
       .first();
 
     const value = JSON.stringify({
@@ -36,21 +36,27 @@ export const saveRegime = internalMutation({
     if (existing) {
       await ctx.db.patch(existing._id, { value, updatedAt: Date.now() });
     } else {
-      await ctx.db.insert("settings", { key: "marketRegime", value, updatedAt: Date.now() });
+      await ctx.db.insert("settings", {
+        key: "marketRegime",
+        value,
+        updatedAt: Date.now(),
+      });
     }
   },
 });
 
 export const getRegime = query({
   args: {},
-  handler: async (ctx) => {
+  handler: async ctx => {
     const row = await ctx.db
       .query("settings")
-      .withIndex("by_key", (q) => q.eq("key", "marketRegime"))
+      .withIndex("by_key", q => q.eq("key", "marketRegime"))
       .first();
     if (!row) return null;
     try {
       return JSON.parse(row.value);
-    } catch { return null; }
+    } catch {
+      return null;
+    }
   },
 });

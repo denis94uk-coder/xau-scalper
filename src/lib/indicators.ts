@@ -26,20 +26,48 @@ export function getSession(timestampMs: number): SessionInfo {
 
   // Asian: 00:00–08:00 UTC
   if (hm >= 0 && hm < 8) {
-    return { name: "ASIAN", label: "Asian", isKillZone: false, kzLabel: "", progress: hm / 8, utcHour: h };
+    return {
+      name: "ASIAN",
+      label: "Asian",
+      isKillZone: false,
+      kzLabel: "",
+      progress: hm / 8,
+      utcHour: h,
+    };
   }
   // London: 08:00–13:30 UTC  |  Kill zone 08:00–09:30
   if (hm >= 8 && hm < 13.5) {
     const isKZ = hm >= 8 && hm < 9.5;
-    return { name: "LONDON", label: "London", isKillZone: isKZ, kzLabel: isKZ ? "London Open KZ" : "", progress: (hm - 8) / 5.5, utcHour: h };
+    return {
+      name: "LONDON",
+      label: "London",
+      isKillZone: isKZ,
+      kzLabel: isKZ ? "London Open KZ" : "",
+      progress: (hm - 8) / 5.5,
+      utcHour: h,
+    };
   }
   // NY: 13:30–21:00 UTC  |  Kill zone 13:30–15:00
   if (hm >= 13.5 && hm < 21) {
     const isKZ = hm >= 13.5 && hm < 15;
-    return { name: "NEW_YORK", label: "New York", isKillZone: isKZ, kzLabel: isKZ ? "NY Open KZ" : "", progress: (hm - 13.5) / 7.5, utcHour: h };
+    return {
+      name: "NEW_YORK",
+      label: "New York",
+      isKillZone: isKZ,
+      kzLabel: isKZ ? "NY Open KZ" : "",
+      progress: (hm - 13.5) / 7.5,
+      utcHour: h,
+    };
   }
   // Off-hours 21:00–00:00
-  return { name: "OFF_HOURS", label: "Off-Hours", isKillZone: false, kzLabel: "", progress: (hm - 21) / 3, utcHour: h };
+  return {
+    name: "OFF_HOURS",
+    label: "Off-Hours",
+    isKillZone: false,
+    kzLabel: "",
+    progress: (hm - 21) / 3,
+    utcHour: h,
+  };
 }
 
 // ────────────────────────────
@@ -124,7 +152,7 @@ export function calcMACD(
   closes: number[],
   fastPeriod = 12,
   slowPeriod = 26,
-  signalPeriod = 9
+  signalPeriod = 9,
 ): { macd: number[]; signal: number[]; histogram: number[] } {
   const fastEma = calcEMA(closes, fastPeriod);
   const slowEma = calcEMA(closes, slowPeriod);
@@ -137,7 +165,7 @@ export function calcMACD(
   }
 
   // Signal line is EMA of MACD
-  const macdValues = macdLine.filter((v) => v !== undefined);
+  const macdValues = macdLine.filter(v => v !== undefined);
   const signalEma = calcEMA(macdValues, signalPeriod);
 
   const signal: number[] = [];
@@ -161,7 +189,7 @@ export function calcMACD(
 export function calcBollingerBands(
   closes: number[],
   period = 20,
-  stdDevMultiplier = 2
+  stdDevMultiplier = 2,
 ): { upper: number[]; middle: number[]; lower: number[] } {
   const middle = calcSMA(closes, period);
   const upper: number[] = [];
@@ -227,7 +255,7 @@ export function calcVWAP(candles: Candle[]): number[] {
 export function calcStochastic(
   candles: Candle[],
   kPeriod = 14,
-  dPeriod = 3
+  dPeriod = 3,
 ): { k: number[]; d: number[] } {
   if (candles.length < kPeriod) return { k: [], d: [] };
   const k: number[] = [];
@@ -244,8 +272,8 @@ export function calcStochastic(
   }
 
   const d = calcSMA(
-    k.filter((v) => v !== undefined),
-    dPeriod
+    k.filter(v => v !== undefined),
+    dPeriod,
   );
 
   return { k, d };
@@ -256,7 +284,7 @@ export function calcStochastic(
 // ────────────────────────────
 export function findSwingLevels(
   candles: Candle[],
-  lookback = 5
+  lookback = 5,
 ): { supports: number[]; resistances: number[] } {
   const supports: number[] = [];
   const resistances: number[] = [];
@@ -265,10 +293,16 @@ export function findSwingLevels(
     let isSwingHigh = true;
     let isSwingLow = true;
     for (let j = 1; j <= lookback; j++) {
-      if (candles[i].high <= candles[i - j].high || candles[i].high <= candles[i + j].high) {
+      if (
+        candles[i].high <= candles[i - j].high ||
+        candles[i].high <= candles[i + j].high
+      ) {
         isSwingHigh = false;
       }
-      if (candles[i].low >= candles[i - j].low || candles[i].low >= candles[i + j].low) {
+      if (
+        candles[i].low >= candles[i - j].low ||
+        candles[i].low >= candles[i + j].low
+      ) {
         isSwingLow = false;
       }
     }
@@ -280,7 +314,10 @@ export function findSwingLevels(
 }
 
 // Cluster nearby levels (within tolerance %) and return the strongest
-export function clusterLevels(levels: number[], tolerancePct = 0.0015): number[] {
+export function clusterLevels(
+  levels: number[],
+  tolerancePct = 0.0015,
+): number[] {
   if (levels.length === 0) return [];
   const sorted = [...levels].sort((a, b) => a - b);
   const clusters: { sum: number; count: number }[] = [];
@@ -302,16 +339,24 @@ export function clusterLevels(levels: number[], tolerancePct = 0.0015): number[]
   return clusters
     .sort((a, b) => b.count - a.count)
     .slice(0, 3)
-    .map((c) => Math.round((c.sum / c.count) * 100) / 100);
+    .map(c => Math.round((c.sum / c.count) * 100) / 100);
 }
 
 // Pivot Points (Classic)
 export function calcPivotPoints(candles: Candle[]): {
-  pivot: number; r1: number; r2: number; r3: number; s1: number; s2: number; s3: number;
+  pivot: number;
+  r1: number;
+  r2: number;
+  r3: number;
+  s1: number;
+  s2: number;
+  s3: number;
 } {
   // Use the last completed period (second to last candle's session)
   const len = candles.length;
-  const high = Math.max(...candles.slice(Math.max(0, len - 50)).map(c => c.high));
+  const high = Math.max(
+    ...candles.slice(Math.max(0, len - 50)).map(c => c.high),
+  );
   const low = Math.min(...candles.slice(Math.max(0, len - 50)).map(c => c.low));
   const close = candles[len - 1].close;
 
@@ -390,7 +435,7 @@ export function analyzeForScalping(candles: Candle[]): ScalpAnalysis | null {
   const keySupports = clusterLevels(supports);
   const keyResistances = clusterLevels(resistances);
 
-  const currentATR = atr[last] ?? (price * 0.002);
+  const currentATR = atr[last] ?? price * 0.002;
 
   // ─── Bias calculation ───
   const biasReasons: string[] = [];
@@ -398,7 +443,11 @@ export function analyzeForScalping(candles: Candle[]): ScalpAnalysis | null {
   let bearScore = 0;
 
   // EMA alignment
-  if (ema9[last] !== undefined && ema21[last] !== undefined && ema50[last] !== undefined) {
+  if (
+    ema9[last] !== undefined &&
+    ema21[last] !== undefined &&
+    ema50[last] !== undefined
+  ) {
     if (ema9[last] > ema21[last] && ema21[last] > ema50[last]) {
       bullScore += 25;
       biasReasons.push("EMAs aligned bullish (9 > 21 > 50)");
@@ -428,49 +477,88 @@ export function analyzeForScalping(candles: Candle[]): ScalpAnalysis | null {
   // RSI
   const lastRSI = rsi[last];
   if (lastRSI !== undefined) {
-    if (lastRSI < 30) { bullScore += 20; biasReasons.push(`RSI oversold (${lastRSI.toFixed(1)})`); }
-    else if (lastRSI > 70) { bearScore += 20; biasReasons.push(`RSI overbought (${lastRSI.toFixed(1)})`); }
-    else if (lastRSI > 50) { bullScore += 5; }
-    else { bearScore += 5; }
+    if (lastRSI < 30) {
+      bullScore += 20;
+      biasReasons.push(`RSI oversold (${lastRSI.toFixed(1)})`);
+    } else if (lastRSI > 70) {
+      bearScore += 20;
+      biasReasons.push(`RSI overbought (${lastRSI.toFixed(1)})`);
+    } else if (lastRSI > 50) {
+      bullScore += 5;
+    } else {
+      bearScore += 5;
+    }
   }
 
   // MACD
   if (histogram[last] !== undefined) {
-    if (histogram[last] > 0 && histogram[last - 1] !== undefined && histogram[last - 1] <= 0) {
-      bullScore += 20; biasReasons.push("MACD bullish crossover");
-    } else if (histogram[last] < 0 && histogram[last - 1] !== undefined && histogram[last - 1] >= 0) {
-      bearScore += 20; biasReasons.push("MACD bearish crossover");
+    if (
+      histogram[last] > 0 &&
+      histogram[last - 1] !== undefined &&
+      histogram[last - 1] <= 0
+    ) {
+      bullScore += 20;
+      biasReasons.push("MACD bullish crossover");
+    } else if (
+      histogram[last] < 0 &&
+      histogram[last - 1] !== undefined &&
+      histogram[last - 1] >= 0
+    ) {
+      bearScore += 20;
+      biasReasons.push("MACD bearish crossover");
     } else if (histogram[last] > 0) {
-      bullScore += 8; biasReasons.push("MACD histogram positive");
+      bullScore += 8;
+      biasReasons.push("MACD histogram positive");
     } else {
-      bearScore += 8; biasReasons.push("MACD histogram negative");
+      bearScore += 8;
+      biasReasons.push("MACD histogram negative");
     }
   }
 
   // Bollinger Bands
   if (bb.lower[last] !== undefined && bb.upper[last] !== undefined) {
-    if (price <= bb.lower[last]) { bullScore += 15; biasReasons.push("Price at lower BB (potential bounce)"); }
-    else if (price >= bb.upper[last]) { bearScore += 15; biasReasons.push("Price at upper BB (potential rejection)"); }
+    if (price <= bb.lower[last]) {
+      bullScore += 15;
+      biasReasons.push("Price at lower BB (potential bounce)");
+    } else if (price >= bb.upper[last]) {
+      bearScore += 15;
+      biasReasons.push("Price at upper BB (potential rejection)");
+    }
   }
 
   // Stochastic
   const lastK = stoch.k[last];
   if (lastK !== undefined) {
-    if (lastK < 20) { bullScore += 12; biasReasons.push(`Stochastic oversold (${lastK.toFixed(0)})`); }
-    else if (lastK > 80) { bearScore += 12; biasReasons.push(`Stochastic overbought (${lastK.toFixed(0)})`); }
+    if (lastK < 20) {
+      bullScore += 12;
+      biasReasons.push(`Stochastic oversold (${lastK.toFixed(0)})`);
+    } else if (lastK > 80) {
+      bearScore += 12;
+      biasReasons.push(`Stochastic overbought (${lastK.toFixed(0)})`);
+    }
   }
 
   const total = bullScore + bearScore;
-  const biasStrength = total === 0 ? 0 : Math.round((Math.abs(bullScore - bearScore) / total) * 100);
+  const biasStrength =
+    total === 0
+      ? 0
+      : Math.round((Math.abs(bullScore - bearScore) / total) * 100);
   const bias: "BULLISH" | "BEARISH" | "NEUTRAL" =
-    biasStrength < 15 ? "NEUTRAL" : bullScore > bearScore ? "BULLISH" : "BEARISH";
+    biasStrength < 15
+      ? "NEUTRAL"
+      : bullScore > bearScore
+        ? "BULLISH"
+        : "BEARISH";
 
   // ─── Generate entry ideas ───
   const entries: ScalpEntry[] = [];
 
   // Long entry: EMA bounce + RSI support
   if (bias === "BULLISH" || bias === "NEUTRAL") {
-    const nearestSupport = keySupports.find(s => s < price && (price - s) / price < 0.005) ?? (ema21[last] ?? price - currentATR);
+    const nearestSupport =
+      keySupports.find(s => s < price && (price - s) / price < 0.005) ??
+      ema21[last] ??
+      price - currentATR;
     const sl = r2(nearestSupport - currentATR * 0.5);
     const risk = price - sl;
     if (risk > 0) {
@@ -480,16 +568,27 @@ export function analyzeForScalping(candles: Candle[]): ScalpAnalysis | null {
         stopLoss: sl,
         tp1: r2(price + risk * 1.5),
         tp2: r2(price + risk * 2.5),
-        riskReward: Math.round((risk * 2) / risk * 10) / 10,
+        riskReward: Math.round(((risk * 2) / risk) * 10) / 10,
         confidence: Math.min(90, Math.round(bullScore * 1.2)),
-        reason: buildEntryReason("LONG", lastRSI, ema9[last], ema21[last], bb, last, price),
+        reason: buildEntryReason(
+          "LONG",
+          lastRSI,
+          ema9[last],
+          ema21[last],
+          bb,
+          last,
+          price,
+        ),
       });
     }
   }
 
   // Short entry: rejection + RSI resistance
   if (bias === "BEARISH" || bias === "NEUTRAL") {
-    const nearestResistance = keyResistances.find(r => r > price && (r - price) / price < 0.005) ?? (ema21[last] ?? price + currentATR);
+    const nearestResistance =
+      keyResistances.find(r => r > price && (r - price) / price < 0.005) ??
+      ema21[last] ??
+      price + currentATR;
     const sl = r2(nearestResistance + currentATR * 0.5);
     const risk = sl - price;
     if (risk > 0) {
@@ -499,9 +598,17 @@ export function analyzeForScalping(candles: Candle[]): ScalpAnalysis | null {
         stopLoss: sl,
         tp1: r2(price - risk * 1.5),
         tp2: r2(price - risk * 2.5),
-        riskReward: Math.round((risk * 2) / risk * 10) / 10,
+        riskReward: Math.round(((risk * 2) / risk) * 10) / 10,
         confidence: Math.min(90, Math.round(bearScore * 1.2)),
-        reason: buildEntryReason("SHORT", lastRSI, ema9[last], ema21[last], bb, last, price),
+        reason: buildEntryReason(
+          "SHORT",
+          lastRSI,
+          ema9[last],
+          ema21[last],
+          bb,
+          last,
+          price,
+        ),
       });
     }
   }
@@ -539,19 +646,29 @@ function buildEntryReason(
   ema21: number | undefined,
   bb: { upper: number[]; lower: number[]; middle: number[] },
   last: number,
-  price: number
+  price: number,
 ): string {
   const parts: string[] = [];
   if (dir === "LONG") {
-    if (ema9 !== undefined && ema21 !== undefined && ema9 > ema21) parts.push("EMA 9/21 bullish");
-    if (rsi !== undefined && rsi < 40) parts.push(`RSI low (${rsi.toFixed(0)})`);
-    if (bb.lower[last] !== undefined && price < bb.middle[last]) parts.push("Below BB midline");
+    if (ema9 !== undefined && ema21 !== undefined && ema9 > ema21)
+      parts.push("EMA 9/21 bullish");
+    if (rsi !== undefined && rsi < 40)
+      parts.push(`RSI low (${rsi.toFixed(0)})`);
+    if (bb.lower[last] !== undefined && price < bb.middle[last])
+      parts.push("Below BB midline");
   } else {
-    if (ema9 !== undefined && ema21 !== undefined && ema9 < ema21) parts.push("EMA 9/21 bearish");
-    if (rsi !== undefined && rsi > 60) parts.push(`RSI high (${rsi.toFixed(0)})`);
-    if (bb.upper[last] !== undefined && price > bb.middle[last]) parts.push("Above BB midline");
+    if (ema9 !== undefined && ema21 !== undefined && ema9 < ema21)
+      parts.push("EMA 9/21 bearish");
+    if (rsi !== undefined && rsi > 60)
+      parts.push(`RSI high (${rsi.toFixed(0)})`);
+    if (bb.upper[last] !== undefined && price > bb.middle[last])
+      parts.push("Above BB midline");
   }
-  return parts.length > 0 ? parts.join(" · ") : (dir === "LONG" ? "Bullish momentum" : "Bearish momentum");
+  return parts.length > 0
+    ? parts.join(" · ")
+    : dir === "LONG"
+      ? "Bullish momentum"
+      : "Bearish momentum";
 }
 
 // Generate scalping signals based on indicators
@@ -566,7 +683,7 @@ export function generateSignal(candles: Candle[]): ScalpSignal {
     return { type: "NEUTRAL", strength: 0, reasons: ["Insufficient data"] };
   }
 
-  const closes = candles.map((c) => c.close);
+  const closes = candles.map(c => c.close);
   const rsi = calcRSI(closes, 14);
   const { histogram } = calcMACD(closes);
   const ema9 = calcEMA(closes, 9);
@@ -617,10 +734,7 @@ export function generateSignal(candles: Candle[]): ScalpSignal {
     if (ema9[last] > ema21[last] && ema9[last - 1] <= ema21[last - 1]) {
       bullScore += 25;
       reasons.push("EMA 9/21 bullish cross");
-    } else if (
-      ema9[last] < ema21[last] &&
-      ema9[last - 1] >= ema21[last - 1]
-    ) {
+    } else if (ema9[last] < ema21[last] && ema9[last - 1] >= ema21[last - 1]) {
       bearScore += 25;
       reasons.push("EMA 9/21 bearish cross");
     } else if (ema9[last] > ema21[last]) {

@@ -1,17 +1,17 @@
 import { useQuery } from "convex/react";
-import { api } from "../../convex/_generated/api";
-import { useState } from "react";
 import {
-  TrendingUp,
-  TrendingDown,
-  Target,
-  Shield,
-  Flame,
   BarChart3,
   Bot,
-  User,
+  Flame,
   FlaskConical,
+  Shield,
+  Target,
+  TrendingDown,
+  TrendingUp,
+  User,
 } from "lucide-react";
+import { useState } from "react";
+import { api } from "../../convex/_generated/api";
 
 type SourceFilter = "all" | "engine" | "dashboard" | "experimental";
 
@@ -31,13 +31,13 @@ export function PerformanceTrackerPage() {
   const filtered =
     source === "all"
       ? allIdeas
-      : allIdeas.filter((i) => (i.source ?? "dashboard") === source);
+      : allIdeas.filter(i => (i.source ?? "dashboard") === source);
   const closed = filtered.filter(
-    (i) =>
+    i =>
       i.status === "TP1_HIT" ||
       i.status === "TP2_HIT" ||
       i.status === "STOPPED" ||
-      i.status === "EXPIRED"
+      i.status === "EXPIRED",
   );
 
   // Group by day for calendar
@@ -49,12 +49,10 @@ export function PerformanceTrackerPage() {
     const d = new Date(idea.resolvedAt ?? idea.createdAt)
       .toISOString()
       .split("T")[0];
-    if (!byDay[d])
-      byDay[d] = { wins: 0, losses: 0, pnl: 0, count: 0 };
+    if (!byDay[d]) byDay[d] = { wins: 0, losses: 0, pnl: 0, count: 0 };
     byDay[d].count++;
     byDay[d].pnl += idea.pnlPoints ?? 0;
-    if (idea.status === "TP1_HIT" || idea.status === "TP2_HIT")
-      byDay[d].wins++;
+    if (idea.status === "TP1_HIT" || idea.status === "TP2_HIT") byDay[d].wins++;
     else byDay[d].losses++;
   }
 
@@ -81,7 +79,7 @@ export function PerformanceTrackerPage() {
               { key: "dashboard", label: "Manual", icon: User },
               { key: "experimental", label: "EXP", icon: FlaskConical },
             ] as const
-          ).map((s) => (
+          ).map(s => (
             <button
               key={s.key}
               onClick={() => setSource(s.key)}
@@ -109,7 +107,9 @@ export function PerformanceTrackerPage() {
         />
         <PerfCard
           label="Profit Factor"
-          value={stats.profitFactor >= 999 ? "∞" : stats.profitFactor.toFixed(2)}
+          value={
+            stats.profitFactor >= 999 ? "∞" : stats.profitFactor.toFixed(2)
+          }
           color={
             stats.profitFactor >= 1.5
               ? "text-emerald-400"
@@ -266,8 +266,8 @@ export function PerformanceTrackerPage() {
           <div className="h-40 flex items-end gap-0.5">
             {(() => {
               const data = stats.equityCurve;
-              const maxEquity = Math.max(...data.map((d) => d.equity), 0);
-              const minEquity = Math.min(...data.map((d) => d.equity), 0);
+              const maxEquity = Math.max(...data.map(d => d.equity), 0);
+              const minEquity = Math.min(...data.map(d => d.equity), 0);
               const range = maxEquity - minEquity || 1;
               const zeroLine = maxEquity / range;
 
@@ -295,11 +295,10 @@ export function PerformanceTrackerPage() {
                       }}
                     />
                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 opacity-0 group-hover:opacity-100 transition-opacity bg-[#1A1D27] border border-white/10 rounded px-2 py-1 text-[10px] whitespace-nowrap z-50 pointer-events-none">
-                      <div>
-                        Equity: {d.equity.toFixed(1)} pts
-                      </div>
+                      <div>Equity: {d.equity.toFixed(1)} pts</div>
                       <div className="text-muted-foreground">
-                        Trade P&L: {d.pnl >= 0 ? "+" : ""}{d.pnl.toFixed(1)}
+                        Trade P&L: {d.pnl >= 0 ? "+" : ""}
+                        {d.pnl.toFixed(1)}
                       </div>
                     </div>
                   </div>
@@ -315,8 +314,11 @@ export function PerformanceTrackerPage() {
         <div className="bg-[#12141A] border border-white/5 rounded-lg p-3">
           <div className="text-sm font-medium mb-3">Daily P&L</div>
           <div className="grid grid-cols-7 gap-1">
-            {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
-              <div key={d} className="text-[10px] text-center text-muted-foreground">
+            {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map(d => (
+              <div
+                key={d}
+                className="text-[10px] text-center text-muted-foreground"
+              >
                 {d}
               </div>
             ))}
@@ -358,7 +360,7 @@ export function PerformanceTrackerPage() {
               No closed signals yet
             </div>
           ) : (
-            closed.slice(0, 30).map((idea) => (
+            closed.slice(0, 30).map(idea => (
               <div
                 key={idea._id}
                 className="flex items-center gap-2 text-xs py-1 border-b border-white/5"
@@ -394,7 +396,9 @@ export function PerformanceTrackerPage() {
                   {(idea.pnlPoints ?? 0).toFixed(1)}
                 </span>
                 <span className="text-muted-foreground text-[10px]">
-                  {new Date(idea.resolvedAt ?? idea.createdAt).toLocaleDateString()}
+                  {new Date(
+                    idea.resolvedAt ?? idea.createdAt,
+                  ).toLocaleDateString()}
                 </span>
               </div>
             ))

@@ -1,37 +1,44 @@
-import { useState, useEffect, useCallback, useMemo, Component, type ReactNode } from "react";
 import { useMutation } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import {
+  Activity,
+  BarChart3,
+  Eye,
+  FlaskConical,
+  GitBranch,
+  Layers,
+  Minus,
+  Radio,
+  Target,
+  TrendingDown,
+  TrendingUp,
+  Zap,
+} from "lucide-react";
+import {
+  Component,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { toast } from "sonner";
-import {
-  fetchGoldPrice,
-  fetchGoldCandles,
-  type PriceData,
-  type Candle,
-} from "@/lib/priceApi";
-import type { ScalpEntry } from "@/lib/indicators";
-import {
-  analyzeExperimental,
-  type ExperimentalAnalysis,
-  type ToolSignal,
-} from "@/lib/experimentalIndicators";
 import { MiniChart } from "@/components/dashboard/MultiTimeframeView";
 import { PriceTicker } from "@/components/dashboard/PriceTicker";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  FlaskConical,
-  TrendingUp,
-  TrendingDown,
-  Minus,
-  Activity,
-  Zap,
-  BarChart3,
-  Layers,
-  Eye,
-  GitBranch,
-  Target,
-  Radio,
-} from "lucide-react";
+  analyzeExperimental,
+  type ExperimentalAnalysis,
+  type ToolSignal,
+} from "@/lib/experimentalIndicators";
+import type { ScalpEntry } from "@/lib/indicators";
+import {
+  type Candle,
+  fetchGoldCandles,
+  fetchGoldPrice,
+  type PriceData,
+} from "@/lib/priceApi";
+import { api } from "../../convex/_generated/api";
 
 // Error boundary
 class ErrorBoundary extends Component<
@@ -50,7 +57,9 @@ class ErrorBoundary extends Component<
       return (
         <div className="flex flex-col items-center justify-center h-screen gap-4 p-6 bg-[#0A0C10] text-white">
           <FlaskConical className="w-8 h-8 text-[#AB47BC]" />
-          <span className="text-lg font-mono text-[#AB47BC]">⚠ Experimental Lab Error</span>
+          <span className="text-lg font-mono text-[#AB47BC]">
+            ⚠ Experimental Lab Error
+          </span>
           <span className="text-sm text-muted-foreground text-center max-w-md">
             {this.state.error || "Something went wrong."}
           </span>
@@ -114,15 +123,43 @@ function ExperimentalContent() {
   }, [loadData]);
 
   // Experimental analysis per timeframe
-  const exp1m = useMemo(() => { try { return analyzeExperimental(candles1m); } catch { return null; } }, [candles1m]);
-  const exp3m = useMemo(() => { try { return analyzeExperimental(candles3m); } catch { return null; } }, [candles3m]);
-  const exp5m = useMemo(() => { try { return analyzeExperimental(candles5m); } catch { return null; } }, [candles5m]);
-  const exp15m = useMemo(() => { try { return analyzeExperimental(candles15m); } catch { return null; } }, [candles15m]);
+  const exp1m = useMemo(() => {
+    try {
+      return analyzeExperimental(candles1m);
+    } catch {
+      return null;
+    }
+  }, [candles1m]);
+  const exp3m = useMemo(() => {
+    try {
+      return analyzeExperimental(candles3m);
+    } catch {
+      return null;
+    }
+  }, [candles3m]);
+  const exp5m = useMemo(() => {
+    try {
+      return analyzeExperimental(candles5m);
+    } catch {
+      return null;
+    }
+  }, [candles5m]);
+  const exp15m = useMemo(() => {
+    try {
+      return analyzeExperimental(candles15m);
+    } catch {
+      return null;
+    }
+  }, [candles15m]);
 
   const activeExp =
-    activeTimeframe === "1m" ? exp1m :
-    activeTimeframe === "3m" ? exp3m :
-    activeTimeframe === "5m" ? exp5m : exp15m;
+    activeTimeframe === "1m"
+      ? exp1m
+      : activeTimeframe === "3m"
+        ? exp3m
+        : activeTimeframe === "5m"
+          ? exp5m
+          : exp15m;
 
   if (loading) {
     return (
@@ -154,7 +191,9 @@ function ExperimentalContent() {
               </span>
             </h1>
             <p className="text-[11px] text-muted-foreground">
-              8 proven scalping tools combined — Supertrend · Heikin Ashi · TTM Squeeze · EMA Ribbon · RSI Divergence · Order Blocks · FVG · VWAP Bands
+              8 proven scalping tools combined — Supertrend · Heikin Ashi · TTM
+              Squeeze · EMA Ribbon · RSI Divergence · Order Blocks · FVG · VWAP
+              Bands
             </p>
           </div>
         </div>
@@ -175,7 +214,9 @@ function ExperimentalContent() {
               <span className="flex items-center gap-1.5">
                 <span className="w-3 h-3 border-2 border-[#AB47BC] border-t-transparent rounded-full animate-spin" />
               </span>
-            ) : "↻ Refresh"}
+            ) : (
+              "↻ Refresh"
+            )}
           </Button>
         </div>
       </div>
@@ -185,10 +226,7 @@ function ExperimentalContent() {
 
       {/* Combined Signal Panel */}
       {activeExp && (
-        <CombinedSignalPanel
-          analysis={activeExp}
-          timeframe={activeTimeframe}
-        />
+        <CombinedSignalPanel analysis={activeExp} timeframe={activeTimeframe} />
       )}
 
       {/* Tool Grid — each tool's signal */}
@@ -206,14 +244,36 @@ function ExperimentalContent() {
 
       {/* Multi-TF Charts */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {([
-          { tf: "1m" as Timeframe, label: "1 MIN", candles: candles1m, exp: exp1m },
-          { tf: "3m" as Timeframe, label: "3 MIN", candles: candles3m, exp: exp3m },
-          { tf: "5m" as Timeframe, label: "5 MIN", candles: candles5m, exp: exp5m },
-          { tf: "15m" as Timeframe, label: "15 MIN", candles: candles15m, exp: exp15m },
-        ]).map(({ tf, label, candles, exp }) => (
+        {[
+          {
+            tf: "1m" as Timeframe,
+            label: "1 MIN",
+            candles: candles1m,
+            exp: exp1m,
+          },
+          {
+            tf: "3m" as Timeframe,
+            label: "3 MIN",
+            candles: candles3m,
+            exp: exp3m,
+          },
+          {
+            tf: "5m" as Timeframe,
+            label: "5 MIN",
+            candles: candles5m,
+            exp: exp5m,
+          },
+          {
+            tf: "15m" as Timeframe,
+            label: "15 MIN",
+            candles: candles15m,
+            exp: exp15m,
+          },
+        ].map(({ tf, label, candles, exp }) => (
           <div
             key={tf}
+            role="button"
+            tabIndex={0}
             className={`cursor-pointer transition-all rounded-xl ${
               activeTimeframe === tf
                 ? "ring-1 ring-[#AB47BC]/50"
@@ -221,18 +281,32 @@ function ExperimentalContent() {
             }`}
             onClick={() => setActiveTimeframe(tf)}
           >
-            <MiniChart candles={candles} label={label} height={200} showEMA showBB={tf === "15m"} />
+            <MiniChart
+              candles={candles}
+              label={label}
+              height={200}
+              showEMA
+              showBB={tf === "15m"}
+            />
             {/* Supertrend badge on chart */}
             {exp && (
               <div className="flex items-center justify-between px-2 py-1 -mt-1">
-                <span className={`text-[9px] font-mono font-bold ${
-                  exp.supertrend.trend[candles.length - 1] === "UP" ? "text-[#00E676]" : "text-[#FF1744]"
-                }`}>
+                <span
+                  className={`text-[9px] font-mono font-bold ${
+                    exp.supertrend.trend[candles.length - 1] === "UP"
+                      ? "text-[#00E676]"
+                      : "text-[#FF1744]"
+                  }`}
+                >
                   ST: {exp.supertrend.trend[candles.length - 1]}
                 </span>
-                <span className={`text-[9px] font-mono ${
-                  exp.squeeze.isSqueezing[candles.length - 1] ? "text-[#FFD600] animate-pulse" : "text-muted-foreground/40"
-                }`}>
+                <span
+                  className={`text-[9px] font-mono ${
+                    exp.squeeze.isSqueezing[candles.length - 1]
+                      ? "text-[#FFD600] animate-pulse"
+                      : "text-muted-foreground/40"
+                  }`}
+                >
                   {exp.squeeze.isSqueezing[candles.length - 1] ? "🔥 SQZ" : ""}
                 </span>
               </div>
@@ -246,14 +320,16 @@ function ExperimentalContent() {
 
       {/* SMC Zones: Order Blocks + FVGs */}
       {activeExp && (
-        <SMCZonesPanel
-          analysis={activeExp}
-          price={priceData?.price ?? 0}
-        />
+        <SMCZonesPanel analysis={activeExp} price={priceData?.price ?? 0} />
       )}
 
       {/* Multi-TF Experimental Confluence */}
-      <ExperimentalConfluence exp1m={exp1m} exp3m={exp3m} exp5m={exp5m} exp15m={exp15m} />
+      <ExperimentalConfluence
+        exp1m={exp1m}
+        exp3m={exp3m}
+        exp5m={exp5m}
+        exp15m={exp15m}
+      />
     </div>
   );
 }
@@ -277,15 +353,21 @@ function CombinedSignalPanel({
 }) {
   const sig = analysis.experimentalSignal;
   const dirColor =
-    sig.direction === "LONG" ? "#00E676" :
-    sig.direction === "SHORT" ? "#FF1744" : "#AB47BC";
+    sig.direction === "LONG"
+      ? "#00E676"
+      : sig.direction === "SHORT"
+        ? "#FF1744"
+        : "#AB47BC";
   const dirLabel =
-    sig.direction === "LONG" ? "LONG" :
-    sig.direction === "SHORT" ? "SHORT" : "NEUTRAL";
+    sig.direction === "LONG"
+      ? "LONG"
+      : sig.direction === "SHORT"
+        ? "SHORT"
+        : "NEUTRAL";
 
-  const buyTools = sig.tools.filter((t) => t.signal === "BUY").length;
-  const sellTools = sig.tools.filter((t) => t.signal === "SELL").length;
-  const squeezeActive = sig.tools.some((t) => t.signal === "SQUEEZE");
+  const buyTools = sig.tools.filter(t => t.signal === "BUY").length;
+  const sellTools = sig.tools.filter(t => t.signal === "SELL").length;
+  const squeezeActive = sig.tools.some(t => t.signal === "SQUEEZE");
 
   return (
     <div
@@ -300,7 +382,10 @@ function CombinedSignalPanel({
         <div className="flex items-center gap-4">
           <div
             className="flex items-center gap-2 px-4 py-2 rounded-xl border"
-            style={{ borderColor: `${dirColor}40`, backgroundColor: `${dirColor}12` }}
+            style={{
+              borderColor: `${dirColor}40`,
+              backgroundColor: `${dirColor}12`,
+            }}
           >
             {sig.direction === "LONG" ? (
               <TrendingUp className="w-5 h-5" style={{ color: dirColor }} />
@@ -309,21 +394,32 @@ function CombinedSignalPanel({
             ) : (
               <Minus className="w-5 h-5" style={{ color: dirColor }} />
             )}
-            <span className="text-xl font-bold font-mono tracking-wider" style={{ color: dirColor }}>
+            <span
+              className="text-xl font-bold font-mono tracking-wider"
+              style={{ color: dirColor }}
+            >
               {dirLabel}
             </span>
           </div>
 
           <div className="flex flex-col gap-1">
             <div className="flex items-center gap-2">
-              <span className="text-[10px] text-muted-foreground">Combined Confidence</span>
+              <span className="text-[10px] text-muted-foreground">
+                Combined Confidence
+              </span>
               <div className="w-20 h-2 bg-secondary/50 rounded-full overflow-hidden">
                 <div
                   className="h-full rounded-full transition-all duration-700"
-                  style={{ width: `${sig.confidence}%`, backgroundColor: dirColor }}
+                  style={{
+                    width: `${sig.confidence}%`,
+                    backgroundColor: dirColor,
+                  }}
                 />
               </div>
-              <span className="text-sm font-mono tabular-nums font-bold" style={{ color: dirColor }}>
+              <span
+                className="text-sm font-mono tabular-nums font-bold"
+                style={{ color: dirColor }}
+              >
                 {sig.confidence}%
               </span>
             </div>
@@ -333,8 +429,12 @@ function CombinedSignalPanel({
                 {sig.combinedScore}%
               </span>
               <span className="text-muted-foreground/30">·</span>
-              <span className="text-[10px] font-mono text-[#00E676]">▲{buyTools}</span>
-              <span className="text-[10px] font-mono text-[#FF1744]">▼{sellTools}</span>
+              <span className="text-[10px] font-mono text-[#00E676]">
+                ▲{buyTools}
+              </span>
+              <span className="text-[10px] font-mono text-[#FF1744]">
+                ▼{sellTools}
+              </span>
               {squeezeActive && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#FFD600]/15 text-[#FFD600] font-bold animate-pulse">
                   🔥 SQUEEZE
@@ -349,7 +449,7 @@ function CombinedSignalPanel({
 
         {/* Quick tool summary */}
         <div className="flex items-center gap-1.5 flex-wrap">
-          {sig.tools.map((tool) => (
+          {sig.tools.map(tool => (
             <ToolPill key={tool.name} tool={tool} />
           ))}
         </div>
@@ -360,12 +460,16 @@ function CombinedSignalPanel({
 
 function ToolPill({ tool }: { tool: ToolSignal }) {
   const color =
-    tool.signal === "BUY" ? "#00E676" :
-    tool.signal === "SELL" ? "#FF1744" :
-    tool.signal === "SQUEEZE" ? "#FFD600" : "#6B7280";
+    tool.signal === "BUY"
+      ? "#00E676"
+      : tool.signal === "SELL"
+        ? "#FF1744"
+        : tool.signal === "SQUEEZE"
+          ? "#FFD600"
+          : "#6B7280";
 
   const ICONS: Record<string, typeof Activity> = {
-    "Supertrend": Activity,
+    Supertrend: Activity,
     "Heikin Ashi": BarChart3,
     "TTM Squeeze": Zap,
     "EMA Ribbon": Layers,
@@ -389,7 +493,13 @@ function ToolPill({ tool }: { tool: ToolSignal }) {
       <Icon className="w-2.5 h-2.5" />
       <span className="font-semibold">{tool.name.split(" ")[0]}</span>
       <span className="text-[9px] opacity-70">
-        {tool.signal === "BUY" ? "▲" : tool.signal === "SELL" ? "▼" : tool.signal === "SQUEEZE" ? "◆" : "—"}
+        {tool.signal === "BUY"
+          ? "▲"
+          : tool.signal === "SELL"
+            ? "▼"
+            : tool.signal === "SQUEEZE"
+              ? "◆"
+              : "—"}
       </span>
     </div>
   );
@@ -403,14 +513,18 @@ function ToolGrid({ analysis }: { analysis: ExperimentalAnalysis }) {
 
   return (
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-      {tools.map((tool) => {
+      {tools.map(tool => {
         const color =
-          tool.signal === "BUY" ? "#00E676" :
-          tool.signal === "SELL" ? "#FF1744" :
-          tool.signal === "SQUEEZE" ? "#FFD600" : "#6B7280";
+          tool.signal === "BUY"
+            ? "#00E676"
+            : tool.signal === "SELL"
+              ? "#FF1744"
+              : tool.signal === "SQUEEZE"
+                ? "#FFD600"
+                : "#6B7280";
 
         const ICONS: Record<string, typeof Activity> = {
-          "Supertrend": Activity,
+          Supertrend: Activity,
           "Heikin Ashi": BarChart3,
           "TTM Squeeze": Zap,
           "EMA Ribbon": Layers,
@@ -446,14 +560,21 @@ function ToolGrid({ analysis }: { analysis: ExperimentalAnalysis }) {
               {tool.detail}
             </p>
             <div className="flex items-center gap-1 mt-auto">
-              <span className="text-[9px] text-muted-foreground/50">Weight</span>
+              <span className="text-[9px] text-muted-foreground/50">
+                Weight
+              </span>
               <div className="flex-1 h-1 bg-secondary/30 rounded-full overflow-hidden">
                 <div
                   className="h-full rounded-full"
-                  style={{ width: `${(tool.weight / 20) * 100}%`, backgroundColor: color }}
+                  style={{
+                    width: `${(tool.weight / 20) * 100}%`,
+                    backgroundColor: color,
+                  }}
                 />
               </div>
-              <span className="text-[9px] font-mono text-muted-foreground/50">{tool.weight}</span>
+              <span className="text-[9px] font-mono text-muted-foreground/50">
+                {tool.weight}
+              </span>
             </div>
           </div>
         );
@@ -506,7 +627,9 @@ function ExperimentalEntries({
       <div className="flex items-center gap-2 mb-3">
         <FlaskConical className="w-4 h-4 text-[#AB47BC]" />
         <span className="text-sm font-semibold">Experimental Entry Ideas</span>
-        <span className="text-[10px] text-muted-foreground">Based on 8-tool analysis</span>
+        <span className="text-[10px] text-muted-foreground">
+          Based on 8-tool analysis
+        </span>
       </div>
       <div className="flex flex-col sm:flex-row gap-3">
         {entries.map((entry, i) => {
@@ -523,7 +646,10 @@ function ExperimentalEntries({
                 <div className="flex items-center gap-2">
                   <span
                     className="text-xs font-bold font-mono px-2 py-0.5 rounded"
-                    style={{ color: dirColor, backgroundColor: `${dirColor}15` }}
+                    style={{
+                      color: dirColor,
+                      backgroundColor: `${dirColor}15`,
+                    }}
                   >
                     {entry.direction}
                   </span>
@@ -536,10 +662,16 @@ function ExperimentalEntries({
                     <div className="w-10 h-1.5 bg-secondary/50 rounded-full overflow-hidden">
                       <div
                         className="h-full rounded-full"
-                        style={{ width: `${entry.confidence}%`, backgroundColor: dirColor }}
+                        style={{
+                          width: `${entry.confidence}%`,
+                          backgroundColor: dirColor,
+                        }}
                       />
                     </div>
-                    <span className="text-[10px] font-mono tabular-nums" style={{ color: dirColor }}>
+                    <span
+                      className="text-[10px] font-mono tabular-nums"
+                      style={{ color: dirColor }}
+                    >
                       {entry.confidence}%
                     </span>
                   </div>
@@ -554,17 +686,23 @@ function ExperimentalEntries({
 
               <div className="grid grid-cols-4 gap-2 mb-2">
                 <div className="flex flex-col">
-                  <span className="text-[10px] text-muted-foreground">ENTRY</span>
+                  <span className="text-[10px] text-muted-foreground">
+                    ENTRY
+                  </span>
                   <span className="text-sm font-mono tabular-nums font-semibold text-[#D4A843]">
                     {entry.entryPrice.toFixed(2)}
                   </span>
                 </div>
                 <div className="flex flex-col">
-                  <span className="text-[10px] text-muted-foreground">STOP</span>
+                  <span className="text-[10px] text-muted-foreground">
+                    STOP
+                  </span>
                   <span className="text-sm font-mono tabular-nums font-semibold text-[#FF1744]">
                     {entry.stopLoss.toFixed(2)}
                   </span>
-                  <span className="text-[9px] text-muted-foreground/50 font-mono">{slDist.toFixed(2)} pts</span>
+                  <span className="text-[9px] text-muted-foreground/50 font-mono">
+                    {slDist.toFixed(2)} pts
+                  </span>
                 </div>
                 <div className="flex flex-col">
                   <span className="text-[10px] text-muted-foreground">TP1</span>
@@ -611,15 +749,21 @@ function SMCZonesPanel({
       <div className="flex items-center gap-2 mb-3">
         <Target className="w-4 h-4 text-[#AB47BC]" />
         <span className="text-sm font-semibold">Smart Money Zones</span>
-        <span className="text-[10px] text-muted-foreground">Order Blocks · FVG · VWAP Bands</span>
+        <span className="text-[10px] text-muted-foreground">
+          Order Blocks · FVG · VWAP Bands
+        </span>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         {/* Order Blocks */}
         <div className="flex flex-col gap-2">
-          <span className="text-[10px] text-muted-foreground tracking-wider uppercase">Order Blocks</span>
+          <span className="text-[10px] text-muted-foreground tracking-wider uppercase">
+            Order Blocks
+          </span>
           {orderBlocks.length === 0 ? (
-            <span className="text-[10px] text-muted-foreground/50">None detected</span>
+            <span className="text-[10px] text-muted-foreground/50">
+              None detected
+            </span>
           ) : (
             orderBlocks.slice(-4).map((ob, i) => {
               const isBull = ob.type === "BULLISH_OB";
@@ -635,9 +779,15 @@ function SMCZonesPanel({
                     ...(isNear ? { ringColor: `${c}40` } : {}),
                   }}
                 >
-                  <div className="w-1.5 h-4 rounded-full" style={{ backgroundColor: c }} />
+                  <div
+                    className="w-1.5 h-4 rounded-full"
+                    style={{ backgroundColor: c }}
+                  />
                   <div className="flex flex-col flex-1">
-                    <span className="text-[10px] font-mono" style={{ color: c }}>
+                    <span
+                      className="text-[10px] font-mono"
+                      style={{ color: c }}
+                    >
                       {isBull ? "Bull OB" : "Bear OB"}
                       {isNear && " ◄ NEAR"}
                     </span>
@@ -647,7 +797,11 @@ function SMCZonesPanel({
                   </div>
                   <div className="flex items-center gap-0.5">
                     {Array.from({ length: ob.strength }).map((_, j) => (
-                      <div key={j} className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: c }} />
+                      <div
+                        key={j}
+                        className="w-1.5 h-1.5 rounded-full"
+                        style={{ backgroundColor: c }}
+                      />
                     ))}
                   </div>
                 </div>
@@ -658,9 +812,13 @@ function SMCZonesPanel({
 
         {/* Fair Value Gaps */}
         <div className="flex flex-col gap-2">
-          <span className="text-[10px] text-muted-foreground tracking-wider uppercase">Fair Value Gaps</span>
+          <span className="text-[10px] text-muted-foreground tracking-wider uppercase">
+            Fair Value Gaps
+          </span>
           {fvgs.length === 0 ? (
-            <span className="text-[10px] text-muted-foreground/50">No unfilled FVGs</span>
+            <span className="text-[10px] text-muted-foreground/50">
+              No unfilled FVGs
+            </span>
           ) : (
             fvgs.slice(-4).map((fvg, i) => {
               const isBull = fvg.type === "BULLISH_FVG";
@@ -671,13 +829,20 @@ function SMCZonesPanel({
                   className="flex items-center gap-2 px-2 py-1.5 rounded-lg border"
                   style={{ borderColor: `${c}20`, backgroundColor: `${c}05` }}
                 >
-                  <div className="w-1.5 h-4 rounded-full" style={{ backgroundColor: c }} />
+                  <div
+                    className="w-1.5 h-4 rounded-full"
+                    style={{ backgroundColor: c }}
+                  />
                   <div className="flex flex-col flex-1">
-                    <span className="text-[10px] font-mono" style={{ color: c }}>
+                    <span
+                      className="text-[10px] font-mono"
+                      style={{ color: c }}
+                    >
                       {isBull ? "Bull FVG" : "Bear FVG"}
                     </span>
                     <span className="text-[10px] font-mono tabular-nums text-muted-foreground">
-                      {fvg.low.toFixed(2)} – {fvg.high.toFixed(2)} ({fvg.size.toFixed(2)} pts)
+                      {fvg.low.toFixed(2)} – {fvg.high.toFixed(2)} (
+                      {fvg.size.toFixed(2)} pts)
                     </span>
                   </div>
                 </div>
@@ -688,26 +853,53 @@ function SMCZonesPanel({
 
         {/* VWAP Bands */}
         <div className="flex flex-col gap-2">
-          <span className="text-[10px] text-muted-foreground tracking-wider uppercase">VWAP Bands</span>
+          <span className="text-[10px] text-muted-foreground tracking-wider uppercase">
+            VWAP Bands
+          </span>
           {last >= 0 && analysis.vwapBands.vwap[last] !== undefined && (
             <>
               {[
-                { label: "+2σ", val: analysis.vwapBands.upper2[last], c: "#FF1744" },
-                { label: "+1σ", val: analysis.vwapBands.upper1[last], c: "#FF1744" },
-                { label: "VWAP", val: analysis.vwapBands.vwap[last], c: "#AB47BC" },
-                { label: "−1σ", val: analysis.vwapBands.lower1[last], c: "#00E676" },
-                { label: "−2σ", val: analysis.vwapBands.lower2[last], c: "#00E676" },
-              ].map((band) => {
+                {
+                  label: "+2σ",
+                  val: analysis.vwapBands.upper2[last],
+                  c: "#FF1744",
+                },
+                {
+                  label: "+1σ",
+                  val: analysis.vwapBands.upper1[last],
+                  c: "#FF1744",
+                },
+                {
+                  label: "VWAP",
+                  val: analysis.vwapBands.vwap[last],
+                  c: "#AB47BC",
+                },
+                {
+                  label: "−1σ",
+                  val: analysis.vwapBands.lower1[last],
+                  c: "#00E676",
+                },
+                {
+                  label: "−2σ",
+                  val: analysis.vwapBands.lower2[last],
+                  c: "#00E676",
+                },
+              ].map(band => {
                 const isNear = Math.abs(price - band.val) / price < 0.0008;
                 return (
                   <div
                     key={band.label}
                     className={`flex items-center justify-between px-2 py-1 rounded ${isNear ? "bg-[#AB47BC]/10" : ""}`}
                   >
-                    <span className="text-[10px] font-mono" style={{ color: band.c }}>
+                    <span
+                      className="text-[10px] font-mono"
+                      style={{ color: band.c }}
+                    >
                       {band.label}
                     </span>
-                    <span className={`text-[10px] font-mono tabular-nums ${isNear ? "text-foreground font-bold" : "text-muted-foreground"}`}>
+                    <span
+                      className={`text-[10px] font-mono tabular-nums ${isNear ? "text-foreground font-bold" : "text-muted-foreground"}`}
+                    >
                       {band.val.toFixed(2)}
                       {isNear && " ◄"}
                     </span>
@@ -743,28 +935,49 @@ function ExperimentalConfluence({
     { label: "15M", exp: exp15m },
   ];
 
-  const longCount = tfs.filter((t) => t.exp?.experimentalSignal.direction === "LONG").length;
-  const shortCount = tfs.filter((t) => t.exp?.experimentalSignal.direction === "SHORT").length;
-  const confluenceDir = longCount > shortCount ? "LONG" : shortCount > longCount ? "SHORT" : "NEUTRAL";
+  const longCount = tfs.filter(
+    t => t.exp?.experimentalSignal.direction === "LONG",
+  ).length;
+  const shortCount = tfs.filter(
+    t => t.exp?.experimentalSignal.direction === "SHORT",
+  ).length;
+  const confluenceDir =
+    longCount > shortCount
+      ? "LONG"
+      : shortCount > longCount
+        ? "SHORT"
+        : "NEUTRAL";
   const confluenceStrength = Math.max(longCount, shortCount);
   const confluenceLabel =
-    confluenceStrength >= 4 ? "VERY STRONG" :
-    confluenceStrength === 3 ? "STRONG" :
-    confluenceStrength === 2 ? "MODERATE" : "WEAK";
+    confluenceStrength >= 4
+      ? "VERY STRONG"
+      : confluenceStrength === 3
+        ? "STRONG"
+        : confluenceStrength === 2
+          ? "MODERATE"
+          : "WEAK";
   const confluenceColor =
-    confluenceDir === "LONG" ? "#00E676" :
-    confluenceDir === "SHORT" ? "#FF1744" : "#6B7280";
+    confluenceDir === "LONG"
+      ? "#00E676"
+      : confluenceDir === "SHORT"
+        ? "#FF1744"
+        : "#6B7280";
 
   return (
     <div className="rounded-xl border border-border bg-card p-4">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <Layers className="w-4 h-4 text-[#AB47BC]" />
-          <span className="text-sm font-semibold">Multi-TF Experimental Confluence</span>
+          <span className="text-sm font-semibold">
+            Multi-TF Experimental Confluence
+          </span>
         </div>
         <div
           className="px-2.5 py-1 rounded-lg text-[10px] font-bold tracking-wider"
-          style={{ color: confluenceColor, backgroundColor: `${confluenceColor}12` }}
+          style={{
+            color: confluenceColor,
+            backgroundColor: `${confluenceColor}12`,
+          }}
         >
           {confluenceLabel} {confluenceDir}
         </div>
@@ -772,17 +985,28 @@ function ExperimentalConfluence({
 
       <div className="grid grid-cols-4 gap-3">
         {tfs.map(({ label, exp }) => {
-          if (!exp) return (
-            <div key={label} className="rounded-lg bg-secondary/10 p-3 text-center">
-              <span className="text-xs text-muted-foreground">{label}</span>
-              <div className="text-[10px] text-muted-foreground/50 mt-1">Loading…</div>
-            </div>
-          );
+          if (!exp)
+            return (
+              <div
+                key={label}
+                className="rounded-lg bg-secondary/10 p-3 text-center"
+              >
+                <span className="text-xs text-muted-foreground">{label}</span>
+                <div className="text-[10px] text-muted-foreground/50 mt-1">
+                  Loading…
+                </div>
+              </div>
+            );
 
           const sig = exp.experimentalSignal;
-          const c = sig.direction === "LONG" ? "#00E676" : sig.direction === "SHORT" ? "#FF1744" : "#6B7280";
-          const buyTools = sig.tools.filter((t) => t.signal === "BUY").length;
-          const sellTools = sig.tools.filter((t) => t.signal === "SELL").length;
+          const c =
+            sig.direction === "LONG"
+              ? "#00E676"
+              : sig.direction === "SHORT"
+                ? "#FF1744"
+                : "#6B7280";
+          const buyTools = sig.tools.filter(t => t.signal === "BUY").length;
+          const sellTools = sig.tools.filter(t => t.signal === "SELL").length;
 
           return (
             <div
@@ -791,16 +1015,33 @@ function ExperimentalConfluence({
               style={{ borderColor: `${c}20`, backgroundColor: `${c}04` }}
             >
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-mono font-bold text-muted-foreground">{label}</span>
-                <span className="text-xs font-mono font-bold" style={{ color: c }}>
-                  {sig.direction === "LONG" ? "▲ LONG" : sig.direction === "SHORT" ? "▼ SHORT" : "— NEUTRAL"}
+                <span className="text-xs font-mono font-bold text-muted-foreground">
+                  {label}
+                </span>
+                <span
+                  className="text-xs font-mono font-bold"
+                  style={{ color: c }}
+                >
+                  {sig.direction === "LONG"
+                    ? "▲ LONG"
+                    : sig.direction === "SHORT"
+                      ? "▼ SHORT"
+                      : "— NEUTRAL"}
                 </span>
               </div>
               <div className="flex items-center gap-1.5 mb-1.5">
                 <div className="flex-1 h-1.5 bg-secondary/30 rounded-full overflow-hidden">
-                  <div className="h-full rounded-full" style={{ width: `${sig.confidence}%`, backgroundColor: c }} />
+                  <div
+                    className="h-full rounded-full"
+                    style={{ width: `${sig.confidence}%`, backgroundColor: c }}
+                  />
                 </div>
-                <span className="text-[10px] font-mono tabular-nums" style={{ color: c }}>{sig.confidence}%</span>
+                <span
+                  className="text-[10px] font-mono tabular-nums"
+                  style={{ color: c }}
+                >
+                  {sig.confidence}%
+                </span>
               </div>
               <div className="flex items-center gap-2 text-[9px] font-mono">
                 <span className="text-[#00E676]">▲{buyTools}</span>

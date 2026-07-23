@@ -65,7 +65,9 @@ export function PriceTicker({ data, loading }: PriceTickerProps) {
           <span
             className={`text-xs font-semibold tabular-nums font-mono ${isPositive ? "text-[#00E676]" : "text-[#FF1744]"}`}
           >
-            {isPositive ? "+" : ""}{data.change24h.toFixed(2)} ({isPositive ? "+" : ""}{data.changePct24h.toFixed(2)}%)
+            {isPositive ? "+" : ""}
+            {data.change24h.toFixed(2)} ({isPositive ? "+" : ""}
+            {data.changePct24h.toFixed(2)}%)
           </span>
         </div>
       </div>
@@ -75,7 +77,9 @@ export function PriceTicker({ data, loading }: PriceTickerProps) {
         <span
           className={`text-sm font-semibold tabular-nums font-mono ${isPositive ? "text-[#00E676]" : "text-[#FF1744]"}`}
         >
-          {isPositive ? "+"  : ""}{data.change24h.toFixed(2)} ({isPositive ? "+" : ""}{data.changePct24h.toFixed(2)}%)
+          {isPositive ? "+" : ""}
+          {data.change24h.toFixed(2)} ({isPositive ? "+" : ""}
+          {data.changePct24h.toFixed(2)}%)
         </span>
         <span className="text-xs text-muted-foreground">24h Change</span>
       </div>
@@ -95,19 +99,25 @@ export function PriceTicker({ data, loading }: PriceTickerProps) {
           </span>
         </div>
         <div className="flex flex-col items-center">
-          <span className="text-[10px] text-muted-foreground mb-0.5">SPREAD</span>
+          <span className="text-[10px] text-muted-foreground mb-0.5">
+            SPREAD
+          </span>
           <span className="text-xs sm:text-sm font-mono tabular-nums text-[#D4A843]">
             {spread.toFixed(2)}
           </span>
         </div>
         <div className="flex flex-col items-center">
-          <span className="text-[10px] text-muted-foreground mb-0.5">24H HIGH</span>
+          <span className="text-[10px] text-muted-foreground mb-0.5">
+            24H HIGH
+          </span>
           <span className="text-xs sm:text-sm font-mono tabular-nums">
             {data.high24h.toFixed(2)}
           </span>
         </div>
         <div className="flex flex-col items-center">
-          <span className="text-[10px] text-muted-foreground mb-0.5">24H LOW</span>
+          <span className="text-[10px] text-muted-foreground mb-0.5">
+            24H LOW
+          </span>
           <span className="text-xs sm:text-sm font-mono tabular-nums">
             {data.low24h.toFixed(2)}
           </span>

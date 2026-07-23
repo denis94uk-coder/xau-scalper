@@ -8,7 +8,12 @@ const SESSIONS = [
   { name: "New York", short: "NY", open: 13, close: 22, color: "#00E676" },
 ];
 
-function isActive(open: number, close: number, utcHour: number, isWeekend: boolean) {
+function isActive(
+  open: number,
+  close: number,
+  utcHour: number,
+  isWeekend: boolean,
+) {
   if (isWeekend) return false;
   if (open < close) return utcHour >= open && utcHour < close;
   return utcHour >= open || utcHour < close;
@@ -34,10 +39,13 @@ export function MarketSessionBar() {
 
   return (
     <div className="flex items-center gap-2 sm:gap-4 md:gap-6 px-2 sm:px-3 py-1.5 rounded-lg bg-card/60 border border-border/50 overflow-x-auto min-w-0">
-      {SESSIONS.map((s) => {
+      {SESSIONS.map(s => {
         const active = isActive(s.open, s.close, utcHour, isWeekendClosed);
         return (
-          <div key={s.name} className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+          <div
+            key={s.name}
+            className="flex items-center gap-1 sm:gap-1.5 shrink-0"
+          >
             <div
               className={`w-1.5 h-1.5 rounded-full ${active ? "animate-pulse-dot" : "opacity-25"}`}
               style={{ backgroundColor: s.color }}

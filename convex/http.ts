@@ -87,9 +87,12 @@ http.route({
       const res = await fetch("https://data-asg.goldprice.org/dbXRates/USD");
       if (res.ok) {
         const data = await res.text();
-        return new Response(JSON.stringify({ source: "goldprice.org", data: JSON.parse(data) }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+        return new Response(
+          JSON.stringify({ source: "goldprice.org", data: JSON.parse(data) }),
+          {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          },
+        );
       }
     } catch {
       // fall through
@@ -97,12 +100,17 @@ http.route({
 
     // 2. Binance PAXG as fallback (via binance.vision)
     try {
-      const res = await fetch("https://data-api.binance.vision/api/v3/ticker/24hr?symbol=PAXGUSDT");
+      const res = await fetch(
+        "https://data-api.binance.vision/api/v3/ticker/24hr?symbol=PAXGUSDT",
+      );
       if (res.ok) {
         const data = await res.text();
-        return new Response(JSON.stringify({ source: "binance", data: JSON.parse(data) }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+        return new Response(
+          JSON.stringify({ source: "binance", data: JSON.parse(data) }),
+          {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          },
+        );
       }
     } catch {
       // fall through

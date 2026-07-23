@@ -1,6 +1,6 @@
 import { useQuery } from "convex/react";
-import { api } from "../../../convex/_generated/api";
 import { useTimezone } from "@/contexts/TimezoneContext";
+import { api } from "../../../convex/_generated/api";
 
 export function LiquiditySweepPanel() {
   const sweepData = useQuery(api.sweepQueries.getSweeps);
@@ -52,30 +52,51 @@ export function LiquiditySweepPanel() {
           Key Levels Being Watched
         </div>
         <div className="flex flex-wrap gap-1">
-          {resistanceLevels.slice(-5).reverse().map((lvl: number, i: number) => (
-            <span key={`r-${i}`} className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-red-500/10 text-red-400/80 border border-red-500/10">
-              R {lvl.toFixed(1)}
-            </span>
-          ))}
-          {supportLevels.slice(-5).reverse().map((lvl: number, i: number) => (
-            <span key={`s-${i}`} className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-green-500/10 text-green-400/80 border border-green-500/10">
-              S {lvl.toFixed(1)}
-            </span>
-          ))}
+          {resistanceLevels
+            .slice(-5)
+            .reverse()
+            .map((lvl: number, i: number) => (
+              <span
+                key={`r-${i}`}
+                className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-red-500/10 text-red-400/80 border border-red-500/10"
+              >
+                R {lvl.toFixed(1)}
+              </span>
+            ))}
+          {supportLevels
+            .slice(-5)
+            .reverse()
+            .map((lvl: number, i: number) => (
+              <span
+                key={`s-${i}`}
+                className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-green-500/10 text-green-400/80 border border-green-500/10"
+              >
+                S {lvl.toFixed(1)}
+              </span>
+            ))}
         </div>
       </div>
     </div>
   );
 }
 
-function SweepCard({ sweep, formatTime }: { sweep: any; formatTime: (ts: number) => string }) {
+function SweepCard({
+  sweep,
+  formatTime,
+}: {
+  sweep: any;
+  formatTime: (ts: number) => string;
+}) {
   const isBull = sweep.type === "BULL_SWEEP";
   const color = isBull ? "#00E676" : "#FF5252";
   const bgColor = isBull ? "rgba(0,230,118,0.06)" : "rgba(255,82,82,0.06)";
   const borderColor = isBull ? "rgba(0,230,118,0.15)" : "rgba(255,82,82,0.15)";
 
   return (
-    <div className="rounded-md p-2.5 border transition-all" style={{ backgroundColor: bgColor, borderColor }}>
+    <div
+      className="rounded-md p-2.5 border transition-all"
+      style={{ backgroundColor: bgColor, borderColor }}
+    >
       <div className="flex items-start justify-between mb-1">
         <div className="flex items-center gap-1.5">
           <span className="text-[10px]">{isBull ? "🐂" : "🐻"}</span>
@@ -105,13 +126,22 @@ function SweepCard({ sweep, formatTime }: { sweep: any; formatTime: (ts: number)
       {sweep.actionable && (
         <div className="flex items-center gap-2 sm:gap-3 text-[9px] font-mono flex-wrap">
           <span className="text-muted-foreground/40">
-            Entry <span className="text-foreground/80">${sweep.suggestedEntry.toFixed(1)}</span>
+            Entry{" "}
+            <span className="text-foreground/80">
+              ${sweep.suggestedEntry.toFixed(1)}
+            </span>
           </span>
           <span className="text-muted-foreground/40">
-            SL <span className="text-red-400/80">${sweep.suggestedSL.toFixed(1)}</span>
+            SL{" "}
+            <span className="text-red-400/80">
+              ${sweep.suggestedSL.toFixed(1)}
+            </span>
           </span>
           <span className="text-muted-foreground/40">
-            TP <span className="text-green-400/80">${sweep.suggestedTP.toFixed(1)}</span>
+            TP{" "}
+            <span className="text-green-400/80">
+              ${sweep.suggestedTP.toFixed(1)}
+            </span>
           </span>
           <span className="text-muted-foreground/40">
             Vol <span className="text-foreground/60">{sweep.volumeSpike}×</span>

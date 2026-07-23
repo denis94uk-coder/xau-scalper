@@ -1,13 +1,35 @@
 import { useEffect, useState } from "react";
-import { getSession, type SessionInfo } from "@/lib/indicators";
 import { useTimezone } from "@/contexts/TimezoneContext";
+import { getSession, type SessionInfo } from "@/lib/indicators";
 
 /** Sessions defined in UTC hours — the underlying logic always uses UTC */
 const SESSIONS_UTC = [
   { name: "ASIAN", label: "Asian", start: 0, end: 8, color: "#6366F1" },
-  { name: "LONDON", label: "London", start: 8, end: 13.5, color: "#F59E0B", kzStart: 8, kzEnd: 9.5 },
-  { name: "NEW_YORK", label: "New York", start: 13.5, end: 21, color: "#10B981", kzStart: 13.5, kzEnd: 15 },
-  { name: "OFF_HOURS", label: "Off-Hours", start: 21, end: 24, color: "#6B7280" },
+  {
+    name: "LONDON",
+    label: "London",
+    start: 8,
+    end: 13.5,
+    color: "#F59E0B",
+    kzStart: 8,
+    kzEnd: 9.5,
+  },
+  {
+    name: "NEW_YORK",
+    label: "New York",
+    start: 13.5,
+    end: 21,
+    color: "#10B981",
+    kzStart: 13.5,
+    kzEnd: 15,
+  },
+  {
+    name: "OFF_HOURS",
+    label: "Off-Hours",
+    start: 21,
+    end: 24,
+    color: "#6B7280",
+  },
 ] as const;
 
 /** Convert a UTC hour to the user's timezone offset (in hours) */
@@ -42,10 +64,16 @@ function getTimezoneOffsetMinutes(tz: string): number {
   }).formatToParts(now);
 
   const get = (parts: Intl.DateTimeFormatPart[], type: string) =>
-    parseInt(parts.find((p) => p.type === type)?.value || "0");
+    parseInt(parts.find(p => p.type === type)?.value || "0");
 
-  const utcMinutes = get(utcParts, "day") * 24 * 60 + get(utcParts, "hour") * 60 + get(utcParts, "minute");
-  const tzMinutes = get(tzParts, "day") * 24 * 60 + get(tzParts, "hour") * 60 + get(tzParts, "minute");
+  const utcMinutes =
+    get(utcParts, "day") * 24 * 60 +
+    get(utcParts, "hour") * 60 +
+    get(utcParts, "minute");
+  const tzMinutes =
+    get(tzParts, "day") * 24 * 60 +
+    get(tzParts, "hour") * 60 +
+    get(tzParts, "minute");
 
   let diff = tzMinutes - utcMinutes;
   if (diff > 12 * 60) diff -= 24 * 60;
@@ -76,37 +104,45 @@ export function SessionBar() {
   const localH = utcToLocalHour(utcH, offsetMin);
   const progress = (localH / 24) * 100;
 
-  const localSessions = SESSIONS_UTC.map((s) => {
+  const localSessions = SESSIONS_UTC.map(s => {
     const start = utcToLocalHour(s.start, offsetMin);
     const end = utcToLocalHour(s.end, offsetMin);
-    const kzStart = "kzStart" in s ? utcToLocalHour(s.kzStart as number, offsetMin) : undefined;
-    const kzEnd = "kzEnd" in s ? utcToLocalHour(s.kzEnd as number, offsetMin) : undefined;
+    const kzStart =
+      "kzStart" in s
+        ? utcToLocalHour(s.kzStart as number, offsetMin)
+        : undefined;
+    const kzEnd =
+      "kzEnd" in s ? utcToLocalHour(s.kzEnd as number, offsetMin) : undefined;
     return { ...s, start, end, kzStart, kzEnd };
   });
 
   const sortedSessions = [...localSessions].sort((a, b) => a.start - b.start);
 
-  const segments = sortedSessions.map((s) => {
+  const segments = sortedSessions.map(s => {
     const duration = s.end >= s.start ? s.end - s.start : 24 - s.start + s.end;
     const left = (s.start / 24) * 100;
     const width = (duration / 24) * 100;
     return { ...s, left, width, duration };
   });
 
-  const londonKz = localSessions.find((s) => s.name === "LONDON");
-  const nyKz = localSessions.find((s) => s.name === "NEW_YORK");
+  const londonKz = localSessions.find(s => s.name === "LONDON");
+  const nyKz = localSessions.find(s => s.name === "NEW_YORK");
 
   return (
     <div className="rounded-xl border border-border bg-card p-2 sm:p-3">
       {/* Header — stacks on very small screens */}
       <div className="flex flex-wrap items-center justify-between gap-1 mb-2">
         <div className="flex items-center gap-2">
-          <span className="text-[10px] font-medium text-muted-foreground tracking-wider uppercase">Market Session</span>
+          <span className="text-[10px] font-medium text-muted-foreground tracking-wider uppercase">
+            Market Session
+          </span>
           <span
             className="text-xs font-bold font-mono px-2 py-0.5 rounded"
             style={{
               color: session.isKillZone ? "#FFD600" : "var(--foreground)",
-              backgroundColor: session.isKillZone ? "rgba(255,214,0,0.12)" : "rgba(255,255,255,0.05)",
+              backgroundColor: session.isKillZone
+                ? "rgba(255,214,0,0.12)"
+                : "rgba(255,255,255,0.05)",
             }}
           >
             {session.label}
@@ -119,7 +155,7 @@ export function SessionBar() {
 
       {/* Session timeline bar */}
       <div className="relative h-5 rounded-lg overflow-hidden bg-secondary/20 border border-border/30">
-        {segments.map((s) => {
+        {segments.map(s => {
           const isActive = s.name === session.name;
           if (s.end < s.start) {
             const w1 = ((24 - s.start) / 24) * 100;
@@ -177,8 +213,8 @@ export function SessionBar() {
 
         {/* Kill zone highlights */}
         {segments
-          .filter((s) => s.kzStart !== undefined && s.kzEnd !== undefined)
-          .map((s) => {
+          .filter(s => s.kzStart !== undefined && s.kzEnd !== undefined)
+          .map(s => {
             const kzS = s.kzStart!;
             const kzE = s.kzEnd!;
             const kzDuration = kzE >= kzS ? kzE - kzS : 24 - kzS + kzE;
@@ -208,15 +244,24 @@ export function SessionBar() {
       {/* Kill zone legend — wraps on mobile */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5">
         <div className="flex items-center gap-1">
-          <div className="w-2 h-2 rounded-sm" style={{ backgroundColor: "rgba(255,214,0,0.4)" }} />
+          <div
+            className="w-2 h-2 rounded-sm"
+            style={{ backgroundColor: "rgba(255,214,0,0.4)" }}
+          />
           <span className="text-[8px] text-muted-foreground">Kill Zone</span>
         </div>
         <span className="text-[8px] text-muted-foreground">
-          London KZ: {londonKz ? `${fmtH(londonKz.kzStart!)}–${fmtH(londonKz.kzEnd!)}` : "—"} · NY KZ:{" "}
-          {nyKz ? `${fmtH(nyKz.kzStart!)}–${fmtH(nyKz.kzEnd!)}` : "—"} {tzAbbrev}
+          London KZ:{" "}
+          {londonKz
+            ? `${fmtH(londonKz.kzStart!)}–${fmtH(londonKz.kzEnd!)}`
+            : "—"}{" "}
+          · NY KZ: {nyKz ? `${fmtH(nyKz.kzStart!)}–${fmtH(nyKz.kzEnd!)}` : "—"}{" "}
+          {tzAbbrev}
         </span>
         {!session.isKillZone && session.name !== "OFF_HOURS" && (
-          <span className="text-[8px] text-yellow-500/70 sm:ml-auto">⚠ Outside kill zone — signals may be weaker</span>
+          <span className="text-[8px] text-yellow-500/70 sm:ml-auto">
+            ⚠ Outside kill zone — signals may be weaker
+          </span>
         )}
       </div>
     </div>

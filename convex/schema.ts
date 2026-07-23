@@ -1,5 +1,5 @@
-import { defineSchema, defineTable } from "convex/server";
 import { authTables } from "@convex-dev/auth/server";
+import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 export default defineSchema({
@@ -26,7 +26,11 @@ export default defineSchema({
     volume: v.number(),
     timestamp: v.number(),
     interval: v.string(),
-  }).index("by_interval_timestamp", ["interval", "timestamp"]),
+    // Optional multi-asset tag. Absent on legacy (gold) rows.
+    asset: v.optional(v.string()),
+  })
+    .index("by_interval_timestamp", ["interval", "timestamp"])
+    .index("by_asset_interval_timestamp", ["asset", "interval", "timestamp"]),
 
   // Trade journal entries (legacy)
   trades: defineTable({
@@ -64,7 +68,7 @@ export default defineSchema({
       v.literal("TP1_HIT"),
       v.literal("TP2_HIT"),
       v.literal("STOPPED"),
-      v.literal("EXPIRED")
+      v.literal("EXPIRED"),
     ),
     pnlPoints: v.optional(v.number()),
     resolvedAt: v.optional(v.number()),
@@ -73,11 +77,14 @@ export default defineSchema({
       v.union(
         v.literal("dashboard"),
         v.literal("experimental"),
-        v.literal("engine")
-      )
+        v.literal("engine"),
+      ),
     ),
     // Signal quality grade (A/B/C)
     grade: v.optional(v.string()),
+    // Multi-asset tag (e.g. "PAXGUSDT", "BTCUSDT"). Absent on legacy rows,
+    // which are treated as the default gold asset.
+    asset: v.optional(v.string()),
     // Trailing stop level (updated dynamically)
     trailingSL: v.optional(v.number()),
     // Journey tracking
@@ -87,15 +94,17 @@ export default defineSchema({
           event: v.string(),
           price: v.number(),
           timestamp: v.number(),
-        })
-      )
+        }),
+      ),
     ),
   })
     .index("by_created", ["createdAt"])
     .index("by_status", ["status"])
     .index("by_status_created", ["status", "createdAt"])
     .index("by_source", ["source"])
-    .index("by_source_created", ["source", "createdAt"]),
+    .index("by_source_created", ["source", "createdAt"])
+    .index("by_asset_status", ["asset", "status"])
+    .index("by_asset_source_created", ["asset", "source", "createdAt"]),
 
   // ─── Signal Journal — full audit trail of every engine event ───
   signalJournal: defineTable({
@@ -108,18 +117,21 @@ export default defineSchema({
       v.literal("EXPIRED"),
       v.literal("ENGINE_RUN"),
       v.literal("MONITOR_CHECK"),
-      v.literal("TRAIL_UPDATE")
+      v.literal("TRAIL_UPDATE"),
     ),
     ideaId: v.optional(v.id("tradingIdeas")),
     direction: v.optional(v.union(v.literal("LONG"), v.literal("SHORT"))),
     price: v.optional(v.number()),
     details: v.string(),
     metadata: v.optional(v.string()), // JSON stringified extra data
+    // Multi-asset tag. Absent on legacy (gold) rows.
+    asset: v.optional(v.string()),
     timestamp: v.number(),
   })
     .index("by_timestamp", ["timestamp"])
     .index("by_event_type", ["eventType"])
-    .index("by_idea", ["ideaId"]),
+    .index("by_idea", ["ideaId"])
+    .index("by_asset_timestamp", ["asset", "timestamp"]),
 
   // ─── Manual trades (Risk Manager) ───
   manualTrades: defineTable({
@@ -134,7 +146,7 @@ export default defineSchema({
       v.literal("OPEN"),
       v.literal("WIN"),
       v.literal("LOSS"),
-      v.literal("BREAKEVEN")
+      v.literal("BREAKEVEN"),
     ),
     pnlPoints: v.optional(v.number()),
     pnlDollars: v.optional(v.number()),

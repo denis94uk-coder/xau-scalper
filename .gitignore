@@ -31,3 +31,6 @@ bun.lockb
 tmp/
 test-results/
 playwright-report/node_modules
+
+# Graphify local knowledge graph output
+graphify-out/

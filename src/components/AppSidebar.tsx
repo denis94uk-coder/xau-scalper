@@ -1,10 +1,10 @@
 import {
+  BarChart3,
+  FlaskConical,
   LayoutDashboard,
   Lightbulb,
-  FlaskConical,
   ScrollText,
   Shield,
-  BarChart3,
 } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { APP_NAME } from "@/lib/constants";
@@ -73,7 +73,7 @@ function SidebarNav() {
       <SidebarGroup>
         <SidebarGroupContent>
           <SidebarMenu>
-            {mainNav.map((item) => (
+            {mainNav.map(item => (
               <NavLink
                 key={item.href}
                 href={item.href}
@@ -92,7 +92,7 @@ function SidebarNav() {
         </SidebarGroupLabel>
         <SidebarGroupContent>
           <SidebarMenu>
-            {signalsNav.map((item) => (
+            {signalsNav.map(item => (
               <NavLink
                 key={item.href}
                 href={item.href}
@@ -111,7 +111,7 @@ function SidebarNav() {
         </SidebarGroupLabel>
         <SidebarGroupContent>
           <SidebarMenu>
-            {trackingNav.map((item) => (
+            {trackingNav.map(item => (
               <NavLink
                 key={item.href}
                 href={item.href}
@@ -138,9 +138,7 @@ function SidebarHeaderContent() {
         className="flex items-center gap-2.5 px-2 py-1 font-semibold text-lg"
       >
         <div className="size-8 rounded-lg bg-gradient-to-br from-[#D4A843] to-[#9A7A30] flex items-center justify-center">
-          <span className="text-[#0A0C10] font-bold text-sm font-mono">
-            Au
-          </span>
+          <span className="text-[#0A0C10] font-bold text-sm font-mono">Au</span>
         </div>
         <span>{APP_NAME}</span>
       </Link>

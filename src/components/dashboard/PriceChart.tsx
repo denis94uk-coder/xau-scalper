@@ -1,17 +1,17 @@
-import { useEffect, useRef, useCallback } from "react";
 import {
-  createChart,
-  type IChartApi,
+  type CandlestickData,
+  CandlestickSeries,
   ColorType,
   CrosshairMode,
-  CandlestickSeries,
-  LineSeries,
+  createChart,
   HistogramSeries,
-  type CandlestickData,
+  type IChartApi,
+  LineSeries,
   type Time,
 } from "lightweight-charts";
+import { useCallback, useEffect, useRef } from "react";
 import type { Candle } from "@/lib/indicators";
-import { calcEMA, calcBollingerBands } from "@/lib/indicators";
+import { calcBollingerBands, calcEMA } from "@/lib/indicators";
 
 interface PriceChartProps {
   candles: Candle[];
@@ -84,7 +84,7 @@ export function PriceChart({
       wickDownColor: "#FF1744",
     });
 
-    const chartData: CandlestickData<Time>[] = candles.map((c) => ({
+    const chartData: CandlestickData<Time>[] = candles.map(c => ({
       time: c.time as Time,
       open: c.open,
       high: c.high,
@@ -94,7 +94,7 @@ export function PriceChart({
 
     candleSeries.setData(chartData);
 
-    const closes = candles.map((c) => c.close);
+    const closes = candles.map(c => c.close);
 
     // EMA overlays
     if (showEMA) {
@@ -113,9 +113,9 @@ export function PriceChart({
           .map((c, i) =>
             ema9[i] !== undefined
               ? { time: c.time as Time, value: ema9[i] }
-              : null
+              : null,
           )
-          .filter(Boolean) as { time: Time; value: number }[]
+          .filter(Boolean) as { time: Time; value: number }[],
       );
 
       const ema21Series = chart.addSeries(LineSeries, {
@@ -129,9 +129,9 @@ export function PriceChart({
           .map((c, i) =>
             ema21[i] !== undefined
               ? { time: c.time as Time, value: ema21[i] }
-              : null
+              : null,
           )
-          .filter(Boolean) as { time: Time; value: number }[]
+          .filter(Boolean) as { time: Time; value: number }[],
       );
 
       const ema50Series = chart.addSeries(LineSeries, {
@@ -145,9 +145,9 @@ export function PriceChart({
           .map((c, i) =>
             ema50[i] !== undefined
               ? { time: c.time as Time, value: ema50[i] }
-              : null
+              : null,
           )
-          .filter(Boolean) as { time: Time; value: number }[]
+          .filter(Boolean) as { time: Time; value: number }[],
       );
     }
 
@@ -167,9 +167,9 @@ export function PriceChart({
           .map((c, i) =>
             bb.upper[i] !== undefined
               ? { time: c.time as Time, value: bb.upper[i] }
-              : null
+              : null,
           )
-          .filter(Boolean) as { time: Time; value: number }[]
+          .filter(Boolean) as { time: Time; value: number }[],
       );
 
       const bbLower = chart.addSeries(LineSeries, {
@@ -184,9 +184,9 @@ export function PriceChart({
           .map((c, i) =>
             bb.lower[i] !== undefined
               ? { time: c.time as Time, value: bb.lower[i] }
-              : null
+              : null,
           )
-          .filter(Boolean) as { time: Time; value: number }[]
+          .filter(Boolean) as { time: Time; value: number }[],
       );
     }
 
@@ -201,19 +201,19 @@ export function PriceChart({
     });
 
     volumeSeries.setData(
-      candles.map((c) => ({
+      candles.map(c => ({
         time: c.time as Time,
         value: c.volume,
         color:
           c.close >= c.open
             ? "rgba(0, 230, 118, 0.2)"
             : "rgba(255, 23, 68, 0.2)",
-      }))
+      })),
     );
 
     chart.timeScale().fitContent();
 
-    const resizeObserver = new ResizeObserver((entries) => {
+    const resizeObserver = new ResizeObserver(entries => {
       for (const entry of entries) {
         chart.applyOptions({ width: entry.contentRect.width });
       }

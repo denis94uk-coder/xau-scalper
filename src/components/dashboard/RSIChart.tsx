@@ -1,11 +1,11 @@
-import { useEffect, useRef, useCallback } from "react";
 import {
+  ColorType,
   createChart,
   type IChartApi,
-  ColorType,
   LineSeries,
   type Time,
 } from "lightweight-charts";
+import { useCallback, useEffect, useRef } from "react";
 import type { Candle } from "@/lib/indicators";
 import { calcRSI } from "@/lib/indicators";
 
@@ -58,7 +58,7 @@ export function RSIChart({ candles, height = 120 }: RSIChartProps) {
 
     chartRef.current = chart;
 
-    const closes = candles.map((c) => c.close);
+    const closes = candles.map(c => c.close);
     const rsi = calcRSI(closes, 14);
 
     // RSI Line
@@ -72,11 +72,9 @@ export function RSIChart({ candles, height = 120 }: RSIChartProps) {
     rsiSeries.setData(
       candles
         .map((c, i) =>
-          rsi[i] !== undefined
-            ? { time: c.time as Time, value: rsi[i] }
-            : null
+          rsi[i] !== undefined ? { time: c.time as Time, value: rsi[i] } : null,
         )
-        .filter(Boolean) as { time: Time; value: number }[]
+        .filter(Boolean) as { time: Time; value: number }[],
     );
 
     // Overbought / Oversold lines
@@ -90,7 +88,7 @@ export function RSIChart({ candles, height = 120 }: RSIChartProps) {
     ob.setData(
       candles
         .filter((_, i) => rsi[i] !== undefined)
-        .map((c) => ({ time: c.time as Time, value: 70 }))
+        .map(c => ({ time: c.time as Time, value: 70 })),
     );
 
     const os = chart.addSeries(LineSeries, {
@@ -103,12 +101,12 @@ export function RSIChart({ candles, height = 120 }: RSIChartProps) {
     os.setData(
       candles
         .filter((_, i) => rsi[i] !== undefined)
-        .map((c) => ({ time: c.time as Time, value: 30 }))
+        .map(c => ({ time: c.time as Time, value: 30 })),
     );
 
     chart.timeScale().fitContent();
 
-    const resizeObserver = new ResizeObserver((entries) => {
+    const resizeObserver = new ResizeObserver(entries => {
       for (const entry of entries) {
         chart.applyOptions({ width: entry.contentRect.width });
       }
@@ -131,7 +129,11 @@ export function RSIChart({ candles, height = 120 }: RSIChartProps) {
       <div className="text-xs font-medium text-muted-foreground tracking-wider uppercase px-1">
         RSI (14)
       </div>
-      <div ref={containerRef} className="w-full rounded overflow-hidden" style={{ height }} />
+      <div
+        ref={containerRef}
+        className="w-full rounded overflow-hidden"
+        style={{ height }}
+      />
     </div>
   );
 }

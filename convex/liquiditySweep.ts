@@ -1,7 +1,7 @@
 "use node";
 
-import { internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
+import { internalAction } from "./_generated/server";
 
 // ═══════════════════════════════════════════════════
 // LIQUIDITY SWEEP / STOP HUNT DETECTION
@@ -14,18 +14,26 @@ const BINANCE_BASE = "https://data-api.binance.vision/api/v3";
 const SYMBOL = "PAXGUSDT";
 
 interface Candle {
-  time: number; open: number; high: number; low: number; close: number;
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
   volume: number;
 }
 
 async function fetchCandles(tf: string, limit: number): Promise<Candle[]> {
-  const r = await fetch(`${BINANCE_BASE}/klines?symbol=${SYMBOL}&interval=${tf}&limit=${limit}`);
+  const r = await fetch(
+    `${BINANCE_BASE}/klines?symbol=${SYMBOL}&interval=${tf}&limit=${limit}`,
+  );
   if (!r.ok) throw new Error(`Binance klines: ${r.status}`);
   const data = await r.json();
   return data.map((k: any) => ({
     time: k[0] / 1000,
-    open: parseFloat(k[1]), high: parseFloat(k[2]),
-    low: parseFloat(k[3]), close: parseFloat(k[4]),
+    open: parseFloat(k[1]),
+    high: parseFloat(k[2]),
+    low: parseFloat(k[3]),
+    close: parseFloat(k[4]),
     volume: parseFloat(k[5]),
   }));
 }
@@ -35,12 +43,20 @@ function findKeyLevels(candles: Candle[]) {
   const resistances: number[] = [];
 
   for (let i = 2; i < candles.length - 2; i++) {
-    if (candles[i].low < candles[i - 1].low && candles[i].low < candles[i - 2].low &&
-        candles[i].low < candles[i + 1].low && candles[i].low < candles[i + 2].low) {
+    if (
+      candles[i].low < candles[i - 1].low &&
+      candles[i].low < candles[i - 2].low &&
+      candles[i].low < candles[i + 1].low &&
+      candles[i].low < candles[i + 2].low
+    ) {
       supports.push(candles[i].low);
     }
-    if (candles[i].high > candles[i - 1].high && candles[i].high > candles[i - 2].high &&
-        candles[i].high > candles[i + 1].high && candles[i].high > candles[i + 2].high) {
+    if (
+      candles[i].high > candles[i - 1].high &&
+      candles[i].high > candles[i - 2].high &&
+      candles[i].high > candles[i + 1].high &&
+      candles[i].high > candles[i + 2].high
+    ) {
       resistances.push(candles[i].high);
     }
   }
@@ -56,15 +72,22 @@ function findKeyLevels(candles: Candle[]) {
     const sorted = [...new Set(levels)].sort((a, b) => a - b);
     const result: number[] = [];
     for (const lvl of sorted) {
-      if (result.length === 0 || Math.abs(lvl - result[result.length - 1]) > 2) result.push(lvl);
+      if (result.length === 0 || Math.abs(lvl - result[result.length - 1]) > 2)
+        result.push(lvl);
     }
     return result;
   };
 
-  return { supports: dedup(supports).slice(-10), resistances: dedup(resistances).slice(-10) };
+  return {
+    supports: dedup(supports).slice(-10),
+    resistances: dedup(resistances).slice(-10),
+  };
 }
 
-function detectSweeps(candles: Candle[], levels: { supports: number[]; resistances: number[] }) {
+function detectSweeps(
+  candles: Candle[],
+  levels: { supports: number[]; resistances: number[] },
+) {
   const sweeps: any[] = [];
   const avgVolume = candles.reduce((s, c) => s + c.volume, 0) / candles.length;
   const atr = candles.slice(-14).reduce((s, c) => s + (c.high - c.low), 0) / 14;
@@ -81,25 +104,40 @@ function detectSweeps(candles: Candle[], levels: { supports: number[]; resistanc
       const wickSize = support - candle.low;
       const isWickDominant = range > 0 && wickSize / range > 0.4;
 
-      if (wickBelow && closedAbove && openAbove && isWickDominant && wickSize > atr * 0.3) {
-        const confidence = Math.min(95, Math.round(
-          40 + (volRatio > 2 ? 20 : volRatio > 1.5 ? 10 : 0) +
-          (isWickDominant ? 15 : 0) + (wickSize > atr * 0.5 ? 15 : 0) +
-          (candle.close > candle.open ? 5 : 0)
-        ));
+      if (
+        wickBelow &&
+        closedAbove &&
+        openAbove &&
+        isWickDominant &&
+        wickSize > atr * 0.3
+      ) {
+        const confidence = Math.min(
+          95,
+          Math.round(
+            40 +
+              (volRatio > 2 ? 20 : volRatio > 1.5 ? 10 : 0) +
+              (isWickDominant ? 15 : 0) +
+              (wickSize > atr * 0.5 ? 15 : 0) +
+              (candle.close > candle.open ? 5 : 0),
+          ),
+        );
 
         sweeps.push({
-          type: "BULL_SWEEP", level: Math.round(support * 100) / 100,
+          type: "BULL_SWEEP",
+          level: Math.round(support * 100) / 100,
           wickLow: Math.round(candle.low * 100) / 100,
           closeBack: Math.round(candle.close * 100) / 100,
           volumeSpike: Math.round(volRatio * 100) / 100,
-          confidence, timestamp: candle.time * 1000,
+          confidence,
+          timestamp: candle.time * 1000,
           description: `Swept below $${support.toFixed(0)} support, rejected with ${wickSize.toFixed(1)} wick. Volume ${volRatio.toFixed(1)}× avg.`,
           actionable: confidence >= 60,
           suggestedDirection: "LONG",
           suggestedEntry: Math.round(candle.close * 100) / 100,
           suggestedSL: Math.round((candle.low - atr * 0.3) * 100) / 100,
-          suggestedTP: Math.round((candle.close + (candle.close - candle.low) * 2) * 100) / 100,
+          suggestedTP:
+            Math.round((candle.close + (candle.close - candle.low) * 2) * 100) /
+            100,
         });
       }
     }
@@ -111,25 +149,41 @@ function detectSweeps(candles: Candle[], levels: { supports: number[]; resistanc
       const wickSize = candle.high - resistance;
       const isWickDominant = range > 0 && wickSize / range > 0.4;
 
-      if (wickAbove && closedBelow && openBelow && isWickDominant && wickSize > atr * 0.3) {
-        const confidence = Math.min(95, Math.round(
-          40 + (volRatio > 2 ? 20 : volRatio > 1.5 ? 10 : 0) +
-          (isWickDominant ? 15 : 0) + (wickSize > atr * 0.5 ? 15 : 0) +
-          (candle.close < candle.open ? 5 : 0)
-        ));
+      if (
+        wickAbove &&
+        closedBelow &&
+        openBelow &&
+        isWickDominant &&
+        wickSize > atr * 0.3
+      ) {
+        const confidence = Math.min(
+          95,
+          Math.round(
+            40 +
+              (volRatio > 2 ? 20 : volRatio > 1.5 ? 10 : 0) +
+              (isWickDominant ? 15 : 0) +
+              (wickSize > atr * 0.5 ? 15 : 0) +
+              (candle.close < candle.open ? 5 : 0),
+          ),
+        );
 
         sweeps.push({
-          type: "BEAR_SWEEP", level: Math.round(resistance * 100) / 100,
+          type: "BEAR_SWEEP",
+          level: Math.round(resistance * 100) / 100,
           wickLow: Math.round(candle.high * 100) / 100,
           closeBack: Math.round(candle.close * 100) / 100,
           volumeSpike: Math.round(volRatio * 100) / 100,
-          confidence, timestamp: candle.time * 1000,
+          confidence,
+          timestamp: candle.time * 1000,
           description: `Swept above $${resistance.toFixed(0)} resistance, rejected with ${wickSize.toFixed(1)} wick. Volume ${volRatio.toFixed(1)}× avg.`,
           actionable: confidence >= 60,
           suggestedDirection: "SHORT",
           suggestedEntry: Math.round(candle.close * 100) / 100,
           suggestedSL: Math.round((candle.high + atr * 0.3) * 100) / 100,
-          suggestedTP: Math.round((candle.close - (candle.high - candle.close) * 2) * 100) / 100,
+          suggestedTP:
+            Math.round(
+              (candle.close - (candle.high - candle.close) * 2) * 100,
+            ) / 100,
         });
       }
     }
@@ -140,7 +194,7 @@ function detectSweeps(candles: Candle[], levels: { supports: number[]; resistanc
 
 export const scanLiquiditySweeps = internalAction({
   args: {},
-  handler: async (ctx) => {
+  handler: async ctx => {
     try {
       const candles = await fetchCandles("5m", 200);
       if (candles.length < 30) return;
@@ -150,16 +204,24 @@ export const scanLiquiditySweeps = internalAction({
 
       await ctx.runMutation(internal.sweepQueries.saveSweeps, {
         sweeps: JSON.stringify(sweeps),
-        supportLevels: JSON.stringify(levels.supports.map(l => Math.round(l * 100) / 100)),
-        resistanceLevels: JSON.stringify(levels.resistances.map(l => Math.round(l * 100) / 100)),
+        supportLevels: JSON.stringify(
+          levels.supports.map(l => Math.round(l * 100) / 100),
+        ),
+        resistanceLevels: JSON.stringify(
+          levels.resistances.map(l => Math.round(l * 100) / 100),
+        ),
         totalSweepsDetected: sweeps.length,
         actionableSweeps: sweeps.filter((s: any) => s.actionable).length,
       });
 
       if (sweeps.length > 0) {
-        console.log(`[Sweep] ${sweeps.length} sweeps (${sweeps.filter((s: any) => s.actionable).length} actionable)`);
+        console.log(
+          `[Sweep] ${sweeps.length} sweeps (${sweeps.filter((s: any) => s.actionable).length} actionable)`,
+        );
       } else {
-        console.log(`[Sweep] No sweeps | S: ${levels.supports.length} R: ${levels.resistances.length}`);
+        console.log(
+          `[Sweep] No sweeps | S: ${levels.supports.length} R: ${levels.resistances.length}`,
+        );
       }
     } catch (e: any) {
       console.error("[Sweep] Error:", e.message);

@@ -1,14 +1,9 @@
-import { useQuery, useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
+import { Plus, Shield, Trash2, X } from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
-import { useState } from "react";
-import {
-  Shield,
-  Plus,
-  X,
-  Trash2,
-} from "lucide-react";
-import { toast } from "sonner";
 
 export function RiskManagerPage() {
   const trades = useQuery(api.manualTrades.listTrades, { limit: 200 });
@@ -68,7 +63,7 @@ export function RiskManagerPage() {
 
   const handleClose = async (
     id: string,
-    status: "WIN" | "LOSS" | "BREAKEVEN"
+    status: "WIN" | "LOSS" | "BREAKEVEN",
   ) => {
     const exit = parseFloat(exitPrice);
     if (!exit) {
@@ -93,8 +88,8 @@ export function RiskManagerPage() {
     );
   }
 
-  const openTrades = trades.filter((t) => t.status === "OPEN");
-  const closedTrades = trades.filter((t) => t.status !== "OPEN");
+  const openTrades = trades.filter(t => t.status === "OPEN");
+  const closedTrades = trades.filter(t => t.status !== "OPEN");
 
   return (
     <div className="space-y-4">
@@ -122,11 +117,39 @@ export function RiskManagerPage() {
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
         <RMCard label="Total" value={stats.totalTrades} color="text-white" />
         <RMCard label="Open" value={stats.openTrades} color="text-blue-400" />
-        <RMCard label="Win Rate" value={`${stats.winRate}%`} color={stats.winRate >= 50 ? "text-emerald-400" : "text-red-400"} />
-        <RMCard label="Profit Factor" value={stats.profitFactor === Infinity ? "∞" : stats.profitFactor.toFixed(2)} color={stats.profitFactor >= 1.5 ? "text-emerald-400" : "text-yellow-400"} />
-        <RMCard label="Total P&L" value={`${stats.totalPnlPoints >= 0 ? "+" : ""}${stats.totalPnlPoints.toFixed(1)}`} color={stats.totalPnlPoints >= 0 ? "text-emerald-400" : "text-red-400"} />
-        <RMCard label="Avg Win" value={`+${stats.avgWinPoints.toFixed(1)}`} color="text-emerald-400" />
-        <RMCard label="Avg Loss" value={`-${stats.avgLossPoints.toFixed(1)}`} color="text-red-400" />
+        <RMCard
+          label="Win Rate"
+          value={`${stats.winRate}%`}
+          color={stats.winRate >= 50 ? "text-emerald-400" : "text-red-400"}
+        />
+        <RMCard
+          label="Profit Factor"
+          value={
+            stats.profitFactor === Infinity
+              ? "∞"
+              : stats.profitFactor.toFixed(2)
+          }
+          color={
+            stats.profitFactor >= 1.5 ? "text-emerald-400" : "text-yellow-400"
+          }
+        />
+        <RMCard
+          label="Total P&L"
+          value={`${stats.totalPnlPoints >= 0 ? "+" : ""}${stats.totalPnlPoints.toFixed(1)}`}
+          color={
+            stats.totalPnlPoints >= 0 ? "text-emerald-400" : "text-red-400"
+          }
+        />
+        <RMCard
+          label="Avg Win"
+          value={`+${stats.avgWinPoints.toFixed(1)}`}
+          color="text-emerald-400"
+        />
+        <RMCard
+          label="Avg Loss"
+          value={`-${stats.avgLossPoints.toFixed(1)}`}
+          color="text-red-400"
+        />
       </div>
 
       {/* New Trade Form */}
@@ -137,7 +160,7 @@ export function RiskManagerPage() {
           <div className="grid grid-cols-2 gap-3">
             {/* Direction */}
             <div className="col-span-2 flex gap-2">
-              {(["LONG", "SHORT"] as const).map((d) => (
+              {(["LONG", "SHORT"] as const).map(d => (
                 <button
                   key={d}
                   onClick={() => setForm({ ...form, direction: d })}
@@ -157,38 +180,40 @@ export function RiskManagerPage() {
             <FormField
               label="Entry Price *"
               value={form.entryPrice}
-              onChange={(v) => setForm({ ...form, entryPrice: v })}
+              onChange={v => setForm({ ...form, entryPrice: v })}
               placeholder="3250.00"
             />
             <FormField
               label="Stop Loss *"
               value={form.stopLoss}
-              onChange={(v) => setForm({ ...form, stopLoss: v })}
+              onChange={v => setForm({ ...form, stopLoss: v })}
               placeholder="3245.00"
             />
             <FormField
               label="Take Profit *"
               value={form.takeProfit}
-              onChange={(v) => setForm({ ...form, takeProfit: v })}
+              onChange={v => setForm({ ...form, takeProfit: v })}
               placeholder="3260.00"
             />
             <FormField
               label="Lot Size *"
               value={form.lotSize}
-              onChange={(v) => setForm({ ...form, lotSize: v })}
+              onChange={v => setForm({ ...form, lotSize: v })}
               placeholder="0.01"
             />
             <FormField
               label="Risk Amount ($)"
               value={form.riskAmount}
-              onChange={(v) => setForm({ ...form, riskAmount: v })}
+              onChange={v => setForm({ ...form, riskAmount: v })}
               placeholder="100"
             />
             <div className="col-span-2">
-              <label className="text-[10px] text-muted-foreground block mb-1">Notes</label>
+              <span className="text-[10px] text-muted-foreground block mb-1">
+                Notes
+              </span>
               <input
                 value={form.notes}
-                onChange={(e) => setForm({ ...form, notes: e.target.value })}
+                onChange={e => setForm({ ...form, notes: e.target.value })}
                 placeholder="Trade reason..."
                 className="w-full bg-[#0A0C10] border border-white/10 rounded-lg px-3 py-2 text-sm focus:border-[#D4A843]/50 focus:outline-none"
               />
@@ -212,7 +237,7 @@ export function RiskManagerPage() {
             Open Trades ({openTrades.length})
           </div>
           <div className="space-y-1">
-            {openTrades.map((trade) => (
+            {openTrades.map(trade => (
               <div
                 key={trade._id}
                 className="bg-[#12141A] border border-blue-500/20 rounded-lg px-3 py-2 flex items-center gap-3"
@@ -250,10 +275,9 @@ export function RiskManagerPage() {
                         type="number"
                         step="0.01"
                         value={exitPrice}
-                        onChange={(e) => setExitPrice(e.target.value)}
+                        onChange={e => setExitPrice(e.target.value)}
                         placeholder="Exit price"
                         className="w-24 bg-[#0A0C10] border border-white/10 rounded px-2 py-1 text-xs font-mono"
-                        autoFocus
                       />
                       <button
                         onClick={() => handleClose(trade._id, "WIN")}
@@ -320,7 +344,7 @@ export function RiskManagerPage() {
               No closed trades yet. Log your first trade above!
             </div>
           ) : (
-            closedTrades.map((trade) => (
+            closedTrades.map(trade => (
               <div
                 key={trade._id}
                 className="flex items-center gap-2 px-3 py-1.5 bg-[#12141A] rounded-lg text-xs border border-white/5"
@@ -334,9 +358,7 @@ export function RiskManagerPage() {
                 >
                   {trade.direction}
                 </span>
-                <span className="font-mono">
-                  {trade.entryPrice.toFixed(2)}
-                </span>
+                <span className="font-mono">{trade.entryPrice.toFixed(2)}</span>
                 <span className="text-muted-foreground">→</span>
                 <span className="font-mono">
                   {trade.exitPrice?.toFixed(2) ?? "—"}
@@ -352,7 +374,9 @@ export function RiskManagerPage() {
                 >
                   {trade.status}
                 </span>
-                <span className="text-muted-foreground">{trade.lotSize} lot</span>
+                <span className="text-muted-foreground">
+                  {trade.lotSize} lot
+                </span>
                 <span
                   className={`font-mono ml-auto ${
                     (trade.pnlPoints ?? 0) >= 0
@@ -364,12 +388,16 @@ export function RiskManagerPage() {
                   {(trade.pnlPoints ?? 0).toFixed(1)} pts
                 </span>
                 {trade.pnlDollars !== undefined && (
-                  <span className={`font-mono text-[10px] ${(trade.pnlDollars ?? 0) >= 0 ? "text-emerald-400/60" : "text-red-400/60"}`}>
+                  <span
+                    className={`font-mono text-[10px] ${(trade.pnlDollars ?? 0) >= 0 ? "text-emerald-400/60" : "text-red-400/60"}`}
+                  >
                     ${(trade.pnlDollars ?? 0).toFixed(0)}
                   </span>
                 )}
                 <span className="text-[10px] text-muted-foreground">
-                  {new Date(trade.closedAt ?? trade.openedAt).toLocaleDateString()}
+                  {new Date(
+                    trade.closedAt ?? trade.openedAt,
+                  ).toLocaleDateString()}
                 </span>
                 <button
                   onClick={() => {
@@ -419,14 +447,14 @@ function FormField({
 }) {
   return (
     <div>
-      <label className="text-[10px] text-muted-foreground block mb-1">
+      <span className="text-[10px] text-muted-foreground block mb-1">
         {label}
-      </label>
+      </span>
       <input
         type="number"
         step="0.01"
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={e => onChange(e.target.value)}
         placeholder={placeholder}
         className="w-full bg-[#0A0C10] border border-white/10 rounded-lg px-3 py-2 text-sm font-mono focus:border-[#D4A843]/50 focus:outline-none"
       />

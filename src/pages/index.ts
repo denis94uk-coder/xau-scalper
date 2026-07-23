@@ -1,6 +1,6 @@
 export { default as DashboardPage } from "./DashboardPage";
-export { TradingIdeasPage } from "./TradingIdeasPage";
-export { PerformanceTrackerPage } from "./PerformanceTrackerPage";
 export { default as ExperimentalPage } from "./ExperimentalPage";
-export { SignalJournalPage } from "./SignalJournalPage";
+export { PerformanceTrackerPage } from "./PerformanceTrackerPage";
 export { RiskManagerPage } from "./RiskManagerPage";
+export { SignalJournalPage } from "./SignalJournalPage";
+export { TradingIdeasPage } from "./TradingIdeasPage";

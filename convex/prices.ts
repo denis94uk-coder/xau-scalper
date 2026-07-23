@@ -1,7 +1,12 @@
 import { v } from "convex/values";
-import { action, internalMutation, internalQuery, query } from "./_generated/server";
+import {
+  action,
+  internalMutation,
+  internalQuery,
+  query,
+} from "./_generated/server";
 
-const FALLBACK_PRICE = 3240.50;
+const FALLBACK_PRICE = 3240.5;
 
 // Fetch live XAU/USD price from free APIs
 export const fetchLivePrice = action({
@@ -39,7 +44,11 @@ export const fetchLivePrice = action({
       if (res2.ok) {
         const data = await res2.json();
         if (data?.items?.[0]?.xauPrice) {
-          return makeSnapshot(data.items[0].xauPrice, data.items[0].chgXau, data.items[0].pcXau);
+          return makeSnapshot(
+            data.items[0].xauPrice,
+            data.items[0].chgXau,
+            data.items[0].pcXau,
+          );
         }
       }
     } catch (e) {
@@ -48,7 +57,9 @@ export const fetchLivePrice = action({
 
     // Try frankfurter.app (ECB rates — less precise but reliable)
     try {
-      const res3 = await fetch("https://api.frankfurter.app/latest?from=XAU&to=USD");
+      const res3 = await fetch(
+        "https://api.frankfurter.app/latest?from=XAU&to=USD",
+      );
       if (res3.ok) {
         const data = await res3.json();
         if (data?.rates?.USD) {
@@ -65,7 +76,11 @@ export const fetchLivePrice = action({
   },
 });
 
-function makeSnapshot(price: number, change24h?: number, changePct24h?: number) {
+function makeSnapshot(
+  price: number,
+  change24h?: number,
+  changePct24h?: number,
+) {
   const spread = price * 0.0003;
   return {
     price,
@@ -92,7 +107,7 @@ export const fetchCandles = action({
       low: v.number(),
       close: v.number(),
       volume: v.number(),
-    })
+    }),
   ),
   handler: async () => {
     const count = 200;
@@ -203,9 +218,9 @@ export const getLatestSnapshotInternal = internalQuery({
       changePct24h: v.number(),
       timestamp: v.number(),
     }),
-    v.null()
+    v.null(),
   ),
-  handler: async (ctx) => {
+  handler: async ctx => {
     return await ctx.db
       .query("priceSnapshots")
       .withIndex("by_timestamp")
@@ -229,9 +244,9 @@ export const getLatestSnapshot = query({
       changePct24h: v.number(),
       timestamp: v.number(),
     }),
-    v.null()
+    v.null(),
   ),
-  handler: async (ctx) => {
+  handler: async ctx => {
     return await ctx.db
       .query("priceSnapshots")
       .withIndex("by_timestamp")

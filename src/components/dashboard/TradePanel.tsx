@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { toast } from "sonner";
 
 interface Trade {
   id: string;
@@ -49,9 +49,9 @@ export function TradePanel({ currentPrice }: TradePanelProps) {
     saveTrades(trades);
   }, [trades]);
 
-  const openTrades = trades.filter((t) => t.status === "OPEN");
+  const openTrades = trades.filter(t => t.status === "OPEN");
   const recentClosed = trades
-    .filter((t) => t.status === "CLOSED")
+    .filter(t => t.status === "CLOSED")
     .sort((a, b) => (b.closedAt ?? 0) - (a.closedAt ?? 0))
     .slice(0, 5);
 
@@ -68,17 +68,17 @@ export function TradePanel({ currentPrice }: TradePanelProps) {
         status: "OPEN",
         openedAt: Date.now(),
       };
-      setTrades((prev) => [trade, ...prev]);
+      setTrades(prev => [trade, ...prev]);
       toast.success(`${type} order opened at ${currentPrice.toFixed(2)}`);
       setNotes("");
     },
-    [currentPrice, lotSize, stopLoss, takeProfit, notes]
+    [currentPrice, lotSize, stopLoss, takeProfit, notes],
   );
 
   const handleClose = useCallback(
     (tradeId: string) => {
-      setTrades((prev) =>
-        prev.map((t) => {
+      setTrades(prev =>
+        prev.map(t => {
           if (t.id !== tradeId || t.status === "CLOSED") return t;
           const pips =
             t.type === "BUY"
@@ -91,15 +91,15 @@ export function TradePanel({ currentPrice }: TradePanelProps) {
             status: "CLOSED" as const,
             closedAt: Date.now(),
           };
-        })
+        }),
       );
       toast.success(`Trade closed at ${currentPrice.toFixed(2)}`);
     },
-    [currentPrice]
+    [currentPrice],
   );
 
   const handleDelete = useCallback((tradeId: string) => {
-    setTrades((prev) => prev.filter((t) => t.id !== tradeId));
+    setTrades(prev => prev.filter(t => t.id !== tradeId));
     toast.success("Trade deleted");
   }, []);
 
@@ -118,7 +118,7 @@ export function TradePanel({ currentPrice }: TradePanelProps) {
             step="0.01"
             min="0.01"
             value={lotSize}
-            onChange={(e) => setLotSize(e.target.value)}
+            onChange={e => setLotSize(e.target.value)}
             className="h-8 text-xs font-mono bg-secondary border-border"
           />
         </div>
@@ -129,7 +129,7 @@ export function TradePanel({ currentPrice }: TradePanelProps) {
             step="0.1"
             placeholder={`${(currentPrice - 5).toFixed(1)}`}
             value={stopLoss}
-            onChange={(e) => setStopLoss(e.target.value)}
+            onChange={e => setStopLoss(e.target.value)}
             className="h-8 text-xs font-mono bg-secondary border-border"
           />
         </div>
@@ -140,7 +140,7 @@ export function TradePanel({ currentPrice }: TradePanelProps) {
             step="0.1"
             placeholder={`${(currentPrice + 5).toFixed(1)}`}
             value={takeProfit}
-            onChange={(e) => setTakeProfit(e.target.value)}
+            onChange={e => setTakeProfit(e.target.value)}
             className="h-8 text-xs font-mono bg-secondary border-border"
           />
         </div>
@@ -150,7 +150,7 @@ export function TradePanel({ currentPrice }: TradePanelProps) {
       <Input
         placeholder="Trade notes (optional)"
         value={notes}
-        onChange={(e) => setNotes(e.target.value)}
+        onChange={e => setNotes(e.target.value)}
         className="h-8 text-xs bg-secondary border-border"
       />
 
@@ -182,7 +182,7 @@ export function TradePanel({ currentPrice }: TradePanelProps) {
           <div className="text-xs font-medium text-muted-foreground tracking-wider uppercase">
             Open Positions ({openTrades.length})
           </div>
-          {openTrades.map((trade) => {
+          {openTrades.map(trade => {
             const unrealized =
               trade.type === "BUY"
                 ? (currentPrice - trade.entryPrice) * trade.lotSize * 100
@@ -197,9 +197,7 @@ export function TradePanel({ currentPrice }: TradePanelProps) {
                 <div className="flex items-center gap-2">
                   <span
                     className={`text-xs font-bold font-mono ${
-                      trade.type === "BUY"
-                        ? "text-[#00E676]"
-                        : "text-[#FF1744]"
+                      trade.type === "BUY" ? "text-[#00E676]" : "text-[#FF1744]"
                     }`}
                   >
                     {trade.type}
@@ -238,7 +236,7 @@ export function TradePanel({ currentPrice }: TradePanelProps) {
           <div className="text-xs font-medium text-muted-foreground tracking-wider uppercase">
             Recent Trades
           </div>
-          {recentClosed.map((trade) => (
+          {recentClosed.map(trade => (
             <div
               key={trade.id}
               className="flex items-center justify-between p-2 rounded-lg bg-secondary/30"

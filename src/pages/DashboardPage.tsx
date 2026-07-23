@@ -1,30 +1,37 @@
-import { useState, useEffect, useCallback, useMemo, Component, type ReactNode } from "react";
 import {
-  fetchGoldPrice,
-  fetchGoldCandles,
-  type PriceData,
-  type Candle,
-} from "@/lib/priceApi";
-import {
-  analyzeForScalping,
-  generateSignal,
-  calcRSI,
-  calcEMA,
-  calcATR,
-  calcStochastic,
-  calcMACD,
-} from "@/lib/indicators";
-import { PriceTicker } from "@/components/dashboard/PriceTicker";
-import { ScalpingToolbar } from "@/components/dashboard/ScalpingToolbar";
-import { MiniChart } from "@/components/dashboard/MultiTimeframeView";
-import { SessionBar } from "@/components/dashboard/SessionBar";
-import { MarketSessionBar } from "@/components/dashboard/MarketSessionBar";
-import { RegimeIndicator } from "@/components/dashboard/RegimeIndicator";
-import { MacroCorrelation } from "@/components/dashboard/MacroCorrelation";
-import { NewsShield } from "@/components/dashboard/NewsShield";
+  Component,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { LiquiditySweepPanel } from "@/components/dashboard/LiquiditySweepPanel";
+import { MacroCorrelation } from "@/components/dashboard/MacroCorrelation";
+import { MarketSessionBar } from "@/components/dashboard/MarketSessionBar";
+import { MiniChart } from "@/components/dashboard/MultiTimeframeView";
+import { NewsShield } from "@/components/dashboard/NewsShield";
+import { PriceTicker } from "@/components/dashboard/PriceTicker";
+import { RegimeIndicator } from "@/components/dashboard/RegimeIndicator";
+import { ScalpingToolbar } from "@/components/dashboard/ScalpingToolbar";
+import { SessionBar } from "@/components/dashboard/SessionBar";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  analyzeForScalping,
+  calcATR,
+  calcEMA,
+  calcMACD,
+  calcRSI,
+  calcStochastic,
+  generateSignal,
+} from "@/lib/indicators";
+import {
+  type Candle,
+  fetchGoldCandles,
+  fetchGoldPrice,
+  type PriceData,
+} from "@/lib/priceApi";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Error Boundary — catches rendering crashes
@@ -44,7 +51,9 @@ class ErrorBoundary extends Component<
     if (this.state.hasError) {
       return (
         <div className="flex flex-col items-center justify-center h-screen gap-4 p-6 bg-[#0A0C10] text-white">
-          <span className="text-lg font-mono text-[#D4A843]">⚠ Dashboard Error</span>
+          <span className="text-lg font-mono text-[#D4A843]">
+            ⚠ Dashboard Error
+          </span>
           <span className="text-sm text-muted-foreground text-center max-w-md">
             {this.state.error || "Something went wrong."}
           </span>
@@ -79,40 +88,51 @@ function DashboardContent() {
   const [dataSource, setDataSource] = useState<string>("");
 
   // Phase 1: Load price + active timeframe first (fast initial paint)
-  const loadCritical = useCallback(async (tf: Timeframe, showRefresh = false) => {
-    try {
-      if (showRefresh) setRefreshing(true);
-      const [priceResult, candleResult] = await Promise.allSettled([
-        fetchGoldPrice(),
-        fetchGoldCandles(tf),
-      ]);
-      if (priceResult.status === "fulfilled") {
-        setPriceData(priceResult.value);
-        setDataSource(priceResult.value.source);
+  const loadCritical = useCallback(
+    async (tf: Timeframe, showRefresh = false) => {
+      try {
+        if (showRefresh) setRefreshing(true);
+        const [priceResult, candleResult] = await Promise.allSettled([
+          fetchGoldPrice(),
+          fetchGoldCandles(tf),
+        ]);
+        if (priceResult.status === "fulfilled") {
+          setPriceData(priceResult.value);
+          setDataSource(priceResult.value.source);
+        }
+        if (candleResult.status === "fulfilled") {
+          const setters: Record<Timeframe, (c: Candle[]) => void> = {
+            "1m": setCandles1m,
+            "3m": setCandles3m,
+            "5m": setCandles5m,
+            "15m": setCandles15m,
+          };
+          setters[tf](candleResult.value);
+        }
+        setLastRefresh(new Date());
+      } catch (err) {
+        console.error("Failed to load critical data:", err);
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
       }
-      if (candleResult.status === "fulfilled") {
-        const setters: Record<Timeframe, (c: Candle[]) => void> = {
-          "1m": setCandles1m, "3m": setCandles3m, "5m": setCandles5m, "15m": setCandles15m
-        };
-        setters[tf](candleResult.value);
-      }
-      setLastRefresh(new Date());
-    } catch (err) {
-      console.error("Failed to load critical data:", err);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
+    },
+    [],
+  );
 
   // Phase 2: Background-load remaining timeframes (non-blocking)
   const loadRemaining = useCallback(async (activeTf: Timeframe) => {
     const allTfs: Timeframe[] = ["1m", "3m", "5m", "15m"];
     const remaining = allTfs.filter(tf => tf !== activeTf);
     const setters: Record<Timeframe, (c: Candle[]) => void> = {
-      "1m": setCandles1m, "3m": setCandles3m, "5m": setCandles5m, "15m": setCandles15m
+      "1m": setCandles1m,
+      "3m": setCandles3m,
+      "5m": setCandles5m,
+      "15m": setCandles15m,
     };
-    const results = await Promise.allSettled(remaining.map(tf => fetchGoldCandles(tf)));
+    const results = await Promise.allSettled(
+      remaining.map(tf => fetchGoldCandles(tf)),
+    );
     remaining.forEach((tf, i) => {
       if (results[i].status === "fulfilled") {
         setters[tf]((results[i] as PromiseFulfilledResult<Candle[]>).value);
@@ -125,8 +145,11 @@ function DashboardContent() {
     try {
       if (showRefresh) setRefreshing(true);
       const [priceResult, c1, c3, c5, c15] = await Promise.allSettled([
-        fetchGoldPrice(), fetchGoldCandles("1m"), fetchGoldCandles("3m"),
-        fetchGoldCandles("5m"), fetchGoldCandles("15m"),
+        fetchGoldPrice(),
+        fetchGoldCandles("1m"),
+        fetchGoldCandles("3m"),
+        fetchGoldCandles("5m"),
+        fetchGoldCandles("15m"),
       ]);
       if (priceResult.status === "fulfilled") {
         setPriceData(priceResult.value);
@@ -164,22 +187,40 @@ function DashboardContent() {
 
   // Scalping analysis per timeframe — wrapped in try/catch for safety
   const analysis1m = useMemo(() => {
-    try { return analyzeForScalping(candles1m); } catch { return null; }
+    try {
+      return analyzeForScalping(candles1m);
+    } catch {
+      return null;
+    }
   }, [candles1m]);
   const analysis3m = useMemo(() => {
-    try { return analyzeForScalping(candles3m); } catch { return null; }
+    try {
+      return analyzeForScalping(candles3m);
+    } catch {
+      return null;
+    }
   }, [candles3m]);
   const analysis5m = useMemo(() => {
-    try { return analyzeForScalping(candles5m); } catch { return null; }
+    try {
+      return analyzeForScalping(candles5m);
+    } catch {
+      return null;
+    }
   }, [candles5m]);
   const analysis15m = useMemo(() => {
-    try { return analyzeForScalping(candles15m); } catch { return null; }
+    try {
+      return analyzeForScalping(candles15m);
+    } catch {
+      return null;
+    }
   }, [candles15m]);
 
   const signal = useMemo(() => {
     try {
       return activeCandles.length > 50 ? generateSignal(activeCandles) : null;
-    } catch { return null; }
+    } catch {
+      return null;
+    }
   }, [activeCandles]);
 
   if (loading) {
@@ -200,10 +241,13 @@ function DashboardContent() {
   }
 
   const activeAnalysis =
-    activeTimeframe === "1m" ? analysis1m :
-    activeTimeframe === "3m" ? analysis3m :
-    activeTimeframe === "5m" ? analysis5m :
-    analysis15m;
+    activeTimeframe === "1m"
+      ? analysis1m
+      : activeTimeframe === "3m"
+        ? analysis3m
+        : activeTimeframe === "5m"
+          ? analysis5m
+          : analysis15m;
 
   return (
     <div className="flex flex-col gap-3 p-3 sm:p-4 max-w-[1440px] mx-auto w-full min-w-0 overflow-hidden">
@@ -216,17 +260,29 @@ function DashboardContent() {
       {/* ③ Engine Badge — own row, mobile-responsive */}
       <div
         className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 rounded-xl border transition-all"
-        style={{ backgroundColor: "rgba(212,168,67,0.04)", borderColor: "rgba(212,168,67,0.13)" }}
+        style={{
+          backgroundColor: "rgba(212,168,67,0.04)",
+          borderColor: "rgba(212,168,67,0.13)",
+        }}
       >
         <div className="flex items-center gap-2 min-w-0">
-          <span className="text-base sm:text-lg font-bold font-mono tracking-wide shrink-0" style={{ color: "#D4A843" }}>
+          <span
+            className="text-base sm:text-lg font-bold font-mono tracking-wide shrink-0"
+            style={{ color: "#D4A843" }}
+          >
             XAU Scalper
           </span>
           <span
             className="flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-md shrink-0"
-            style={{ backgroundColor: "rgba(212,168,67,0.08)", color: "#D4A843" }}
+            style={{
+              backgroundColor: "rgba(212,168,67,0.08)",
+              color: "#D4A843",
+            }}
           >
-            <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: "#D4A843" }} />
+            <span
+              className="w-1.5 h-1.5 rounded-full animate-pulse"
+              style={{ backgroundColor: "#D4A843" }}
+            />
             LIVE ENGINE
           </span>
           <span className="text-xs text-muted-foreground hidden md:inline truncate">
@@ -236,15 +292,21 @@ function DashboardContent() {
         <div className="flex items-center gap-2 sm:gap-3 sm:ml-auto flex-wrap">
           <div className="flex items-center gap-1">
             <span className="text-[10px] text-muted-foreground">SL</span>
-            <span className="text-[10px] sm:text-[11px] font-mono text-zinc-300">1.5× ATR</span>
+            <span className="text-[10px] sm:text-[11px] font-mono text-zinc-300">
+              1.5× ATR
+            </span>
           </div>
           <div className="w-px h-4 bg-border hidden sm:block" />
           <div className="flex items-center gap-1">
             <span className="text-[10px] text-muted-foreground">TP</span>
-            <span className="text-[10px] sm:text-[11px] font-mono text-zinc-300">1.2R / 2.5R</span>
+            <span className="text-[10px] sm:text-[11px] font-mono text-zinc-300">
+              1.2R / 2.5R
+            </span>
           </div>
           <div className="w-px h-4 bg-border hidden sm:block" />
-          <span className="text-[10px] sm:text-[11px] font-mono text-[#D4A843]">RSI · MACD · EMA · BB · Stoch</span>
+          <span className="text-[10px] sm:text-[11px] font-mono text-[#D4A843]">
+            RSI · MACD · EMA · BB · Stoch
+          </span>
         </div>
       </div>
 
@@ -290,10 +352,18 @@ function DashboardContent() {
 
       {/* ⑥ Intel Panels — 2×2 grid on desktop, stacked on mobile */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 min-w-0">
-        <div className="min-w-0 overflow-hidden"><RegimeIndicator /></div>
-        <div className="min-w-0 overflow-hidden"><MacroCorrelation /></div>
-        <div className="min-w-0 overflow-hidden"><NewsShield /></div>
-        <div className="min-w-0 overflow-hidden"><LiquiditySweepPanel /></div>
+        <div className="min-w-0 overflow-hidden">
+          <RegimeIndicator />
+        </div>
+        <div className="min-w-0 overflow-hidden">
+          <MacroCorrelation />
+        </div>
+        <div className="min-w-0 overflow-hidden">
+          <NewsShield />
+        </div>
+        <div className="min-w-0 overflow-hidden">
+          <LiquiditySweepPanel />
+        </div>
       </div>
 
       {/* ⑦ Scalping Bias & Entry/Exit Tool */}
@@ -307,14 +377,36 @@ function DashboardContent() {
 
       {/* ⑤ Multi-TF Charts — 4 columns */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {([
-          { tf: "1m" as Timeframe, label: "1 MIN", candles: candles1m, showBB: false },
-          { tf: "3m" as Timeframe, label: "3 MIN", candles: candles3m, showBB: false },
-          { tf: "5m" as Timeframe, label: "5 MIN", candles: candles5m, showBB: false },
-          { tf: "15m" as Timeframe, label: "15 MIN", candles: candles15m, showBB: true },
-        ]).map(({ tf, label, candles, showBB }) => (
+        {[
+          {
+            tf: "1m" as Timeframe,
+            label: "1 MIN",
+            candles: candles1m,
+            showBB: false,
+          },
+          {
+            tf: "3m" as Timeframe,
+            label: "3 MIN",
+            candles: candles3m,
+            showBB: false,
+          },
+          {
+            tf: "5m" as Timeframe,
+            label: "5 MIN",
+            candles: candles5m,
+            showBB: false,
+          },
+          {
+            tf: "15m" as Timeframe,
+            label: "15 MIN",
+            candles: candles15m,
+            showBB: true,
+          },
+        ].map(({ tf, label, candles, showBB }) => (
           <div
             key={tf}
+            role="button"
+            tabIndex={0}
             className={`cursor-pointer transition-all rounded-xl ${
               activeTimeframe === tf
                 ? "ring-1 ring-[#D4A843]/50"
@@ -360,10 +452,14 @@ function CompactSignalPanel({
   signal,
   candles,
 }: {
-  signal: { type: "BUY" | "SELL" | "NEUTRAL"; strength: number; reasons: string[] };
+  signal: {
+    type: "BUY" | "SELL" | "NEUTRAL";
+    strength: number;
+    reasons: string[];
+  };
   candles: Candle[];
 }) {
-  const closes = candles.map((c) => c.close);
+  const closes = candles.map(c => c.close);
   const last = closes.length - 1;
   if (last < 0) return null;
 
@@ -466,7 +562,11 @@ function CompactSignalPanel({
           format={1}
           color={
             rsiVal !== undefined
-              ? rsiVal < 30 ? "#00E676" : rsiVal > 70 ? "#FF1744" : undefined
+              ? rsiVal < 30
+                ? "#00E676"
+                : rsiVal > 70
+                  ? "#FF1744"
+                  : undefined
               : undefined
           }
         />
@@ -476,19 +576,34 @@ function CompactSignalPanel({
           format={0}
           color={
             stochVal !== undefined
-              ? stochVal < 20 ? "#00E676" : stochVal > 80 ? "#FF1744" : undefined
+              ? stochVal < 20
+                ? "#00E676"
+                : stochVal > 80
+                  ? "#FF1744"
+                  : undefined
               : undefined
           }
         />
-        <IndicatorPill label="MACD" value={macdVal} format={2} color={
-          macdVal !== undefined ? (macdVal > 0 ? "#00E676" : "#FF1744") : undefined
-        } />
+        <IndicatorPill
+          label="MACD"
+          value={macdVal}
+          format={2}
+          color={
+            macdVal !== undefined
+              ? macdVal > 0
+                ? "#00E676"
+                : "#FF1744"
+              : undefined
+          }
+        />
         <IndicatorPill label="Signal" value={macdSigVal} format={2} />
         <IndicatorPill label="EMA 9" value={ema9Val} format={2} />
         <IndicatorPill label="EMA 21" value={ema21Val} format={2} />
         <IndicatorPill label="ATR" value={atrVal} format={2} color="#D4A843" />
         <div className="flex items-center gap-1 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded bg-secondary/30">
-          <span className="text-[9px] sm:text-[10px] text-muted-foreground">Trend</span>
+          <span className="text-[9px] sm:text-[10px] text-muted-foreground">
+            Trend
+          </span>
           <span
             className={`text-[10px] sm:text-xs font-mono font-bold ${
               ema9Val !== undefined &&
@@ -524,7 +639,9 @@ function IndicatorPill({
   if (value === undefined || isNaN(value)) return null;
   return (
     <div className="flex items-center gap-1 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded bg-secondary/30">
-      <span className="text-[9px] sm:text-[10px] text-muted-foreground">{label}</span>
+      <span className="text-[9px] sm:text-[10px] text-muted-foreground">
+        {label}
+      </span>
       <span
         className="text-[10px] sm:text-xs font-mono tabular-nums font-semibold"
         style={{ color: color ?? "var(--foreground)" }}
@@ -548,7 +665,9 @@ function PivotPointsRow({
   if (!analysis) {
     return (
       <div className="flex items-center gap-4 px-4 py-2.5 rounded-xl bg-card border border-border">
-        <span className="text-xs text-muted-foreground">Pivot points loading…</span>
+        <span className="text-xs text-muted-foreground">
+          Pivot points loading…
+        </span>
       </div>
     );
   }
@@ -573,7 +692,7 @@ function PivotPointsRow({
         <div className="w-px h-4 bg-border shrink-0 hidden sm:block" />
       </div>
       <div className="flex flex-wrap items-center gap-1 sm:gap-1.5">
-        {levels.map((level) => {
+        {levels.map(level => {
           const isNear =
             currentPrice > 0 &&
             Math.abs(currentPrice - level.value) / currentPrice < 0.001;
