@@ -1,7 +1,7 @@
 import { useMutation } from "convex/react";
-import { api } from "../../../convex/_generated/api";
 import { toast } from "sonner";
 import type { ScalpAnalysis, ScalpEntry } from "@/lib/indicators";
+import { api } from "../../../convex/_generated/api";
 
 interface ScalpingToolbarProps {
   analysis1m: ScalpAnalysis | null;
@@ -12,9 +12,21 @@ interface ScalpingToolbarProps {
 }
 
 const BIAS_COLORS = {
-  BULLISH: { text: "#00E676", bg: "rgba(0,230,118,0.08)", border: "rgba(0,230,118,0.25)" },
-  BEARISH: { text: "#FF1744", bg: "rgba(255,23,68,0.08)", border: "rgba(255,23,68,0.25)" },
-  NEUTRAL: { text: "#D4A843", bg: "rgba(212,168,67,0.06)", border: "rgba(212,168,67,0.20)" },
+  BULLISH: {
+    text: "#00E676",
+    bg: "rgba(0,230,118,0.08)",
+    border: "rgba(0,230,118,0.25)",
+  },
+  BEARISH: {
+    text: "#FF1744",
+    bg: "rgba(255,23,68,0.08)",
+    border: "rgba(255,23,68,0.25)",
+  },
+  NEUTRAL: {
+    text: "#D4A843",
+    bg: "rgba(212,168,67,0.06)",
+    border: "rgba(212,168,67,0.20)",
+  },
 };
 
 export function ScalpingToolbar({
@@ -25,10 +37,13 @@ export function ScalpingToolbar({
   activeTimeframe,
 }: ScalpingToolbarProps) {
   const activeAnalysis =
-    activeTimeframe === "1m" ? analysis1m :
-    activeTimeframe === "3m" ? analysis3m :
-    activeTimeframe === "5m" ? analysis5m :
-    analysis15m;
+    activeTimeframe === "1m"
+      ? analysis1m
+      : activeTimeframe === "3m"
+        ? analysis3m
+        : activeTimeframe === "5m"
+          ? analysis5m
+          : analysis15m;
 
   if (!activeAnalysis) {
     return (
@@ -50,9 +65,10 @@ export function ScalpingToolbar({
   ];
 
   const alignedCount = tfBiases.filter(
-    (t) => t.analysis && t.analysis.bias === bias
+    t => t.analysis && t.analysis.bias === bias,
   ).length;
-  const confluence = alignedCount >= 3 ? "STRONG" : alignedCount === 2 ? "MODERATE" : "WEAK";
+  const confluence =
+    alignedCount >= 3 ? "STRONG" : alignedCount === 2 ? "MODERATE" : "WEAK";
 
   return (
     <div
@@ -79,10 +95,16 @@ export function ScalpingToolbar({
             <div className="w-16 h-2 bg-secondary/50 rounded-full overflow-hidden">
               <div
                 className="h-full rounded-full transition-all duration-500"
-                style={{ width: `${biasStrength}%`, backgroundColor: colors.text }}
+                style={{
+                  width: `${biasStrength}%`,
+                  backgroundColor: colors.text,
+                }}
               />
             </div>
-            <span className="text-xs font-mono tabular-nums" style={{ color: colors.text }}>
+            <span
+              className="text-xs font-mono tabular-nums"
+              style={{ color: colors.text }}
+            >
               {biasStrength}%
             </span>
           </div>
@@ -90,11 +112,18 @@ export function ScalpingToolbar({
 
         {/* Multi-TF alignment + Confluence */}
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-          <span className="text-[10px] text-muted-foreground tracking-wider uppercase">Timeframes</span>
+          <span className="text-[10px] text-muted-foreground tracking-wider uppercase">
+            Timeframes
+          </span>
           <div className="flex items-center gap-1 sm:gap-1.5">
-            {tfBiases.map((tf) => {
+            {tfBiases.map(tf => {
               const b = tf.analysis?.bias;
-              const c = b === "BULLISH" ? "#00E676" : b === "BEARISH" ? "#FF1744" : "#6B7280";
+              const c =
+                b === "BULLISH"
+                  ? "#00E676"
+                  : b === "BEARISH"
+                    ? "#FF1744"
+                    : "#6B7280";
               const arrow = b === "BULLISH" ? "▲" : b === "BEARISH" ? "▼" : "—";
               return (
                 <div
@@ -104,7 +133,10 @@ export function ScalpingToolbar({
                   <span className="text-[9px] sm:text-[10px] font-mono text-muted-foreground">
                     {tf.label}
                   </span>
-                  <span className="text-[10px] sm:text-xs font-bold font-mono" style={{ color: c }}>
+                  <span
+                    className="text-[10px] sm:text-xs font-bold font-mono"
+                    style={{ color: c }}
+                  >
                     {arrow}
                   </span>
                 </div>
@@ -130,7 +162,10 @@ export function ScalpingToolbar({
             <div className="flex items-center gap-1.5">
               <span className="text-[10px] text-muted-foreground">R:</span>
               {activeAnalysis.keyResistances.slice(0, 2).map((r, i) => (
-                <span key={i} className="text-xs font-mono tabular-nums text-[#FF1744]/80">
+                <span
+                  key={i}
+                  className="text-xs font-mono tabular-nums text-[#FF1744]/80"
+                >
                   {r.toFixed(2)}
                 </span>
               ))}
@@ -140,7 +175,10 @@ export function ScalpingToolbar({
             <div className="flex items-center gap-1.5">
               <span className="text-[10px] text-muted-foreground">S:</span>
               {activeAnalysis.keySupports.slice(0, 2).map((s, i) => (
-                <span key={i} className="text-xs font-mono tabular-nums text-[#00E676]/80">
+                <span
+                  key={i}
+                  className="text-xs font-mono tabular-nums text-[#00E676]/80"
+                >
                   {s.toFixed(2)}
                 </span>
               ))}
@@ -151,7 +189,10 @@ export function ScalpingToolbar({
 
       {/* Row 2: Entry Ideas */}
       {entries.length > 0 && (
-        <div className="mt-3 pt-3 border-t" style={{ borderColor: colors.border }}>
+        <div
+          className="mt-3 pt-3 border-t"
+          style={{ borderColor: colors.border }}
+        >
           <div className="flex flex-col sm:flex-row gap-3">
             {entries.map((entry, i) => (
               <EntryCard
@@ -247,7 +288,10 @@ function EntryCard({
                 }}
               />
             </div>
-            <span className="text-[10px] font-mono tabular-nums" style={{ color: dirColor }}>
+            <span
+              className="text-[10px] font-mono tabular-nums"
+              style={{ color: dirColor }}
+            >
               {entry.confidence}%
             </span>
           </div>
@@ -262,11 +306,7 @@ function EntryCard({
 
       {/* Price Levels */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        <PriceLevel
-          label="ENTRY"
-          value={entry.entryPrice}
-          color="#D4A843"
-        />
+        <PriceLevel label="ENTRY" value={entry.entryPrice} color="#D4A843" />
         <PriceLevel
           label="STOP LOSS"
           value={entry.stopLoss}
@@ -308,12 +348,19 @@ function PriceLevel({
 }) {
   return (
     <div className="flex flex-col">
-      <span className="text-[10px] text-muted-foreground tracking-wider">{label}</span>
-      <span className="text-sm font-mono tabular-nums font-semibold" style={{ color }}>
+      <span className="text-[10px] text-muted-foreground tracking-wider">
+        {label}
+      </span>
+      <span
+        className="text-sm font-mono tabular-nums font-semibold"
+        style={{ color }}
+      >
         {value.toFixed(2)}
       </span>
       {sublabel && (
-        <span className="text-[9px] text-muted-foreground/60 font-mono">{sublabel}</span>
+        <span className="text-[9px] text-muted-foreground/60 font-mono">
+          {sublabel}
+        </span>
       )}
     </div>
   );

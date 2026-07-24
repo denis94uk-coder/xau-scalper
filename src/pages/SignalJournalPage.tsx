@@ -1,17 +1,46 @@
 import { useQuery } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import {
+  Activity,
+  AlertTriangle,
+  ArrowUpRight,
+  Bot,
+  ScrollText,
+} from "lucide-react";
 import { useState } from "react";
-import { ScrollText, Bot, ArrowUpRight, Activity, AlertTriangle } from "lucide-react";
+import { api } from "../../convex/_generated/api";
 
-const EVENT_CONFIG: Record<string, { color: string; bg: string; icon: typeof Bot }> = {
+const EVENT_CONFIG: Record<
+  string,
+  { color: string; bg: string; icon: typeof Bot }
+> = {
   SIGNAL_GENERATED: { color: "text-cyan-400", bg: "bg-cyan-500/10", icon: Bot },
-  ENTRY_TRIGGERED: { color: "text-blue-400", bg: "bg-blue-500/10", icon: ArrowUpRight },
-  TP1_HIT: { color: "text-emerald-400", bg: "bg-emerald-500/10", icon: ArrowUpRight },
-  TP2_HIT: { color: "text-green-300", bg: "bg-green-500/10", icon: ArrowUpRight },
+  ENTRY_TRIGGERED: {
+    color: "text-blue-400",
+    bg: "bg-blue-500/10",
+    icon: ArrowUpRight,
+  },
+  TP1_HIT: {
+    color: "text-emerald-400",
+    bg: "bg-emerald-500/10",
+    icon: ArrowUpRight,
+  },
+  TP2_HIT: {
+    color: "text-green-300",
+    bg: "bg-green-500/10",
+    icon: ArrowUpRight,
+  },
   SL_HIT: { color: "text-red-400", bg: "bg-red-500/10", icon: AlertTriangle },
   EXPIRED: { color: "text-gray-400", bg: "bg-gray-500/10", icon: Activity },
-  ENGINE_RUN: { color: "text-yellow-400", bg: "bg-yellow-500/10", icon: Activity },
-  MONITOR_CHECK: { color: "text-purple-400", bg: "bg-purple-500/10", icon: Activity },
+  ENGINE_RUN: {
+    color: "text-yellow-400",
+    bg: "bg-yellow-500/10",
+    icon: Activity,
+  },
+  MONITOR_CHECK: {
+    color: "text-purple-400",
+    bg: "bg-purple-500/10",
+    icon: Activity,
+  },
 };
 
 export function SignalJournalPage() {
@@ -30,11 +59,11 @@ export function SignalJournalPage() {
 
   let filtered = journal;
   if (typeFilter !== "ALL") {
-    filtered = filtered.filter((e) => e.eventType === typeFilter);
+    filtered = filtered.filter(e => e.eventType === typeFilter);
   }
   if (!showEngine) {
     filtered = filtered.filter(
-      (e) => e.eventType !== "ENGINE_RUN" && e.eventType !== "MONITOR_CHECK"
+      e => e.eventType !== "ENGINE_RUN" && e.eventType !== "MONITOR_CHECK",
     );
   }
 
@@ -87,7 +116,7 @@ export function SignalJournalPage() {
             "TP2_HIT",
             "SL_HIT",
             "ENGINE_RUN",
-          ].map((t) => (
+          ].map(t => (
             <button
               key={t}
               onClick={() => setTypeFilter(t)}
@@ -105,7 +134,7 @@ export function SignalJournalPage() {
           <input
             type="checkbox"
             checked={showEngine}
-            onChange={(e) => setShowEngine(e.target.checked)}
+            onChange={e => setShowEngine(e.target.checked)}
             className="rounded border-white/20"
           />
           Show engine runs
@@ -123,7 +152,7 @@ export function SignalJournalPage() {
             </p>
           </div>
         ) : (
-          filtered.map((entry) => {
+          filtered.map(entry => {
             const cfg =
               EVENT_CONFIG[entry.eventType] ?? EVENT_CONFIG.ENGINE_RUN;
             const EventIcon = cfg.icon;

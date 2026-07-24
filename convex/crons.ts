@@ -7,39 +7,39 @@ const crons = cronJobs();
 crons.interval(
   "generate-signals",
   { minutes: 5 },
-  internal.signalEngine.generateSignals
+  internal.signalEngine.generateSignals,
 );
 
 // Monitor active ideas every 1 minute for SL/TP/trailing hits
 crons.interval(
   "monitor-ideas",
   { minutes: 1 },
-  internal.signalEngine.monitorIdeas
+  internal.signalEngine.monitorIdeas,
 );
 
 // ─── Intel Engines (every 5 minutes) ───
 crons.interval(
   "regime-detection",
   { minutes: 5 },
-  internal.regime.detectMarketRegime
+  internal.regime.detectMarketRegime,
 );
 
 crons.interval(
   "macro-correlation",
   { minutes: 5 },
-  internal.macroCorrelation.fetchMacroData
+  internal.macroCorrelation.fetchMacroData,
 );
 
 crons.interval(
   "news-calendar",
   { minutes: 5 },
-  internal.newsCalendar.updateCalendar
+  internal.newsCalendar.updateCalendar,
 );
 
 crons.interval(
   "liquidity-sweeps",
   { minutes: 5 },
-  internal.liquiditySweep.scanLiquiditySweeps
+  internal.liquiditySweep.scanLiquiditySweeps,
 );
 
 export default crons;

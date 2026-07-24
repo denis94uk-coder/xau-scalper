@@ -1,9 +1,17 @@
-import { useQuery, useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
+import {
+  Bot,
+  ChevronDown,
+  ChevronUp,
+  FlaskConical,
+  Trash2,
+  User,
+  Zap,
+} from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
-import { useState } from "react";
-import { Trash2, ChevronDown, ChevronUp, Zap, Bot, FlaskConical, User } from "lucide-react";
-import { toast } from "sonner";
 
 const STATUS_COLORS: Record<string, string> = {
   ACTIVE: "bg-blue-500/20 text-blue-400 border-blue-500/30",
@@ -13,7 +21,10 @@ const STATUS_COLORS: Record<string, string> = {
   EXPIRED: "bg-gray-500/20 text-gray-400 border-gray-500/30",
 };
 
-const SOURCE_ICONS: Record<string, { icon: typeof Bot; label: string; color: string }> = {
+const SOURCE_ICONS: Record<
+  string,
+  { icon: typeof Bot; label: string; color: string }
+> = {
   engine: { icon: Bot, label: "Engine", color: "text-cyan-400" },
   dashboard: { icon: User, label: "Manual", color: "text-[#D4A843]" },
   experimental: { icon: FlaskConical, label: "EXP", color: "text-purple-400" },
@@ -25,8 +36,15 @@ const GRADE_COLORS: Record<string, string> = {
   C: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
 };
 
-function JourneyTimeline({ log }: { log: Array<{ event: string; price: number; timestamp: number }> }) {
-  if (!log || log.length === 0) return <span className="text-xs text-muted-foreground">No journey data</span>;
+function JourneyTimeline({
+  log,
+}: {
+  log: Array<{ event: string; price: number; timestamp: number }>;
+}) {
+  if (!log || log.length === 0)
+    return (
+      <span className="text-xs text-muted-foreground">No journey data</span>
+    );
 
   return (
     <div className="flex items-center gap-1 flex-wrap">
@@ -47,9 +65,12 @@ function JourneyTimeline({ log }: { log: Array<{ event: string; price: number; t
                 className={`w-2.5 h-2.5 rounded-full ${color} ring-1 ring-white/10`}
               />
               <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 opacity-0 group-hover:opacity-100 transition-opacity bg-[#1A1D27] border border-white/10 rounded px-2 py-1 text-[10px] whitespace-nowrap z-50 pointer-events-none">
-                <div className="font-medium">{entry.event.replace(/_/g, " ")}</div>
+                <div className="font-medium">
+                  {entry.event.replace(/_/g, " ")}
+                </div>
                 <div className="text-muted-foreground">
-                  {entry.price.toFixed(2)} · {new Date(entry.timestamp).toLocaleTimeString()}
+                  {entry.price.toFixed(2)} ·{" "}
+                  {new Date(entry.timestamp).toLocaleTimeString()}
                 </div>
               </div>
             </div>
@@ -66,7 +87,9 @@ export function TradingIdeasPage() {
   const [filter, setFilter] = useState<string>("ALL");
   const [sourceFilter, setSourceFilter] = useState<string>("ALL");
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [sortField, setSortField] = useState<"date" | "pnl" | "confidence">("date");
+  const [sortField, setSortField] = useState<"date" | "pnl" | "confidence">(
+    "date",
+  );
 
   if (!ideas) {
     return (
@@ -79,25 +102,31 @@ export function TradingIdeasPage() {
   // Filters
   let filtered = ideas;
   if (filter !== "ALL") {
-    filtered = filtered.filter((i) => i.status === filter);
+    filtered = filtered.filter(i => i.status === filter);
   }
   if (sourceFilter !== "ALL") {
-    filtered = filtered.filter((i) => (i.source ?? "dashboard") === sourceFilter);
+    filtered = filtered.filter(i => (i.source ?? "dashboard") === sourceFilter);
   }
 
   // Sort
   if (sortField === "pnl") {
-    filtered = [...filtered].sort((a, b) => (b.pnlPoints ?? 0) - (a.pnlPoints ?? 0));
+    filtered = [...filtered].sort(
+      (a, b) => (b.pnlPoints ?? 0) - (a.pnlPoints ?? 0),
+    );
   } else if (sortField === "confidence") {
     filtered = [...filtered].sort((a, b) => b.confidence - a.confidence);
   }
 
   // Stats
-  const active = ideas.filter((i) => i.status === "ACTIVE" || i.status === "TP1_HIT").length;
-  const wins = ideas.filter((i) => i.status === "TP1_HIT" || i.status === "TP2_HIT").length;
-  const losses = ideas.filter((i) => i.status === "STOPPED").length;
+  const active = ideas.filter(
+    i => i.status === "ACTIVE" || i.status === "TP1_HIT",
+  ).length;
+  const wins = ideas.filter(
+    i => i.status === "TP1_HIT" || i.status === "TP2_HIT",
+  ).length;
+  const losses = ideas.filter(i => i.status === "STOPPED").length;
   const totalPnl = ideas.reduce((s, i) => s + (i.pnlPoints ?? 0), 0);
-  const engineCount = ideas.filter((i) => i.source === "engine").length;
+  const engineCount = ideas.filter(i => i.source === "engine").length;
 
   return (
     <div className="space-y-4">
@@ -135,22 +164,24 @@ export function TradingIdeasPage() {
       {/* Filters */}
       <div className="flex gap-2 flex-wrap">
         <div className="flex gap-1 bg-[#12141A] rounded-lg p-0.5 border border-white/5">
-          {["ALL", "ACTIVE", "TP1_HIT", "TP2_HIT", "STOPPED", "EXPIRED"].map((s) => (
-            <button
-              key={s}
-              onClick={() => setFilter(s)}
-              className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
-                filter === s
-                  ? "bg-white/10 text-white font-medium"
-                  : "text-muted-foreground hover:text-white"
-              }`}
-            >
-              {s.replace("_", " ")}
-            </button>
-          ))}
+          {["ALL", "ACTIVE", "TP1_HIT", "TP2_HIT", "STOPPED", "EXPIRED"].map(
+            s => (
+              <button
+                key={s}
+                onClick={() => setFilter(s)}
+                className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
+                  filter === s
+                    ? "bg-white/10 text-white font-medium"
+                    : "text-muted-foreground hover:text-white"
+                }`}
+              >
+                {s.replace("_", " ")}
+              </button>
+            ),
+          )}
         </div>
         <div className="flex gap-1 bg-[#12141A] rounded-lg p-0.5 border border-white/5">
-          {["ALL", "engine", "dashboard", "experimental"].map((s) => (
+          {["ALL", "engine", "dashboard", "experimental"].map(s => (
             <button
               key={s}
               onClick={() => setSourceFilter(s)}
@@ -160,12 +191,14 @@ export function TradingIdeasPage() {
                   : "text-muted-foreground hover:text-white"
               }`}
             >
-              {s === "ALL" ? "All Sources" : s.charAt(0).toUpperCase() + s.slice(1)}
+              {s === "ALL"
+                ? "All Sources"
+                : s.charAt(0).toUpperCase() + s.slice(1)}
             </button>
           ))}
         </div>
         <div className="flex gap-1 bg-[#12141A] rounded-lg p-0.5 border border-white/5 ml-auto">
-          {(["date", "pnl", "confidence"] as const).map((s) => (
+          {(["date", "pnl", "confidence"] as const).map(s => (
             <button
               key={s}
               onClick={() => setSortField(s)}
@@ -188,8 +221,10 @@ export function TradingIdeasPage() {
             No signals match the current filter
           </div>
         ) : (
-          filtered.map((idea) => {
-            const src = SOURCE_ICONS[idea.source ?? "dashboard"] ?? SOURCE_ICONS.dashboard;
+          filtered.map(idea => {
+            const src =
+              SOURCE_ICONS[idea.source ?? "dashboard"] ??
+              SOURCE_ICONS.dashboard;
             const SrcIcon = src.icon;
             const isExpanded = expandedId === idea._id;
 
@@ -200,6 +235,8 @@ export function TradingIdeasPage() {
               >
                 {/* Main Row */}
                 <div
+                  role="button"
+                  tabIndex={0}
                   className="flex items-center gap-3 px-3 py-2.5 cursor-pointer"
                   onClick={() => setExpandedId(isExpanded ? null : idea._id)}
                 >
@@ -219,7 +256,9 @@ export function TradingIdeasPage() {
 
                   {/* Grade */}
                   {idea.grade && GRADE_COLORS[idea.grade] && (
-                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${GRADE_COLORS[idea.grade]}`}>
+                    <span
+                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${GRADE_COLORS[idea.grade]}`}
+                    >
                       {idea.grade}
                     </span>
                   )}
@@ -276,7 +315,9 @@ export function TradingIdeasPage() {
                   <div className="border-t border-white/5 px-3 py-3 space-y-3 bg-[#0E1015]">
                     {/* Journey on mobile */}
                     <div className="sm:hidden">
-                      <div className="text-[10px] text-muted-foreground mb-1">JOURNEY</div>
+                      <div className="text-[10px] text-muted-foreground mb-1">
+                        JOURNEY
+                      </div>
                       <JourneyTimeline log={idea.journeyLog ?? []} />
                     </div>
 
@@ -284,7 +325,9 @@ export function TradingIdeasPage() {
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
                       <div>
                         <span className="text-muted-foreground">Entry</span>
-                        <div className="font-mono">{idea.entryPrice.toFixed(2)}</div>
+                        <div className="font-mono">
+                          {idea.entryPrice.toFixed(2)}
+                        </div>
                       </div>
                       <div>
                         <span className="text-red-400">
@@ -299,7 +342,11 @@ export function TradingIdeasPage() {
                           )}
                           {!idea.trailingSL && (
                             <span className="text-muted-foreground ml-1">
-                              ({Math.abs(idea.entryPrice - idea.stopLoss).toFixed(1)} pts)
+                              (
+                              {Math.abs(
+                                idea.entryPrice - idea.stopLoss,
+                              ).toFixed(1)}{" "}
+                              pts)
                             </span>
                           )}
                         </div>
@@ -309,7 +356,11 @@ export function TradingIdeasPage() {
                         <div className="font-mono text-emerald-400">
                           {idea.tp1.toFixed(2)}
                           <span className="text-muted-foreground ml-1">
-                            R:R {(Math.abs(idea.tp1 - idea.entryPrice) / Math.abs(idea.entryPrice - idea.stopLoss)).toFixed(1)}
+                            R:R{" "}
+                            {(
+                              Math.abs(idea.tp1 - idea.entryPrice) /
+                              Math.abs(idea.entryPrice - idea.stopLoss)
+                            ).toFixed(1)}
                           </span>
                         </div>
                       </div>
@@ -318,7 +369,11 @@ export function TradingIdeasPage() {
                         <div className="font-mono text-green-300">
                           {idea.tp2.toFixed(2)}
                           <span className="text-muted-foreground ml-1">
-                            R:R {(Math.abs(idea.tp2 - idea.entryPrice) / Math.abs(idea.entryPrice - idea.stopLoss)).toFixed(1)}
+                            R:R{" "}
+                            {(
+                              Math.abs(idea.tp2 - idea.entryPrice) /
+                              Math.abs(idea.entryPrice - idea.stopLoss)
+                            ).toFixed(1)}
                           </span>
                         </div>
                       </div>
@@ -326,12 +381,12 @@ export function TradingIdeasPage() {
 
                     {/* Reason + Meta */}
                     <div className="text-xs space-y-1">
-                      <div className="text-muted-foreground">
-                        {idea.reason}
-                      </div>
+                      <div className="text-muted-foreground">{idea.reason}</div>
                       <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
                         <span>TF: {idea.timeframe}</span>
-                        <span>Bias: {idea.bias} ({idea.biasStrength}%)</span>
+                        <span>
+                          Bias: {idea.bias} ({idea.biasStrength}%)
+                        </span>
                         <span>{new Date(idea.createdAt).toLocaleString()}</span>
                       </div>
                     </div>
@@ -339,21 +394,33 @@ export function TradingIdeasPage() {
                     {/* Journey log details */}
                     {idea.journeyLog && idea.journeyLog.length > 0 && (
                       <div>
-                        <div className="text-[10px] text-muted-foreground mb-1">JOURNEY LOG</div>
+                        <div className="text-[10px] text-muted-foreground mb-1">
+                          JOURNEY LOG
+                        </div>
                         <div className="space-y-0.5">
                           {idea.journeyLog.map((entry, i) => (
-                            <div key={i} className="flex items-center gap-2 text-[10px]">
+                            <div
+                              key={i}
+                              className="flex items-center gap-2 text-[10px]"
+                            >
                               <span className="text-muted-foreground w-16">
                                 {new Date(entry.timestamp).toLocaleTimeString()}
                               </span>
-                              <span className={`font-medium ${
-                                entry.event.includes("TP") ? "text-emerald-400" :
-                                entry.event.includes("SL") || entry.event.includes("STOP") ? "text-red-400" :
-                                "text-blue-400"
-                              }`}>
+                              <span
+                                className={`font-medium ${
+                                  entry.event.includes("TP")
+                                    ? "text-emerald-400"
+                                    : entry.event.includes("SL") ||
+                                        entry.event.includes("STOP")
+                                      ? "text-red-400"
+                                      : "text-blue-400"
+                                }`}
+                              >
                                 {entry.event.replace(/_/g, " ")}
                               </span>
-                              <span className="font-mono">{entry.price.toFixed(2)}</span>
+                              <span className="font-mono">
+                                {entry.price.toFixed(2)}
+                              </span>
                             </div>
                           ))}
                         </div>
@@ -363,7 +430,7 @@ export function TradingIdeasPage() {
                     {/* Actions */}
                     <div className="flex justify-end">
                       <button
-                        onClick={(e) => {
+                        onClick={e => {
                           e.stopPropagation();
                           deleteIdea({ id: idea._id as Id<"tradingIdeas"> });
                           toast.success("Idea deleted");

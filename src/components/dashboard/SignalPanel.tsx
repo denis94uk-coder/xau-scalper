@@ -1,6 +1,11 @@
-import type { ScalpSignal } from "@/lib/indicators";
-import { calcRSI, calcEMA, calcATR, calcStochastic, calcMACD } from "@/lib/indicators";
-import type { Candle } from "@/lib/indicators";
+import type { Candle, ScalpSignal } from "@/lib/indicators";
+import {
+  calcATR,
+  calcEMA,
+  calcMACD,
+  calcRSI,
+  calcStochastic,
+} from "@/lib/indicators";
 
 interface SignalPanelProps {
   signal: ScalpSignal;
@@ -72,7 +77,7 @@ function IndicatorBar({
 }
 
 export function SignalPanel({ signal, candles }: SignalPanelProps) {
-  const closes = candles.map((c) => c.close);
+  const closes = candles.map(c => c.close);
   const last = closes.length - 1;
 
   const rsi = calcRSI(closes, 14);

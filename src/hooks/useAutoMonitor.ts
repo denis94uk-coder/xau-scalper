@@ -3,12 +3,13 @@
  * Aware of partial TP + trailing stops — server engine does the heavy lifting,
  * this is a client-side backup for faster UI feedback.
  */
-import { useEffect, useRef, useCallback, useState } from "react";
-import { useQuery, useMutation } from "convex/react";
+
+import { useMutation, useQuery } from "convex/react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+import { fetchGoldPrice } from "@/lib/priceApi";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
-import { fetchGoldPrice } from "@/lib/priceApi";
-import { toast } from "sonner";
 
 type StatusType = "TP1_HIT" | "TP2_HIT" | "STOPPED";
 
@@ -23,7 +24,8 @@ interface MonitorEvent {
 }
 
 const MONITOR_INTERVAL_MS = 30_000; // 30 seconds
-const ALERT_SOUND_URL = "data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbsGczHj+R0NvKdEMtRYS+0dR8RjhEeLS/wJBgUWB3oq2jfVdNYnudoZNxXU9xkqqbiHBcWGR8g3FyZm1nc3Z0a1VLWGVxaW1wdXR+iJOWjHVgWWBqc4CRl5OIe3V2eH2CiY2LhX56eHh6foOLkpOIeXBsb3d+hIqMi4mEfnl5en5+goiNj4yGfXdyc3uDio6Oj4yFfnd1eX+Ei42Ni4V+eXd5f4SMj46LhH54d3l+hIuPj4uFfnh3eX+Ej4+OioR9eHZ5f4WNkI6Kg3x4dnn/";
+const ALERT_SOUND_URL =
+  "data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbsGczHj+R0NvKdEMtRYS+0dR8RjhEeLS/wJBgUWB3oq2jfVdNYnudoZNxXU9xkqqbiHBcWGR8g3FyZm1nc3Z0a1VLWGVxaW1wdXR+iJOWjHVgWWBqc4CRl5OIe3V2eH2CiY2LhX56eHh6foOLkpOIeXBsb3d+hIqMi4mEfnl5en5+goiNj4yGfXdyc3uDio6Oj4yFfnd1eX+Ei42Ni4V+eXd5f4SMj46LhH54d3l+hIuPj4uFfnh3eX+Ej4+OioR9eHZ5f4WNkI6Kg3x4dnn/";
 
 export function useAutoMonitor() {
   const activeIdeas = useQuery(api.tradingIdeas.listActiveIdeas, {});
@@ -54,7 +56,11 @@ export function useAutoMonitor() {
     } catch {}
 
     // Request notification permission when enabling
-    if (enabled && typeof Notification !== "undefined" && Notification.permission === "default") {
+    if (
+      enabled &&
+      typeof Notification !== "undefined" &&
+      Notification.permission === "default"
+    ) {
       Notification.requestPermission();
     }
   }, []);
@@ -64,7 +70,10 @@ export function useAutoMonitor() {
       if (!alertsEnabled) return;
 
       // Browser notification
-      if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+      if (
+        typeof Notification !== "undefined" &&
+        Notification.permission === "granted"
+      ) {
         try {
           new Notification(title, {
             body,
@@ -88,7 +97,7 @@ export function useAutoMonitor() {
         audio.play().catch(() => {});
       } catch {}
     },
-    [alertsEnabled]
+    [alertsEnabled],
   );
 
   const checkIdeas = useCallback(async () => {
@@ -113,29 +122,41 @@ export function useAutoMonitor() {
         let exitPrice = currentPrice;
 
         // Check SL (with trailing awareness)
-        const slHit = isLong ? currentPrice <= effectiveSL : currentPrice >= effectiveSL;
+        const slHit = isLong
+          ? currentPrice <= effectiveSL
+          : currentPrice >= effectiveSL;
         if (slHit) {
           newStatus = "STOPPED";
-          pnl = isLong ? effectiveSL - idea.entryPrice : idea.entryPrice - effectiveSL;
+          pnl = isLong
+            ? effectiveSL - idea.entryPrice
+            : idea.entryPrice - effectiveSL;
           exitPrice = effectiveSL;
         }
 
         // Check TP2 (for ideas already at TP1_HIT or gap through)
         if (!newStatus) {
-          const tp2Hit = isLong ? currentPrice >= idea.tp2 : currentPrice <= idea.tp2;
+          const tp2Hit = isLong
+            ? currentPrice >= idea.tp2
+            : currentPrice <= idea.tp2;
           if (tp2Hit) {
             newStatus = "TP2_HIT";
-            pnl = isLong ? idea.tp2 - idea.entryPrice : idea.entryPrice - idea.tp2;
+            pnl = isLong
+              ? idea.tp2 - idea.entryPrice
+              : idea.entryPrice - idea.tp2;
             exitPrice = idea.tp2;
           }
         }
 
         // Check TP1 (only for ACTIVE status)
         if (!newStatus && idea.status === "ACTIVE") {
-          const tp1Hit = isLong ? currentPrice >= idea.tp1 : currentPrice <= idea.tp1;
+          const tp1Hit = isLong
+            ? currentPrice >= idea.tp1
+            : currentPrice <= idea.tp1;
           if (tp1Hit) {
             newStatus = "TP1_HIT";
-            pnl = isLong ? idea.tp1 - idea.entryPrice : idea.entryPrice - idea.tp1;
+            pnl = isLong
+              ? idea.tp1 - idea.entryPrice
+              : idea.entryPrice - idea.tp1;
             exitPrice = idea.tp1;
           }
         }
@@ -161,7 +182,7 @@ export function useAutoMonitor() {
             timestamp: Date.now(),
           };
 
-          setRecentEvents((prev) => [event, ...prev].slice(0, 20));
+          setRecentEvents(prev => [event, ...prev].slice(0, 20));
 
           // Send notification
           const isWin = newStatus === "TP1_HIT" || newStatus === "TP2_HIT";
@@ -178,7 +199,7 @@ export function useAutoMonitor() {
           sendNotification(
             `${emoji} ${idea.direction} ${label}`,
             `Entry: ${idea.entryPrice.toFixed(2)} → Exit: ${exitPrice.toFixed(2)} | P&L: ${roundedPnl >= 0 ? "+" : ""}${roundedPnl.toFixed(2)} pts`,
-            isWin
+            isWin,
           );
         }
       }

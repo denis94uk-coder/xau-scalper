@@ -1,6 +1,6 @@
 import { useQuery } from "convex/react";
-import { api } from "../../../convex/_generated/api";
 import { useTimezone } from "@/contexts/TimezoneContext";
+import { api } from "../../../convex/_generated/api";
 
 export function NewsShield() {
   const news = useQuery(api.newsQueries.getNewsState);
@@ -44,7 +44,8 @@ export function NewsShield() {
             <div className="flex items-center gap-1.5">
               {news.minutesToNextEvent < 60 ? (
                 <span className="text-[9px] font-mono text-amber-400 animate-pulse">
-                  ⚡ {news.nextHighImpactEvent.title} in {news.minutesToNextEvent}m
+                  ⚡ {news.nextHighImpactEvent.title} in{" "}
+                  {news.minutesToNextEvent}m
                 </span>
               ) : (
                 <span className="text-[9px] font-mono text-muted-foreground/40">
@@ -60,18 +61,31 @@ export function NewsShield() {
           <div className="space-y-1">
             {upcomingEvents.map((event: any, i: number) => {
               const isPast = event.dateTime < Date.now();
-              const isImminent = !isPast && event.dateTime - Date.now() < 60 * 60 * 1000;
-              const impactColor = event.impact === "HIGH" ? "#FF5252"
-                : event.impact === "MEDIUM" ? "#FFB74D"
-                : "#888";
+              const isImminent =
+                !isPast && event.dateTime - Date.now() < 60 * 60 * 1000;
+              const impactColor =
+                event.impact === "HIGH"
+                  ? "#FF5252"
+                  : event.impact === "MEDIUM"
+                    ? "#FFB74D"
+                    : "#888";
 
               return (
-                <div key={i}
-                     className={`flex items-center gap-2 text-[10px] rounded-md px-2 py-1 transition-colors ${
-                       isPast ? "opacity-40" : isImminent ? "bg-amber-500/5 border border-amber-500/10" : "hover:bg-white/[0.02]"
-                     }`}>
+                <div
+                  key={i}
+                  className={`flex items-center gap-2 text-[10px] rounded-md px-2 py-1 transition-colors ${
+                    isPast
+                      ? "opacity-40"
+                      : isImminent
+                        ? "bg-amber-500/5 border border-amber-500/10"
+                        : "hover:bg-white/[0.02]"
+                  }`}
+                >
                   {/* Impact dot */}
-                  <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: impactColor }} />
+                  <span
+                    className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                    style={{ backgroundColor: impactColor }}
+                  />
 
                   {/* Country */}
                   <span className="text-[8px] font-mono text-muted-foreground/40 w-5 flex-shrink-0">
@@ -84,15 +98,24 @@ export function NewsShield() {
                   </span>
 
                   {/* Title */}
-                  <span className={`font-mono flex-1 truncate ${
-                    isImminent ? "text-amber-400 font-bold" : "text-muted-foreground/70"
-                  }`}>
+                  <span
+                    className={`font-mono flex-1 truncate ${
+                      isImminent
+                        ? "text-amber-400 font-bold"
+                        : "text-muted-foreground/70"
+                    }`}
+                  >
                     {event.title}
                   </span>
 
                   {/* Impact badge */}
-                  <span className="text-[8px] font-mono px-1 py-0.5 rounded"
-                        style={{ backgroundColor: `${impactColor}15`, color: impactColor }}>
+                  <span
+                    className="text-[8px] font-mono px-1 py-0.5 rounded"
+                    style={{
+                      backgroundColor: `${impactColor}15`,
+                      color: impactColor,
+                    }}
+                  >
                     {event.impact}
                   </span>
                 </div>
@@ -119,7 +142,9 @@ export function NewsShieldBadge() {
     return (
       <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/15 border border-red-500/30 animate-pulse">
         <span className="text-[9px]">🛡️</span>
-        <span className="text-[9px] font-mono font-bold text-red-400">SHIELD</span>
+        <span className="text-[9px] font-mono font-bold text-red-400">
+          SHIELD
+        </span>
       </div>
     );
   }
@@ -128,7 +153,9 @@ export function NewsShieldBadge() {
     return (
       <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20">
         <span className="text-[8px]">⚡</span>
-        <span className="text-[9px] font-mono text-amber-400">{news.minutesToNextEvent}m</span>
+        <span className="text-[9px] font-mono text-amber-400">
+          {news.minutesToNextEvent}m
+        </span>
       </div>
     );
   }

@@ -19,8 +19,8 @@ export const logIdea = mutation({
       v.union(
         v.literal("dashboard"),
         v.literal("experimental"),
-        v.literal("engine")
-      )
+        v.literal("engine"),
+      ),
     ),
     grade: v.optional(v.string()),
   },
@@ -58,14 +58,14 @@ export const listIdeas = query({
 // List only active ideas (ACTIVE + TP1_HIT still tracking)
 export const listActiveIdeas = query({
   args: {},
-  handler: async (ctx) => {
+  handler: async ctx => {
     const active = await ctx.db
       .query("tradingIdeas")
-      .withIndex("by_status", (q) => q.eq("status", "ACTIVE"))
+      .withIndex("by_status", q => q.eq("status", "ACTIVE"))
       .collect();
     const tp1 = await ctx.db
       .query("tradingIdeas")
-      .withIndex("by_status", (q) => q.eq("status", "TP1_HIT"))
+      .withIndex("by_status", q => q.eq("status", "TP1_HIT"))
       .collect();
     return [...active, ...tp1];
   },
@@ -80,7 +80,7 @@ export const updateIdeaStatus = mutation({
       v.literal("TP1_HIT"),
       v.literal("TP2_HIT"),
       v.literal("STOPPED"),
-      v.literal("EXPIRED")
+      v.literal("EXPIRED"),
     ),
     pnlPoints: v.optional(v.number()),
   },
@@ -92,7 +92,8 @@ export const updateIdeaStatus = mutation({
     journeyLog.push({
       event: args.status,
       price: args.pnlPoints
-        ? idea.entryPrice + (idea.direction === "LONG" ? args.pnlPoints : -args.pnlPoints)
+        ? idea.entryPrice +
+          (idea.direction === "LONG" ? args.pnlPoints : -args.pnlPoints)
         : idea.entryPrice,
       timestamp: Date.now(),
     });
@@ -100,7 +101,10 @@ export const updateIdeaStatus = mutation({
     await ctx.db.patch(args.id, {
       status: args.status,
       pnlPoints: args.pnlPoints,
-      resolvedAt: args.status !== "ACTIVE" && args.status !== "TP1_HIT" ? Date.now() : undefined,
+      resolvedAt:
+        args.status !== "ACTIVE" && args.status !== "TP1_HIT"
+          ? Date.now()
+          : undefined,
       journeyLog,
     });
   },
@@ -122,8 +126,8 @@ export const getPerformanceStats = query({
         v.literal("dashboard"),
         v.literal("experimental"),
         v.literal("engine"),
-        v.literal("all")
-      )
+        v.literal("all"),
+      ),
     ),
   },
   handler: async (ctx, args) => {
@@ -131,47 +135,39 @@ export const getPerformanceStats = query({
 
     // Filter by source if specified
     if (args.source && args.source !== "all") {
-      all = all.filter((i) => i.source === args.source);
+      all = all.filter(i => i.source === args.source);
     }
 
     const closed = all.filter(
-      (i) =>
+      i =>
         i.status === "TP1_HIT" ||
         i.status === "TP2_HIT" ||
         i.status === "STOPPED" ||
-        i.status === "EXPIRED"
+        i.status === "EXPIRED",
     );
 
     const active = all.filter(
-      (i) => i.status === "ACTIVE" || i.status === "TP1_HIT"
+      i => i.status === "ACTIVE" || i.status === "TP1_HIT",
     );
     const wins = closed.filter(
-      (i) => i.status === "TP1_HIT" || i.status === "TP2_HIT"
+      i => i.status === "TP1_HIT" || i.status === "TP2_HIT",
     );
-    const losses = closed.filter((i) => i.status === "STOPPED");
-    const expired = closed.filter((i) => i.status === "EXPIRED");
+    const losses = closed.filter(i => i.status === "STOPPED");
+    const expired = closed.filter(i => i.status === "EXPIRED");
 
-    const totalPnl = closed.reduce(
-      (sum, i) => sum + (i.pnlPoints ?? 0),
-      0
-    );
-    const winRate =
-      closed.length > 0 ? (wins.length / closed.length) * 100 : 0;
+    const totalPnl = closed.reduce((sum, i) => sum + (i.pnlPoints ?? 0), 0);
+    const winRate = closed.length > 0 ? (wins.length / closed.length) * 100 : 0;
 
     const grossProfit = wins.reduce(
       (sum, i) => sum + Math.abs(i.pnlPoints ?? 0),
-      0
+      0,
     );
     const grossLoss = losses.reduce(
       (sum, i) => sum + Math.abs(i.pnlPoints ?? 0),
-      0
+      0,
     );
     const profitFactor =
-      grossLoss > 0
-        ? grossProfit / grossLoss
-        : grossProfit > 0
-          ? 999
-          : 0;
+      grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? 999 : 0;
 
     const avgWin =
       wins.length > 0
@@ -188,7 +184,7 @@ export const getPerformanceStats = query({
     let maxWinStreak = 0;
     let maxLossStreak = 0;
     const sortedClosed = [...closed].sort(
-      (a, b) => (a.resolvedAt ?? 0) - (b.resolvedAt ?? 0)
+      (a, b) => (a.resolvedAt ?? 0) - (b.resolvedAt ?? 0),
     );
     for (const idea of sortedClosed) {
       if (idea.status === "TP1_HIT" || idea.status === "TP2_HIT") {
@@ -211,7 +207,7 @@ export const getPerformanceStats = query({
 
     // Equity curve
     let equity = 0;
-    const equityCurve = sortedClosed.map((idea) => {
+    const equityCurve = sortedClosed.map(idea => {
       equity += idea.pnlPoints ?? 0;
       return {
         date: idea.resolvedAt ?? idea.createdAt,

@@ -1,6 +1,6 @@
+import { useConvexAuth } from "convex/react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { useConvexAuth } from "convex/react";
 
 export default function LandingPage() {
   const { isAuthenticated } = useConvexAuth();
@@ -40,7 +40,7 @@ export default function LandingPage() {
             { label: "3m · 5m · 15m", desc: "Multi-timeframe" },
             { label: "RSI · MACD · EMA", desc: "Technical signals" },
             { label: "Buy · Sell · Track", desc: "Trade journal" },
-          ].map((f) => (
+          ].map(f => (
             <div
               key={f.label}
               className="flex flex-col items-center gap-1 p-3 rounded-lg bg-card border border-border"

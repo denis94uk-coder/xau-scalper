@@ -19,7 +19,7 @@ export const listByIdea = query({
   handler: async (ctx, args) => {
     return await ctx.db
       .query("signalJournal")
-      .withIndex("by_idea", (q) => q.eq("ideaId", args.ideaId))
+      .withIndex("by_idea", q => q.eq("ideaId", args.ideaId))
       .collect();
   },
 });
@@ -27,7 +27,7 @@ export const listByIdea = query({
 // Count by event type (for stats)
 export const countByType = query({
   args: {},
-  handler: async (ctx) => {
+  handler: async ctx => {
     const all = await ctx.db.query("signalJournal").collect();
     const counts: Record<string, number> = {};
     for (const entry of all) {

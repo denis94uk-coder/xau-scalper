@@ -16,6 +16,8 @@
     "logs": "bunx convex logs",
     "logs:fetch": "bun run --bun scripts/logs.ts",
     "test": "bun run --bun scripts/test.ts",
+    "test:unit": "bun test convex/lib",
+    "backtest": "bun run --bun scripts/backtest.ts",
     "test:auth": "bun run --bun scripts/auth.ts",
     "test:demo": "bun run --bun scripts/demo-test.ts",
     "screenshot": "bun run --bun scripts/screenshot.ts",

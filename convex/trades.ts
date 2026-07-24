@@ -1,6 +1,6 @@
+import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { getAuthUserId } from "@convex-dev/auth/server";
 
 const tradeDoc = v.object({
   _id: v.id("trades"),
@@ -22,12 +22,12 @@ const tradeDoc = v.object({
 export const list = query({
   args: {},
   returns: v.array(tradeDoc),
-  handler: async (ctx) => {
+  handler: async ctx => {
     const userId = await getAuthUserId(ctx);
     if (!userId) return [];
     return await ctx.db
       .query("trades")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .withIndex("by_user", q => q.eq("userId", userId))
       .order("desc")
       .collect();
   },
@@ -36,13 +36,13 @@ export const list = query({
 export const getOpen = query({
   args: {},
   returns: v.array(tradeDoc),
-  handler: async (ctx) => {
+  handler: async ctx => {
     const userId = await getAuthUserId(ctx);
     if (!userId) return [];
     return await ctx.db
       .query("trades")
-      .withIndex("by_user_status", (q) =>
-        q.eq("userId", userId).eq("status", "OPEN")
+      .withIndex("by_user_status", q =>
+        q.eq("userId", userId).eq("status", "OPEN"),
       )
       .collect();
   },

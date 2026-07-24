@@ -1,17 +1,17 @@
-import { useEffect, useRef } from "react";
 import {
-  createChart,
-  type IChartApi,
+  type CandlestickData,
+  CandlestickSeries,
   ColorType,
   CrosshairMode,
-  CandlestickSeries,
-  LineSeries,
+  createChart,
   HistogramSeries,
-  type CandlestickData,
+  type IChartApi,
+  LineSeries,
   type Time,
 } from "lightweight-charts";
+import { useEffect, useRef } from "react";
 import type { Candle } from "@/lib/indicators";
-import { calcEMA, calcBollingerBands } from "@/lib/indicators";
+import { calcBollingerBands, calcEMA } from "@/lib/indicators";
 
 interface MiniChartProps {
   candles: Candle[];
@@ -98,16 +98,16 @@ export function MiniChart({
       });
 
       candleSeries.setData(
-        candles.map((c) => ({
+        candles.map(c => ({
           time: c.time as Time,
           open: c.open,
           high: c.high,
           low: c.low,
           close: c.close,
-        })) as CandlestickData<Time>[]
+        })) as CandlestickData<Time>[],
       );
 
-      const closes = candles.map((c) => c.close);
+      const closes = candles.map(c => c.close);
 
       if (showEMA && closes.length > 21) {
         const ema9 = calcEMA(closes, 9);
@@ -124,9 +124,9 @@ export function MiniChart({
             .map((c, i) =>
               ema9[i] !== undefined
                 ? { time: c.time as Time, value: ema9[i] }
-                : null
+                : null,
             )
-            .filter(Boolean) as { time: Time; value: number }[]
+            .filter(Boolean) as { time: Time; value: number }[],
         );
 
         const ema21Series = chart.addSeries(LineSeries, {
@@ -140,9 +140,9 @@ export function MiniChart({
             .map((c, i) =>
               ema21[i] !== undefined
                 ? { time: c.time as Time, value: ema21[i] }
-                : null
+                : null,
             )
-            .filter(Boolean) as { time: Time; value: number }[]
+            .filter(Boolean) as { time: Time; value: number }[],
         );
       }
 
@@ -160,9 +160,9 @@ export function MiniChart({
             .map((c, i) =>
               bb.upper[i] !== undefined
                 ? { time: c.time as Time, value: bb.upper[i] }
-                : null
+                : null,
             )
-            .filter(Boolean) as { time: Time; value: number }[]
+            .filter(Boolean) as { time: Time; value: number }[],
         );
 
         const bbLower = chart.addSeries(LineSeries, {
@@ -177,9 +177,9 @@ export function MiniChart({
             .map((c, i) =>
               bb.lower[i] !== undefined
                 ? { time: c.time as Time, value: bb.lower[i] }
-                : null
+                : null,
             )
-            .filter(Boolean) as { time: Time; value: number }[]
+            .filter(Boolean) as { time: Time; value: number }[],
         );
       }
 
@@ -192,14 +192,14 @@ export function MiniChart({
         scaleMargins: { top: 0.88, bottom: 0 },
       });
       volumeSeries.setData(
-        candles.map((c) => ({
+        candles.map(c => ({
           time: c.time as Time,
           value: c.volume,
           color:
             c.close >= c.open
               ? "rgba(0, 230, 118, 0.15)"
               : "rgba(255, 23, 68, 0.15)",
-        }))
+        })),
       );
 
       chart.timeScale().fitContent();
@@ -208,7 +208,7 @@ export function MiniChart({
     }
 
     const container = containerRef.current;
-    const resizeObserver = new ResizeObserver((entries) => {
+    const resizeObserver = new ResizeObserver(entries => {
       if (chartRef.current) {
         for (const entry of entries) {
           try {

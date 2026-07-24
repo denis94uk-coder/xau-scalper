@@ -11,15 +11,14 @@
  * 8. VWAP Bands — Session VWAP ± standard deviations
  */
 
-import type { Candle } from "./indicators";
+import type { Candle, ScalpEntry } from "./indicators";
 import {
   calcATR,
+  calcBollingerBands,
   calcEMA,
   calcRSI,
-  calcBollingerBands,
   calcSMA,
 } from "./indicators";
-import type { ScalpEntry } from "./indicators";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 1. SUPERTREND
@@ -33,7 +32,7 @@ export interface SupertrendResult {
 export function calcSupertrend(
   candles: Candle[],
   atrPeriod = 10,
-  multiplier = 3
+  multiplier = 3,
 ): SupertrendResult {
   const atr = calcATR(candles, atrPeriod);
   const trend: ("UP" | "DOWN")[] = [];
@@ -52,10 +51,16 @@ export function calcSupertrend(
 
     // Adjust bands based on previous values
     if (i > 0) {
-      if (lowerBand[i] < lowerBand[i - 1] && candles[i - 1].close > lowerBand[i - 1]) {
+      if (
+        lowerBand[i] < lowerBand[i - 1] &&
+        candles[i - 1].close > lowerBand[i - 1]
+      ) {
         lowerBand[i] = lowerBand[i - 1];
       }
-      if (upperBand[i] > upperBand[i - 1] && candles[i - 1].close < upperBand[i - 1]) {
+      if (
+        upperBand[i] > upperBand[i - 1] &&
+        candles[i - 1].close < upperBand[i - 1]
+      ) {
         upperBand[i] = upperBand[i - 1];
       }
     }
@@ -130,8 +135,14 @@ export interface SqueezeResult {
   squeezeFired: boolean[]; // squeeze just released
 }
 
-export function calcTTMSqueeze(candles: Candle[], bbPeriod = 20, bbMult = 2, kcPeriod = 20, kcMult = 1.5): SqueezeResult {
-  const closes = candles.map((c) => c.close);
+export function calcTTMSqueeze(
+  candles: Candle[],
+  bbPeriod = 20,
+  bbMult = 2,
+  kcPeriod = 20,
+  kcMult = 1.5,
+): SqueezeResult {
+  const closes = candles.map(c => c.close);
   const bb = calcBollingerBands(closes, bbPeriod, bbMult);
   const atr = calcATR(candles, kcPeriod);
   const kcMiddle = calcSMA(closes, kcPeriod);
@@ -154,8 +165,8 @@ export function calcTTMSqueeze(candles: Candle[], bbPeriod = 20, bbMult = 2, kcP
       // Momentum: simple approach — close minus midline of Donchian-like channel
       const lookback = Math.min(i + 1, kcPeriod);
       const slice = candles.slice(i - lookback + 1, i + 1);
-      const highest = Math.max(...slice.map((c) => c.high));
-      const lowest = Math.min(...slice.map((c) => c.low));
+      const highest = Math.max(...slice.map(c => c.high));
+      const lowest = Math.min(...slice.map(c => c.low));
       const midline = (highest + lowest) / 2 + kcMiddle[i];
       momentum[i] = closes[i] - midline / 2;
 
@@ -194,8 +205,17 @@ export function calcEMARibbon(closes: number[]): EMARibbonResult {
   const last = closes.length - 1;
   const vals = [ema8[last], ema13[last], ema21[last], ema34[last], ema55[last]];
 
-  if (vals.some((v) => v === undefined)) {
-    return { ema8, ema13, ema21, ema34, ema55, trendStrength: 0, ribbonBias: "NEUTRAL", expanding: false };
+  if (vals.some(v => v === undefined)) {
+    return {
+      ema8,
+      ema13,
+      ema21,
+      ema34,
+      ema55,
+      trendStrength: 0,
+      ribbonBias: "NEUTRAL",
+      expanding: false,
+    };
   }
 
   // Check alignment (perfect stack)
@@ -208,35 +228,66 @@ export function calcEMARibbon(closes: number[]): EMARibbonResult {
 
   const trendStrength = Math.round((Math.max(bullOrder, bearOrder) / 4) * 100);
   const ribbonBias: "BULLISH" | "BEARISH" | "NEUTRAL" =
-    bullOrder === 4 ? "BULLISH" : bearOrder === 4 ? "BEARISH" : trendStrength >= 75 ? (bullOrder > bearOrder ? "BULLISH" : "BEARISH") : "NEUTRAL";
+    bullOrder === 4
+      ? "BULLISH"
+      : bearOrder === 4
+        ? "BEARISH"
+        : trendStrength >= 75
+          ? bullOrder > bearOrder
+            ? "BULLISH"
+            : "BEARISH"
+          : "NEUTRAL";
 
   // Check if expanding (top EMA - bottom EMA widening)
   const spread = Math.abs(vals[0] - vals[4]);
   let prevSpread = 0;
   if (last > 5) {
-    const prevVals = [ema8[last - 5], ema13[last - 5], ema21[last - 5], ema34[last - 5], ema55[last - 5]];
-    if (prevVals.every((v) => v !== undefined)) {
+    const prevVals = [
+      ema8[last - 5],
+      ema13[last - 5],
+      ema21[last - 5],
+      ema34[last - 5],
+      ema55[last - 5],
+    ];
+    if (prevVals.every(v => v !== undefined)) {
       prevSpread = Math.abs(prevVals[0]! - prevVals[4]!);
     }
   }
 
-  return { ema8, ema13, ema21, ema34, ema55, trendStrength, ribbonBias, expanding: spread > prevSpread };
+  return {
+    ema8,
+    ema13,
+    ema21,
+    ema34,
+    ema55,
+    trendStrength,
+    ribbonBias,
+    expanding: spread > prevSpread,
+  };
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 5. RSI DIVERGENCE
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 export interface Divergence {
-  type: "BULLISH_REGULAR" | "BEARISH_REGULAR" | "BULLISH_HIDDEN" | "BEARISH_HIDDEN";
+  type:
+    | "BULLISH_REGULAR"
+    | "BEARISH_REGULAR"
+    | "BULLISH_HIDDEN"
+    | "BEARISH_HIDDEN";
   priceIndex1: number;
   priceIndex2: number;
   description: string;
 }
 
-export function detectRSIDivergence(candles: Candle[], rsiPeriod = 14, lookback = 30): Divergence[] {
+export function detectRSIDivergence(
+  candles: Candle[],
+  rsiPeriod = 14,
+  lookback = 30,
+): Divergence[] {
   if (candles.length < rsiPeriod + lookback) return [];
 
-  const closes = candles.map((c) => c.close);
+  const closes = candles.map(c => c.close);
   const rsi = calcRSI(closes, rsiPeriod);
   const divergences: Divergence[] = [];
   const last = candles.length - 1;
@@ -332,7 +383,10 @@ export interface OrderBlock {
   strength: number; // 1-3 based on rejection strength
 }
 
-export function detectOrderBlocks(candles: Candle[], lookback = 50): OrderBlock[] {
+export function detectOrderBlocks(
+  candles: Candle[],
+  lookback = 50,
+): OrderBlock[] {
   if (candles.length < lookback) return [];
 
   const blocks: OrderBlock[] = [];
@@ -348,9 +402,14 @@ export function detectOrderBlocks(candles: Candle[], lookback = 50): OrderBlock[
       curr.close < curr.open && // current is bearish
       next.close > next.open && // next is bullish
       next.close > curr.high && // next breaks above
-      (next.close - next.open) > (curr.open - curr.close) * 1.5 // strong move
+      next.close - next.open > (curr.open - curr.close) * 1.5 // strong move
     ) {
-      const strength = (next.close - next.open) > (curr.open - curr.close) * 2.5 ? 3 : (next.close - next.open) > (curr.open - curr.close) * 2 ? 2 : 1;
+      const strength =
+        next.close - next.open > (curr.open - curr.close) * 2.5
+          ? 3
+          : next.close - next.open > (curr.open - curr.close) * 2
+            ? 2
+            : 1;
       blocks.push({
         type: "BULLISH_OB",
         high: curr.open,
@@ -366,9 +425,14 @@ export function detectOrderBlocks(candles: Candle[], lookback = 50): OrderBlock[
       curr.close > curr.open && // current is bullish
       next.close < next.open && // next is bearish
       next.close < curr.low && // next breaks below
-      (next.open - next.close) > (curr.close - curr.open) * 1.5
+      next.open - next.close > (curr.close - curr.open) * 1.5
     ) {
-      const strength = (next.open - next.close) > (curr.close - curr.open) * 2.5 ? 3 : (next.open - next.close) > (curr.close - curr.open) * 2 ? 2 : 1;
+      const strength =
+        next.open - next.close > (curr.close - curr.open) * 2.5
+          ? 3
+          : next.open - next.close > (curr.close - curr.open) * 2
+            ? 2
+            : 1;
       blocks.push({
         type: "BEARISH_OB",
         high: curr.high,
@@ -441,7 +505,7 @@ export function detectFVG(candles: Candle[], lookback = 40): FairValueGap[] {
   }
 
   // Return unfilled gaps, most recent first
-  return gaps.filter((g) => !g.filled).slice(-4);
+  return gaps.filter(g => !g.filled).slice(-4);
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -525,10 +589,12 @@ export interface ExperimentalAnalysis {
   experimentalSignal: ExperimentalSignal;
 }
 
-export function analyzeExperimental(candles: Candle[]): ExperimentalAnalysis | null {
+export function analyzeExperimental(
+  candles: Candle[],
+): ExperimentalAnalysis | null {
   if (candles.length < 60) return null;
 
-  const closes = candles.map((c) => c.close);
+  const closes = candles.map(c => c.close);
   const last = candles.length - 1;
   const price = closes[last];
   const atr = calcATR(candles, 14);
@@ -560,9 +626,10 @@ export function analyzeExperimental(candles: Candle[]): ExperimentalAnalysis | n
       name: "Supertrend",
       signal: stSignal === "BUY" ? "BUY" : "BUY",
       weight: 20,
-      detail: stSignal === "BUY"
-        ? `Fresh BUY signal! Line at ${supertrend.line[last]?.toFixed(2)}`
-        : `Uptrend — support at ${supertrend.line[last]?.toFixed(2)}`,
+      detail:
+        stSignal === "BUY"
+          ? `Fresh BUY signal! Line at ${supertrend.line[last]?.toFixed(2)}`
+          : `Uptrend — support at ${supertrend.line[last]?.toFixed(2)}`,
     });
   } else {
     bearScore += stSignal === "SELL" ? 20 : 15;
@@ -570,9 +637,10 @@ export function analyzeExperimental(candles: Candle[]): ExperimentalAnalysis | n
       name: "Supertrend",
       signal: stSignal === "SELL" ? "SELL" : "SELL",
       weight: 20,
-      detail: stSignal === "SELL"
-        ? `Fresh SELL signal! Line at ${supertrend.line[last]?.toFixed(2)}`
-        : `Downtrend — resistance at ${supertrend.line[last]?.toFixed(2)}`,
+      detail:
+        stSignal === "SELL"
+          ? `Fresh SELL signal! Line at ${supertrend.line[last]?.toFixed(2)}`
+          : `Downtrend — resistance at ${supertrend.line[last]?.toFixed(2)}`,
     });
   }
 
@@ -619,20 +687,45 @@ export function analyzeExperimental(candles: Candle[]): ExperimentalAnalysis | n
   if (sqFired) {
     if (sqMomentum > 0) {
       bullScore += 18;
-      tools.push({ name: "TTM Squeeze", signal: "BUY", weight: 18, detail: "Squeeze FIRED — bullish momentum breakout!" });
+      tools.push({
+        name: "TTM Squeeze",
+        signal: "BUY",
+        weight: 18,
+        detail: "Squeeze FIRED — bullish momentum breakout!",
+      });
     } else {
       bearScore += 18;
-      tools.push({ name: "TTM Squeeze", signal: "SELL", weight: 18, detail: "Squeeze FIRED — bearish momentum breakout!" });
+      tools.push({
+        name: "TTM Squeeze",
+        signal: "SELL",
+        weight: 18,
+        detail: "Squeeze FIRED — bearish momentum breakout!",
+      });
     }
   } else if (isSqueeze) {
-    tools.push({ name: "TTM Squeeze", signal: "SQUEEZE", weight: 18, detail: `Compression active — breakout imminent (mom: ${sqMomentum > 0 ? "+" : ""}${sqMomentum.toFixed(2)})` });
+    tools.push({
+      name: "TTM Squeeze",
+      signal: "SQUEEZE",
+      weight: 18,
+      detail: `Compression active — breakout imminent (mom: ${sqMomentum > 0 ? "+" : ""}${sqMomentum.toFixed(2)})`,
+    });
   } else {
     if (sqMomentum > 0) {
       bullScore += 8;
-      tools.push({ name: "TTM Squeeze", signal: "BUY", weight: 18, detail: `Positive momentum (${sqMomentum.toFixed(2)})` });
+      tools.push({
+        name: "TTM Squeeze",
+        signal: "BUY",
+        weight: 18,
+        detail: `Positive momentum (${sqMomentum.toFixed(2)})`,
+      });
     } else {
       bearScore += 8;
-      tools.push({ name: "TTM Squeeze", signal: "SELL", weight: 18, detail: `Negative momentum (${sqMomentum.toFixed(2)})` });
+      tools.push({
+        name: "TTM Squeeze",
+        signal: "SELL",
+        weight: 18,
+        detail: `Negative momentum (${sqMomentum.toFixed(2)})`,
+      });
     }
   }
 
@@ -676,12 +769,17 @@ export function analyzeExperimental(candles: Candle[]): ExperimentalAnalysis | n
       detail: recent.description,
     });
   } else {
-    tools.push({ name: "RSI Divergence", signal: "NEUTRAL", weight: 16, detail: "No divergence detected" });
+    tools.push({
+      name: "RSI Divergence",
+      signal: "NEUTRAL",
+      weight: 16,
+      detail: "No divergence detected",
+    });
   }
 
   // 6. Order Blocks (weight: 12)
   const nearOBs = orderBlocks.filter(
-    (ob) => Math.abs(price - ob.midpoint) / price < 0.003
+    ob => Math.abs(price - ob.midpoint) / price < 0.003,
   );
   if (nearOBs.length > 0) {
     const ob = nearOBs[nearOBs.length - 1];
@@ -696,7 +794,9 @@ export function analyzeExperimental(candles: Candle[]): ExperimentalAnalysis | n
     });
   } else if (orderBlocks.length > 0) {
     const nearest = orderBlocks.reduce((prev, curr) =>
-      Math.abs(price - curr.midpoint) < Math.abs(price - prev.midpoint) ? curr : prev
+      Math.abs(price - curr.midpoint) < Math.abs(price - prev.midpoint)
+        ? curr
+        : prev,
     );
     tools.push({
       name: "Order Blocks",
@@ -705,12 +805,18 @@ export function analyzeExperimental(candles: Candle[]): ExperimentalAnalysis | n
       detail: `Nearest ${nearest.type === "BULLISH_OB" ? "bull" : "bear"} OB at ${nearest.midpoint.toFixed(2)}`,
     });
   } else {
-    tools.push({ name: "Order Blocks", signal: "NEUTRAL", weight: 12, detail: "No order blocks nearby" });
+    tools.push({
+      name: "Order Blocks",
+      signal: "NEUTRAL",
+      weight: 12,
+      detail: "No order blocks nearby",
+    });
   }
 
   // 7. FVG (weight: 8)
   const nearFVGs = fvgs.filter(
-    (g) => price >= g.low - currentATR * 0.5 && price <= g.high + currentATR * 0.5
+    g =>
+      price >= g.low - currentATR * 0.5 && price <= g.high + currentATR * 0.5,
   );
   if (nearFVGs.length > 0) {
     const fvg = nearFVGs[nearFVGs.length - 1];
@@ -724,27 +830,52 @@ export function analyzeExperimental(candles: Candle[]): ExperimentalAnalysis | n
       detail: `${isBull ? "Bullish" : "Bearish"} FVG ${fvg.low.toFixed(2)}-${fvg.high.toFixed(2)} (${fvg.size.toFixed(2)} pts)`,
     });
   } else {
-    tools.push({ name: "Fair Value Gap", signal: "NEUTRAL", weight: 8, detail: "No active FVGs nearby" });
+    tools.push({
+      name: "Fair Value Gap",
+      signal: "NEUTRAL",
+      weight: 8,
+      detail: "No active FVGs nearby",
+    });
   }
 
   // 8. VWAP position (weight: 10)
   const vwapVal = vwapBands.vwap[last];
   if (vwapVal !== undefined) {
     const aboveVwap = price > vwapVal;
-    const distPct = Math.abs(price - vwapVal) / vwapVal * 100;
+    const distPct = (Math.abs(price - vwapVal) / vwapVal) * 100;
 
     if (price <= vwapBands.lower2[last]) {
       bullScore += 10;
-      tools.push({ name: "VWAP Bands", signal: "BUY", weight: 10, detail: `Price at -2σ (${distPct.toFixed(2)}% below VWAP) — mean reversion buy` });
+      tools.push({
+        name: "VWAP Bands",
+        signal: "BUY",
+        weight: 10,
+        detail: `Price at -2σ (${distPct.toFixed(2)}% below VWAP) — mean reversion buy`,
+      });
     } else if (price >= vwapBands.upper2[last]) {
       bearScore += 10;
-      tools.push({ name: "VWAP Bands", signal: "SELL", weight: 10, detail: `Price at +2σ (${distPct.toFixed(2)}% above VWAP) — mean reversion sell` });
+      tools.push({
+        name: "VWAP Bands",
+        signal: "SELL",
+        weight: 10,
+        detail: `Price at +2σ (${distPct.toFixed(2)}% above VWAP) — mean reversion sell`,
+      });
     } else if (price <= vwapBands.lower1[last]) {
       bullScore += 6;
-      tools.push({ name: "VWAP Bands", signal: "BUY", weight: 10, detail: `Below -1σ VWAP band — bullish zone` });
+      tools.push({
+        name: "VWAP Bands",
+        signal: "BUY",
+        weight: 10,
+        detail: `Below -1σ VWAP band — bullish zone`,
+      });
     } else if (price >= vwapBands.upper1[last]) {
       bearScore += 6;
-      tools.push({ name: "VWAP Bands", signal: "SELL", weight: 10, detail: `Above +1σ VWAP band — bearish zone` });
+      tools.push({
+        name: "VWAP Bands",
+        signal: "SELL",
+        weight: 10,
+        detail: `Above +1σ VWAP band — bearish zone`,
+      });
     } else {
       if (aboveVwap) bullScore += 3;
       else bearScore += 3;
@@ -759,13 +890,21 @@ export function analyzeExperimental(candles: Candle[]): ExperimentalAnalysis | n
 
   // ─── Combined signal ───
   const totalScore = bullScore + bearScore;
-  const combinedScore = totalScore > 0 ? Math.round((Math.abs(bullScore - bearScore) / totalScore) * 100) : 0;
+  const combinedScore =
+    totalScore > 0
+      ? Math.round((Math.abs(bullScore - bearScore) / totalScore) * 100)
+      : 0;
   const direction: "LONG" | "SHORT" | "NEUTRAL" =
     combinedScore < 15 ? "NEUTRAL" : bullScore > bearScore ? "LONG" : "SHORT";
 
-  const toolsBullish = tools.filter((t) => t.signal === "BUY").length;
-  const toolsBearish = tools.filter((t) => t.signal === "SELL").length;
-  const confidence = Math.min(95, Math.round(Math.max(toolsBullish, toolsBearish) / tools.length * 100 * 1.1));
+  const toolsBullish = tools.filter(t => t.signal === "BUY").length;
+  const toolsBearish = tools.filter(t => t.signal === "SELL").length;
+  const confidence = Math.min(
+    95,
+    Math.round(
+      (Math.max(toolsBullish, toolsBearish) / tools.length) * 100 * 1.1,
+    ),
+  );
 
   const experimentalSignal: ExperimentalSignal = {
     direction,
@@ -776,26 +915,34 @@ export function analyzeExperimental(candles: Candle[]): ExperimentalAnalysis | n
 
   // ─── Bias (for compatibility)
   const bias: "BULLISH" | "BEARISH" | "NEUTRAL" =
-    direction === "LONG" ? "BULLISH" : direction === "SHORT" ? "BEARISH" : "NEUTRAL";
+    direction === "LONG"
+      ? "BULLISH"
+      : direction === "SHORT"
+        ? "BEARISH"
+        : "NEUTRAL";
 
   // ─── Generate entries ───
   const entries: ScalpEntry[] = [];
 
   if (direction !== "NEUTRAL") {
     // Build reasons from the strongest tools
-    const activeTools = tools.filter((t) =>
-      direction === "LONG" ? t.signal === "BUY" : t.signal === "SELL"
+    const activeTools = tools.filter(t =>
+      direction === "LONG" ? t.signal === "BUY" : t.signal === "SELL",
     );
     const reason = activeTools
       .sort((a, b) => b.weight - a.weight)
       .slice(0, 3)
-      .map((t) => `${t.name}: ${t.detail}`)
+      .map(t => `${t.name}: ${t.detail}`)
       .join(" | ");
 
     if (direction === "LONG") {
-      const sl = supertrend.trend[last] === "UP"
-        ? Math.min(supertrend.line[last] ?? price - currentATR, price - currentATR * 0.8)
-        : price - currentATR * 1.2;
+      const sl =
+        supertrend.trend[last] === "UP"
+          ? Math.min(
+              supertrend.line[last] ?? price - currentATR,
+              price - currentATR * 0.8,
+            )
+          : price - currentATR * 1.2;
       const risk = price - sl;
       if (risk > 0) {
         entries.push({
@@ -810,9 +957,13 @@ export function analyzeExperimental(candles: Candle[]): ExperimentalAnalysis | n
         });
       }
     } else {
-      const sl = supertrend.trend[last] === "DOWN"
-        ? Math.max(supertrend.line[last] ?? price + currentATR, price + currentATR * 0.8)
-        : price + currentATR * 1.2;
+      const sl =
+        supertrend.trend[last] === "DOWN"
+          ? Math.max(
+              supertrend.line[last] ?? price + currentATR,
+              price + currentATR * 0.8,
+            )
+          : price + currentATR * 1.2;
       const risk = sl - price;
       if (risk > 0) {
         entries.push({

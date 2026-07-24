@@ -44,7 +44,12 @@ function getConvexSiteUrl(): string {
 function makeSnapshot(
   price: number,
   source: string,
-  opts?: { change24h?: number; changePct24h?: number; high24h?: number; low24h?: number }
+  opts?: {
+    change24h?: number;
+    changePct24h?: number;
+    high24h?: number;
+    low24h?: number;
+  },
 ): PriceData {
   const spread = price * 0.0003;
   return {
@@ -117,7 +122,7 @@ const BINANCE_INTERVALS: Record<string, string> = {
 
 export async function fetchGoldCandles(
   interval: string,
-  limit = 200
+  limit = 200,
 ): Promise<Candle[]> {
   const binanceInterval = BINANCE_INTERVALS[interval] || "5m";
   const base = getConvexSiteUrl();

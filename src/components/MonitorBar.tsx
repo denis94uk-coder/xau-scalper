@@ -2,8 +2,16 @@
  * Floating monitor status bar — shows auto-monitor state, alerts toggle,
  * and recent trigger events. Sits at bottom-right of the screen.
  */
+
+import {
+  Activity,
+  Bell,
+  BellOff,
+  ChevronDown,
+  ChevronUp,
+  X,
+} from "lucide-react";
 import { useState } from "react";
-import { Bell, BellOff, Activity, ChevronUp, ChevronDown, X } from "lucide-react";
 import { useAutoMonitor } from "@/hooks/useAutoMonitor";
 
 export function MonitorBar() {
@@ -46,8 +54,7 @@ export function MonitorBar() {
           </div>
           <div className="flex flex-col">
             {recentEvents.map((ev, i) => {
-              const isWin =
-                ev.status === "TP1_HIT" || ev.status === "TP2_HIT";
+              const isWin = ev.status === "TP1_HIT" || ev.status === "TP2_HIT";
               const time = new Date(ev.timestamp).toLocaleTimeString("en-GB", {
                 hour: "2-digit",
                 minute: "2-digit",
@@ -122,7 +129,11 @@ export function MonitorBar() {
               ? "bg-[#00E676]/10 text-[#00E676]"
               : "bg-secondary/30 text-muted-foreground"
           }`}
-          title={isMonitoring ? "Auto-monitor ON — click to pause" : "Auto-monitor OFF — click to resume"}
+          title={
+            isMonitoring
+              ? "Auto-monitor ON — click to pause"
+              : "Auto-monitor OFF — click to resume"
+          }
         >
           <Activity className="w-3 h-3" />
           <span className={isMonitoring ? "animate-pulse" : ""}>
@@ -164,7 +175,11 @@ export function MonitorBar() {
               ? "bg-[#D4A843]/10 text-[#D4A843]"
               : "bg-secondary/30 text-muted-foreground"
           }`}
-          title={alertsEnabled ? "Alerts ON — click to mute" : "Alerts OFF — click to enable"}
+          title={
+            alertsEnabled
+              ? "Alerts ON — click to mute"
+              : "Alerts OFF — click to enable"
+          }
         >
           {alertsEnabled ? (
             <Bell className="w-3 h-3" />
