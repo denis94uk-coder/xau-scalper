@@ -176,7 +176,12 @@ async function main() {
     if (Number.isNaN(startMs) || Number.isNaN(endMs) || startMs >= endMs) {
       throw new Error("invalid from/to range (use YYYY-MM-DD)");
     }
-    candles = await fetchRange(asset.dataSourceSymbol, interval, startMs, endMs);
+    candles = await fetchRange(
+      asset.dataSourceSymbol,
+      interval,
+      startMs,
+      endMs,
+    );
   } else {
     candles = await fetchRecent(
       asset.dataSourceSymbol,

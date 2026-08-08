@@ -1,0 +1,494 @@
+/**
+ * Local SQLite data layer — replaces every Convex query and mutation.
+ *
+ * Uses bun:sqlite, which ships with Bun, so this adds no dependency. The whole
+ * dataset is one file (data/teo.db by default) that can be copied, inspected
+ * with any SQLite tool, or deleted to start fresh.
+ *
+ * All timestamps are epoch milliseconds except candle open_time, which is epoch
+ * SECONDS to match the Candle type the strategy core consumes.
+ */
+
+import { Database } from "bun:sqlite";
+import { mkdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import type { Candle } from "../convex/lib/strategy";
+
+export type Direction = "LONG" | "SHORT";
+export type IdeaStatus =
+  | "ACTIVE"
+  | "TP1_HIT"
+  | "TP2_HIT"
+  | "STOPPED"
+  | "EXPIRED";
+export type IdeaSource = "engine" | "teo" | "dashboard" | "experimental";
+
+export interface TradingIdea {
+  id: number;
+  asset: string;
+  direction: Direction;
+  status: IdeaStatus;
+  source: IdeaSource;
+  entry_price: number;
+  stop_loss: number;
+  tp1: number;
+  tp2: number;
+  trailing_sl: number | null;
+  confidence: number;
+  grade: string | null;
+  reason: string;
+  timeframe: string;
+  bias: string;
+  bias_strength: number;
+  spot_price: number;
+  teo_score: number | null;
+  teo_regime: string | null;
+  pnl_points: number | null;
+  created_at: number;
+  resolved_at: number | null;
+}
+
+export interface JournalRow {
+  id: number;
+  event_type: string;
+  asset: string;
+  source: string;
+  idea_id: number | null;
+  direction: Direction | null;
+  price: number | null;
+  details: string;
+  metadata: string | null;
+  timestamp: number;
+}
+
+export interface NewIdea {
+  asset: string;
+  direction: Direction;
+  source?: IdeaSource;
+  entryPrice: number;
+  stopLoss: number;
+  tp1: number;
+  tp2: number;
+  confidence?: number;
+  grade?: string | null;
+  reason?: string;
+  timeframe?: string;
+  bias?: string;
+  biasStrength?: number;
+  spotPrice: number;
+  teoScore?: number | null;
+  teoRegime?: string | null;
+}
+
+export interface JournalEntry {
+  eventType: string;
+  asset: string;
+  source?: string;
+  ideaId?: number | null;
+  direction?: Direction | null;
+  price?: number | null;
+  details?: string;
+  metadata?: unknown;
+}
+
+const OPEN_STATUSES = ["ACTIVE", "TP1_HIT"] as const;
+
+export class Db {
+  readonly raw: Database;
+
+  constructor(path = process.env.TEO_DB_PATH ?? "data/teo.db") {
+    if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
+    this.raw = new Database(path, { create: true });
+    // WAL lets the Python side read while the server writes. It is a no-op for
+    // :memory: databases, which is why tests still work unchanged.
+    this.raw.exec("PRAGMA journal_mode = WAL");
+    this.raw.exec("PRAGMA foreign_keys = ON");
+    this.raw.exec("PRAGMA busy_timeout = 5000");
+    this.migrate();
+  }
+
+  /** Apply schema.sql. Every statement is CREATE ... IF NOT EXISTS, so this is idempotent. */
+  migrate(): void {
+    this.raw.exec(readFileSync(join(import.meta.dir, "schema.sql"), "utf8"));
+  }
+
+  close(): void {
+    this.raw.close();
+  }
+
+  // ─── Candles ───
+
+  /** Upsert candles. Re-fetching an overlapping window is normal, so conflicts replace. */
+  saveCandles(asset: string, interval: string, candles: Candle[]): void {
+    if (candles.length === 0) return;
+    const stmt = this.raw.prepare(
+      `INSERT INTO candles (asset, interval, open_time, open, high, low, close, volume)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (asset, interval, open_time) DO UPDATE SET
+         open = excluded.open, high = excluded.high, low = excluded.low,
+         close = excluded.close, volume = excluded.volume`,
+    );
+    this.raw.transaction(() => {
+      for (const c of candles) {
+        stmt.run(
+          asset,
+          interval,
+          c.time,
+          c.open,
+          c.high,
+          c.low,
+          c.close,
+          c.volume,
+        );
+      }
+    })();
+  }
+
+  /** Most recent `limit` candles, oldest-first (the order the strategy expects). */
+  getCandles(asset: string, interval: string, limit = 200): Candle[] {
+    const rows = this.raw
+      .query<
+        { open_time: number } & Record<string, number>,
+        [string, string, number]
+      >(
+        `SELECT open_time, open, high, low, close, volume FROM candles
+         WHERE asset = ? AND interval = ?
+         ORDER BY open_time DESC LIMIT ?`,
+      )
+      .all(asset, interval, limit);
+    return rows
+      .map(r => ({
+        time: r.open_time,
+        open: r.open,
+        high: r.high,
+        low: r.low,
+        close: r.close,
+        volume: r.volume,
+      }))
+      .reverse();
+  }
+
+  /** Open time of the newest stored candle, or null. Drives incremental fetches. */
+  latestCandleTime(asset: string, interval: string): number | null {
+    const row = this.raw
+      .query<{ t: number | null }, [string, string]>(
+        `SELECT MAX(open_time) AS t FROM candles WHERE asset = ? AND interval = ?`,
+      )
+      .get(asset, interval);
+    return row?.t ?? null;
+  }
+
+  // ─── Trading ideas ───
+
+  createIdea(idea: NewIdea): number {
+    const now = Date.now();
+    const row = this.raw
+      .query<{ id: number }, never[]>(
+        `INSERT INTO trading_ideas (
+           asset, direction, status, source, entry_price, stop_loss, tp1, tp2,
+           confidence, grade, reason, timeframe, bias, bias_strength,
+           spot_price, teo_score, teo_regime, created_at
+         ) VALUES (
+           $asset, $direction, 'ACTIVE', $source, $entry, $sl, $tp1, $tp2,
+           $confidence, $grade, $reason, $timeframe, $bias, $biasStrength,
+           $spot, $teoScore, $teoRegime, $now
+         ) RETURNING id`,
+      )
+      .get({
+        $asset: idea.asset,
+        $direction: idea.direction,
+        $source: idea.source ?? "engine",
+        $entry: idea.entryPrice,
+        $sl: idea.stopLoss,
+        $tp1: idea.tp1,
+        $tp2: idea.tp2,
+        $confidence: idea.confidence ?? 0,
+        $grade: idea.grade ?? null,
+        $reason: idea.reason ?? "",
+        $timeframe: idea.timeframe ?? "5m",
+        $bias: idea.bias ?? "NEUTRAL",
+        $biasStrength: idea.biasStrength ?? 0,
+        $spot: idea.spotPrice,
+        $teoScore: idea.teoScore ?? null,
+        $teoRegime: idea.teoRegime ?? null,
+        $now: now,
+      } as never);
+    const id = row!.id;
+    this.addIdeaEvent(id, "SIGNAL_GENERATED", idea.spotPrice, now);
+    this.addIdeaEvent(id, "ENTRY_TRIGGERED", idea.entryPrice, now);
+    return id;
+  }
+
+  getIdea(id: number): TradingIdea | null {
+    return (
+      this.raw
+        .query<TradingIdea, [number]>(
+          `SELECT * FROM trading_ideas WHERE id = ?`,
+        )
+        .get(id) ?? null
+    );
+  }
+
+  /** Every idea still being tracked toward an exit, optionally for one asset. */
+  openIdeas(asset?: string): TradingIdea[] {
+    const placeholders = OPEN_STATUSES.map(() => "?").join(", ");
+    if (asset) {
+      return this.raw
+        .query<TradingIdea, string[]>(
+          `SELECT * FROM trading_ideas
+           WHERE status IN (${placeholders}) AND asset = ?
+           ORDER BY created_at`,
+        )
+        .all(...OPEN_STATUSES, asset);
+    }
+    return this.raw
+      .query<TradingIdea, string[]>(
+        `SELECT * FROM trading_ideas
+         WHERE status IN (${placeholders}) ORDER BY created_at`,
+      )
+      .all(...OPEN_STATUSES);
+  }
+
+  listIdeas(opts: { asset?: string; limit?: number } = {}): TradingIdea[] {
+    const limit = opts.limit ?? 100;
+    if (opts.asset) {
+      return this.raw
+        .query<TradingIdea, [string, number]>(
+          `SELECT * FROM trading_ideas WHERE asset = ?
+           ORDER BY created_at DESC LIMIT ?`,
+        )
+        .all(opts.asset, limit);
+    }
+    return this.raw
+      .query<TradingIdea, [number]>(
+        `SELECT * FROM trading_ideas ORDER BY created_at DESC LIMIT ?`,
+      )
+      .all(limit);
+  }
+
+  /**
+   * Newest same-direction idea for an asset, used for the cooldown guard.
+   *
+   * The Convex version took the 50 most recent ideas across ALL assets and
+   * filtered in memory, so with enough assets a given asset's recent signal
+   * could fall outside the window and the cooldown would quietly stop working.
+   * An indexed query has no such window.
+   */
+  lastIdeaAt(asset: string, direction: Direction): number | null {
+    const row = this.raw
+      .query<{ created_at: number }, [string, string]>(
+        `SELECT created_at FROM trading_ideas
+         WHERE asset = ? AND direction = ?
+         ORDER BY created_at DESC LIMIT 1`,
+      )
+      .get(asset, direction);
+    return row?.created_at ?? null;
+  }
+
+  updateIdea(
+    id: number,
+    patch: Partial<
+      Pick<TradingIdea, "status" | "trailing_sl" | "pnl_points" | "resolved_at">
+    >,
+  ): void {
+    const keys = Object.keys(patch) as Array<keyof typeof patch>;
+    if (keys.length === 0) return;
+    const sets = keys.map(k => `${k} = ?`).join(", ");
+    this.raw
+      .prepare(`UPDATE trading_ideas SET ${sets} WHERE id = ?`)
+      .run(...keys.map(k => patch[k] ?? null), id);
+  }
+
+  deleteIdea(id: number): void {
+    this.raw.prepare(`DELETE FROM trading_ideas WHERE id = ?`).run(id);
+  }
+
+  addIdeaEvent(
+    ideaId: number,
+    event: string,
+    price: number,
+    timestamp = Date.now(),
+  ): void {
+    this.raw
+      .prepare(
+        `INSERT INTO idea_events (idea_id, event, price, timestamp) VALUES (?, ?, ?, ?)`,
+      )
+      .run(ideaId, event, price, timestamp);
+  }
+
+  ideaEvents(
+    ideaId: number,
+  ): Array<{ event: string; price: number; timestamp: number }> {
+    return this.raw
+      .query<{ event: string; price: number; timestamp: number }, [number]>(
+        `SELECT event, price, timestamp FROM idea_events
+         WHERE idea_id = ? ORDER BY timestamp, id`,
+      )
+      .all(ideaId);
+  }
+
+  // ─── Journal ───
+
+  logJournal(entry: JournalEntry): void {
+    this.raw
+      .prepare(
+        `INSERT INTO signal_journal
+           (event_type, asset, source, idea_id, direction, price, details, metadata, timestamp)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        entry.eventType,
+        entry.asset,
+        entry.source ?? "engine",
+        entry.ideaId ?? null,
+        entry.direction ?? null,
+        entry.price ?? null,
+        entry.details ?? "",
+        entry.metadata === undefined ? null : JSON.stringify(entry.metadata),
+        Date.now(),
+      );
+  }
+
+  listJournal(opts: { asset?: string; limit?: number } = {}): JournalRow[] {
+    const limit = opts.limit ?? 200;
+    if (opts.asset) {
+      return this.raw
+        .query<JournalRow, [string, number]>(
+          `SELECT * FROM signal_journal WHERE asset = ?
+           ORDER BY timestamp DESC LIMIT ?`,
+        )
+        .all(opts.asset, limit);
+    }
+    return this.raw
+      .query<JournalRow, [number]>(
+        `SELECT * FROM signal_journal ORDER BY timestamp DESC LIMIT ?`,
+      )
+      .all(limit);
+  }
+
+  /** Counts per event type. An aggregate, not a full-table read into memory. */
+  journalCounts(): Record<string, number> {
+    const rows = this.raw
+      .query<{ event_type: string; n: number }, []>(
+        `SELECT event_type, COUNT(*) AS n FROM signal_journal GROUP BY event_type`,
+      )
+      .all();
+    return Object.fromEntries(rows.map(r => [r.event_type, r.n]));
+  }
+
+  /** Drop journal rows older than `days`, keeping the file from growing forever. */
+  pruneJournal(days: number): number {
+    const cutoff = Date.now() - days * 86_400_000;
+    return this.raw
+      .prepare(`DELETE FROM signal_journal WHERE timestamp < ?`)
+      .run(cutoff).changes;
+  }
+
+  // ─── Settings ───
+
+  setSetting(key: string, value: unknown): void {
+    this.raw
+      .prepare(
+        `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+      )
+      .run(key, JSON.stringify(value), Date.now());
+  }
+
+  getSetting<T>(key: string): T | null {
+    const row = this.raw
+      .query<{ value: string }, [string]>(
+        `SELECT value FROM settings WHERE key = ?`,
+      )
+      .get(key);
+    return row ? (JSON.parse(row.value) as T) : null;
+  }
+
+  // ─── Job bookkeeping (gap recovery) ───
+
+  recordRun(job: string, ok: boolean, error?: string): void {
+    const now = Date.now();
+    this.raw
+      .prepare(
+        `INSERT INTO job_runs (job, last_run_at, last_ok_at, last_error)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT (job) DO UPDATE SET
+           last_run_at = excluded.last_run_at,
+           last_ok_at  = COALESCE(excluded.last_ok_at, job_runs.last_ok_at),
+           last_error  = excluded.last_error`,
+      )
+      .run(job, now, ok ? now : null, error ?? null);
+  }
+
+  lastRun(job: string): number | null {
+    const row = this.raw
+      .query<{ last_run_at: number }, [string]>(
+        `SELECT last_run_at FROM job_runs WHERE job = ?`,
+      )
+      .get(job);
+    return row?.last_run_at ?? null;
+  }
+
+  // ─── Performance ───
+
+  /**
+   * Aggregate performance for ONE asset.
+   *
+   * Asset is required, not optional: points are not comparable across assets —
+   * summing gold, BTC and LINK points produces a number with no meaning, which
+   * is exactly what the Convex getPerformanceStats did.
+   */
+  performance(asset: string): {
+    asset: string;
+    closed: number;
+    open: number;
+    wins: number;
+    losses: number;
+    winRate: number;
+    netPoints: number;
+    avgWin: number;
+    avgLoss: number;
+    profitFactor: number | null;
+  } {
+    const row = this.raw
+      .query<Record<string, number | null>, [string]>(
+        `SELECT
+           COUNT(*) FILTER (WHERE status IN ('TP1_HIT','TP2_HIT','STOPPED','EXPIRED')) AS closed,
+           COUNT(*) FILTER (WHERE status IN ('ACTIVE','TP1_HIT'))                      AS open,
+           COUNT(*) FILTER (WHERE pnl_points > 0)                                      AS wins,
+           COUNT(*) FILTER (WHERE pnl_points <= 0 AND pnl_points IS NOT NULL)          AS losses,
+           COALESCE(SUM(pnl_points), 0)                                                AS net,
+           COALESCE(SUM(pnl_points) FILTER (WHERE pnl_points > 0), 0)                  AS gross_win,
+           COALESCE(-SUM(pnl_points) FILTER (WHERE pnl_points <= 0), 0)                AS gross_loss
+         FROM trading_ideas WHERE asset = ?`,
+      )
+      .get(asset)!;
+
+    const wins = Number(row.wins ?? 0);
+    const losses = Number(row.losses ?? 0);
+    const grossWin = Number(row.gross_win ?? 0);
+    const grossLoss = Number(row.gross_loss ?? 0);
+    const resolved = wins + losses;
+
+    return {
+      asset,
+      closed: Number(row.closed ?? 0),
+      open: Number(row.open ?? 0),
+      wins,
+      losses,
+      winRate: resolved ? (wins / resolved) * 100 : 0,
+      netPoints: Number(row.net ?? 0),
+      avgWin: wins ? grossWin / wins : 0,
+      avgLoss: losses ? grossLoss / losses : 0,
+      // null, not 0 — see convex/lib/backtest.ts computeMetrics.
+      profitFactor: grossLoss === 0 ? null : grossWin / grossLoss,
+    };
+  }
+}
+
+/** Process-wide handle, opened lazily so importing this module is side-effect free. */
+let singleton: Db | null = null;
+export function db(): Db {
+  if (!singleton) singleton = new Db();
+  return singleton;
+}

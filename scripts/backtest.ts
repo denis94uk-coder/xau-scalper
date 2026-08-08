@@ -13,11 +13,7 @@
  */
 
 import { DEFAULT_ASSET_ID, getAsset } from "../convex/lib/assets";
-import {
-  type BacktestMetrics,
-  computeMetrics,
-  runBacktest,
-} from "../convex/lib/backtest";
+import { computeMetrics, runBacktest } from "../convex/lib/backtest";
 import type { Candle } from "../convex/lib/strategy";
 
 const BINANCE_API = "https://data-api.binance.vision/api/v3";
