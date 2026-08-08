@@ -25,6 +25,8 @@ export const saveMacroState = internalMutation({
     overallMacroBias: v.string(),
     macroBiasStrength: v.number(),
     description: v.string(),
+    source: v.optional(v.string()),
+    dataTimestamp: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db

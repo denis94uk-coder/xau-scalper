@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "teo"
+version = "0.1.0"
+description = "Forecasting & self-healing sidecar for the xau-scalper trading dashboard"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "pydantic>=2.6",
+    "httpx>=0.27",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+# Real Kronos inference. Optional so the service runs & tests without heavy ML deps.
+# `kronos-model-arch` is the official PyPI package for the Kronos architecture; it installs
+# the `Kronos`, `KronosTokenizer` and `KronosPredictor` classes under the top-level `model`
+# package (which our adapter imports) and pulls torch + einops + safetensors + huggingface-hub.
+kronos = [
+    "kronos-model-arch>=0.1.0",
+    "torch>=2.2",
+    "huggingface-hub>=0.23",
+    "safetensors>=0.4",
+    "pandas>=2.2",
+]
+dev = [
+    "pytest>=8.1",
+    "pytest-asyncio>=0.23",
+    "respx>=0.21",
+    "ruff>=0.4",
+]
+
+[tool.setuptools.packages.find]
+include = ["teo*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

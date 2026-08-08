@@ -78,8 +78,12 @@ export default defineSchema({
         v.literal("dashboard"),
         v.literal("experimental"),
         v.literal("engine"),
+        v.literal("teo"),
       ),
     ),
+    // Teo forward-test provenance. Set only on source === "teo" rows.
+    teoScore: v.optional(v.number()),
+    teoRegime: v.optional(v.string()),
     // Signal quality grade (A/B/C)
     grade: v.optional(v.string()),
     // Multi-asset tag (e.g. "PAXGUSDT", "BTCUSDT"). Absent on legacy rows,
@@ -118,8 +122,11 @@ export default defineSchema({
       v.literal("ENGINE_RUN"),
       v.literal("MONITOR_CHECK"),
       v.literal("TRAIL_UPDATE"),
+      v.literal("TEO_DECISION"),
     ),
     ideaId: v.optional(v.id("tradingIdeas")),
+    // Which subsystem wrote this row ("engine" | "teo"). Absent on legacy rows.
+    source: v.optional(v.string()),
     direction: v.optional(v.union(v.literal("LONG"), v.literal("SHORT"))),
     price: v.optional(v.number()),
     details: v.string(),

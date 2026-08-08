@@ -34,3 +34,15 @@ playwright-report/node_modules
 
 # Graphify local knowledge graph output
 graphify-out/
+
+# Python (Teo sidecar)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Teo regime-tagged outcome memory (local run artifact)
+.teo_memory.json
