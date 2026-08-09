@@ -339,6 +339,103 @@ export async function handleApi(
     }
   }
 
+  // ─── Teo sidecar ───
+  //
+  // These WRITE the forward-test record, which is only evidence if it cannot be
+  // backfilled. The server binds to 127.0.0.1, so a local process is already
+  // the only possible caller; setting TEO_SHARED_SECRET additionally requires a
+  // matching x-teo-secret header, which is what you want if you ever bind wider.
+  if (path === "/teo/propose" || path === "/teo/decision") {
+    const expected = process.env.TEO_SHARED_SECRET;
+    if (expected && req.headers.get("x-teo-secret") !== expected) {
+      return bad("unauthorized", 401);
+    }
+    if (req.method !== "POST") return bad("POST required", 405);
+
+    const body = await readBody(req);
+    if (body instanceof Response) return body;
+
+    if (path === "/teo/propose") {
+      for (const k of ["entryPrice", "stopLoss", "tp1", "tp2"]) {
+        const v = num(body, k);
+        if (v instanceof Response) return v;
+      }
+      if (body.direction !== "LONG" && body.direction !== "SHORT") {
+        return bad("direction must be LONG or SHORT");
+      }
+      const asset = (body.asset as string) ?? DEFAULT_ASSET_ID;
+      // Reject symbols the engine does not track: a forward-test row for an
+      // asset nothing monitors could never be resolved.
+      if (!getAsset(asset)) return bad(`unknown asset "${asset}"`, 404);
+
+      const entryPrice = body.entryPrice as number;
+      const id = db.createIdea({
+        asset,
+        direction: body.direction,
+        source: "teo",
+        entryPrice,
+        stopLoss: body.stopLoss as number,
+        tp1: body.tp1 as number,
+        tp2: body.tp2 as number,
+        confidence: (body.confidence as number) ?? 0,
+        reason: (body.reason as string) ?? "Teo proposal",
+        timeframe: (body.timeframe as string) ?? "15m",
+        bias: (body.bias as string) ?? "NEUTRAL",
+        biasStrength: (body.biasStrength as number) ?? 0,
+        spotPrice: (body.spotPrice as number) ?? entryPrice,
+        teoScore: (body.teoScore as number) ?? null,
+        teoRegime: (body.teoRegime as string) ?? null,
+      });
+      db.logJournal({
+        eventType: "SIGNAL_GENERATED",
+        asset,
+        source: "teo",
+        ideaId: id,
+        direction: body.direction,
+        price: entryPrice,
+        details:
+          `[Teo] ${body.direction} ${asset} @ ${entryPrice} | ` +
+          `regime ${body.teoRegime ?? "unknown"} | score ${body.teoScore ?? "n/a"}`,
+        metadata: { teoScore: body.teoScore, teoRegime: body.teoRegime },
+      });
+      publish("ideas");
+      publish("journal");
+      return json({ ok: true, id });
+    }
+
+    // /teo/decision — append-only. Records what Teo decided and why; it never
+    // applies a configuration change.
+    const required = [
+      "asset",
+      "strategyId",
+      "regime",
+      "status",
+      "action",
+      "reason",
+    ];
+    if (required.some(k => typeof body[k] !== "string")) {
+      return bad("missing required decision fields");
+    }
+    db.logJournal({
+      eventType: "TEO_DECISION",
+      asset: body.asset as string,
+      source: "teo",
+      details: `[Teo/${body.strategyId}] ${body.action} ${body.asset} | ${body.reason}`,
+      metadata: {
+        strategyId: body.strategyId,
+        regime: body.regime,
+        status: body.status,
+        action: body.action,
+        currentScore: body.currentScore,
+        proposedScore: body.proposedScore,
+        improvement: body.improvement,
+        extra: body.metadata,
+      },
+    });
+    publish("journal");
+    return json({ ok: true, timestamp: Date.now() });
+  }
+
   // Any other /api/* path is a mistake, not a client-side route. Falling
   // through to the SPA would hand the caller HTML where it expected JSON,
   // which surfaces as an opaque parse error rather than a 404.

@@ -112,5 +112,10 @@ def run_backtest(
         avg_win=round(gross_win / len(wins), 4) if wins else 0.0,
         avg_loss=round(-gross_loss / len(losses), 4) if losses else 0.0,
         max_drawdown=round(max_dd, 4),
-        profit_factor=round(gross_win / gross_loss, 4) if gross_loss > 0 else 0.0,
+        # 999, not 0, when nothing was lost. Zero reads as "worst possible" to
+        # every comparison downstream — it would rank a flawless config last and
+        # make assess() classify it as degraded.
+        profit_factor=(
+            round(gross_win / gross_loss, 4) if gross_loss > 0 else 999.0
+        ),
     )

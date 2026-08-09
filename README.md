@@ -167,6 +167,12 @@ Served on the same origin as the UI. No authentication: the server binds to
 | `POST` | `/api/trades/:id` | Close at `exitPrice`. **P&L and WIN/LOSS/BREAKEVEN are derived server-side** from the stored entry; the caller does not get to state the result. |
 | `DELETE` | `/api/trades/:id` | Remove a manual trade. |
 | `GET` | `/api/trades/stats` | Aggregate manual-trade performance. |
+| `POST` | `/teo/propose` | Teo forward-test entry, recorded before the outcome is known. |
+| `POST` | `/teo/decision` | Teo self-heal decision. Append-only — it never applies a config change. |
+
+Set `TEO_SHARED_SECRET` to require a matching `x-teo-secret` header on the two
+`/teo/*` routes. The server binds to localhost, so a local process is already
+the only possible caller; the secret matters if you ever bind wider.
 
 Any unmatched `/api/*` path is a `404`, not the SPA shell — returning HTML
 where JSON was expected surfaces as an opaque parse error rather than a missing
@@ -246,6 +252,21 @@ python -m teo.loop --interval 15m --lookback 1000    # self-heal across assets
 
 Teo **proposes**; it never applies. Swaps are recorded for audit and applied by
 you.
+
+### How a proposal is validated
+
+`teo/backtest/ts_bridge.py` shells out to `scripts/score.ts`, so the winner of a
+sweep is re-scored against the **real** strategy — `analyzeCandles`, net of real
+per-asset costs — on a held-out slice it was not selected on.
+
+This matters because the sweep itself ranks candidates with a fast Python
+EMA-crossover proxy that is *not* the dashboard's strategy. On a random walk the
+real strategy produces ~0 trades where the proxy fires 34.
+
+`assess()` will not propose a swap without out-of-sample evidence. Best-of-36 on
+one window measures selection luck: on synthetic data with no signal at all, the
+in-sample "improvement" cleared the swap threshold by 14×. Set
+`require_out_of_sample=False` to disable the gate, knowingly.
 
 ### Kronos forecasting
 

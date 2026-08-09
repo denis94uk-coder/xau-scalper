@@ -20,6 +20,7 @@ from teo.assets import live_symbols
 from teo.backtest.engine import run_backtest
 from teo.backtest.regime import detect_regime
 from teo.backtest.sweep import run_sweep, score_metrics
+from teo.backtest.ts_bridge import BridgeUnavailable, bridge_available, score_configs
 from teo.memory import OutcomeMemory, OutcomeRecord
 from teo.models import Candle, StrategyConfig
 from teo.selfheal import HealthDecision, HealthThresholds, assess
@@ -78,7 +79,34 @@ def run_cycle(
     # Recall the best prior outcome for THIS regime *before* we write this run's record.
     recalled = memory.best_for_regime(symbol, regime.label)
 
-    decision = assess(current_metrics, best, regime=regime, thresholds=t)
+    # Validate the winner against the REAL strategy on data it was not selected
+    # on. The sweep above ranks candidates with the Python proxy, which is fast
+    # but is not the strategy the dashboard runs; a proposal is only worth
+    # making if it also survives out-of-sample scoring of the actual engine.
+    out_of_sample = None
+    bridge_note: str | None = None
+    if best is not None and bridge_available():
+        try:
+            scored = score_configs(
+                [best.config],
+                symbol=symbol,
+                interval=interval,
+                candles=list(candles),
+                split_ratio=0.7,
+            )
+            out_of_sample = scored[0].out_of_sample if scored else None
+        except BridgeUnavailable as e:
+            bridge_note = str(e)
+    elif best is not None:
+        bridge_note = "bun not available; cannot score the real strategy"
+
+    decision = assess(
+        current_metrics,
+        best,
+        regime=regime,
+        thresholds=t,
+        candidate_out_of_sample=out_of_sample,
+    )
 
     # Persist: if we're proposing a swap, remember the proposed config + score; otherwise the
     # current config + its score. Tagged by regime so future cycles can recall it.
@@ -107,6 +135,7 @@ def run_cycle(
         decision=decision,
         recalled=recalled,
         bars=len(candles),
+        extra={"bridge": bridge_note} if bridge_note else {},
     )
 
 

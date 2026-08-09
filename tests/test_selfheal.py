@@ -29,14 +29,58 @@ def test_healthy_holds():
     assert d.proposed_config is None
 
 
-def test_degraded_proposes_swap_when_candidate_better():
+def test_degraded_proposes_swap_when_candidate_survives_out_of_sample():
     current = _m(profit_factor=0.8, win_rate=0.2, net_points=-20.0)
-    d = assess(current, _candidate(50.0),
-               thresholds=HealthThresholds(min_score_improvement=0.15))
+    d = assess(
+        current,
+        _candidate(50.0),
+        thresholds=HealthThresholds(min_score_improvement=0.15),
+        # The winner also worked on data it was not selected on.
+        candidate_out_of_sample=_m(net_points=200.0, profit_factor=1.8),
+    )
     assert d.status == "degraded"
     assert d.action == "propose_swap"
     assert d.proposed_config is not None
     assert d.improvement is not None and d.improvement > 0
+
+
+def test_no_swap_without_out_of_sample_evidence():
+    """An unvalidated candidate is treated as no candidate.
+
+    Best-of-N on a single window measures selection luck. Without a held-out
+    check there is nothing to distinguish a real improvement from noise.
+    """
+    current = _m(profit_factor=0.8, win_rate=0.2, net_points=-20.0)
+    d = assess(current, _candidate(50.0))
+    assert d.status == "degraded"
+    assert d.action == "hold"
+    assert d.proposed_config is None
+    assert "out of sample" in d.reason
+
+
+def test_no_swap_when_candidate_fails_out_of_sample():
+    """Big in-sample gain, negative out of sample → that is overfitting."""
+    current = _m(profit_factor=0.8, win_rate=0.2, net_points=-20.0)
+    d = assess(
+        current,
+        _candidate(50.0),
+        candidate_out_of_sample=_m(
+            net_points=-300.0, profit_factor=0.4, win_rate=0.15
+        ),
+    )
+    assert d.action == "hold"
+    assert d.proposed_config is None
+    assert "selection noise" in d.reason
+
+
+def test_out_of_sample_gate_can_be_disabled():
+    current = _m(profit_factor=0.8, win_rate=0.2, net_points=-20.0)
+    d = assess(
+        current,
+        _candidate(50.0),
+        thresholds=HealthThresholds(require_out_of_sample=False),
+    )
+    assert d.action == "propose_swap"
 
 
 def test_degraded_holds_when_no_better_candidate():

@@ -35,10 +35,20 @@ def score_metrics(m: BacktestMetrics, *, min_trades: int = 10) -> float:
     Configs that didn't trade enough to be trustworthy are pushed to the bottom. Otherwise the
     score rewards return earned per unit of drawdown (a Calmar-like ratio), nudged by profit factor
     and win rate. Higher is better; it can be negative for losing configs.
+
+    The drawdown denominator is FLOORED rather than merely made non-zero. Adding
+    a 1e-9 epsilon meant a config that happened never to draw down scored around
+    5e10 and dominated every ranking on what is usually a small-sample accident.
+    Flooring at a fraction of the traded range keeps the ratio finite and makes a
+    lucky streak merely good rather than infinitely good.
     """
     if m.trades < min_trades:
         return -1e9 + m.trades  # keep a stable order among under-traded configs
-    calmar = m.net_points / (m.max_drawdown + 1e-9)
+
+    # A run with no drawdown is treated as having risked at least this much;
+    # scaled off average win so the floor means the same thing on gold as on LINK.
+    floor = max(abs(m.avg_win), abs(m.avg_loss), 1e-6)
+    calmar = m.net_points / max(m.max_drawdown, floor)
     return round(calmar + 0.5 * (m.profit_factor - 1.0) + 0.25 * m.win_rate, 6)
 
 
