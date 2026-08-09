@@ -1,19 +1,25 @@
-import { useMutation, useQuery } from "convex/react";
 import { Plus, Shield, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { api } from "../../convex/_generated/api";
-import type { Id } from "../../convex/_generated/dataModel";
+import { useLive, useMutation } from "@/hooks/useLive";
+import { api } from "@/lib/api";
 
 export function RiskManagerPage() {
-  const trades = useQuery(api.manualTrades.listTrades, { limit: 200 });
-  const stats = useQuery(api.manualTrades.getStats, {});
-  const logTrade = useMutation(api.manualTrades.logTrade);
-  const closeTrade = useMutation(api.manualTrades.closeTrade);
-  const deleteTrade = useMutation(api.manualTrades.deleteTrade);
+  const trades = useLive(
+    () => api.trades({ limit: 200 }).then(r => r.trades),
+    ["trades"],
+  );
+  const stats = useLive(() => api.tradeStats(), ["trades"]);
+  const [logTrade] = useMutation((t: Record<string, unknown>) =>
+    api.logTrade(t),
+  );
+  const [closeTrade] = useMutation((a: { id: number; exitPrice: number }) =>
+    api.closeTrade(a.id, a.exitPrice),
+  );
+  const [deleteTrade] = useMutation((id: number) => api.deleteTrade(id));
 
   const [showForm, setShowForm] = useState(false);
-  const [closeModal, setCloseModal] = useState<string | null>(null);
+  const [closeModal, setCloseModal] = useState<number | null>(null);
   const [exitPrice, setExitPrice] = useState("");
 
   // Form state
@@ -61,21 +67,16 @@ export function RiskManagerPage() {
     setShowForm(false);
   };
 
-  const handleClose = async (
-    id: string,
-    status: "WIN" | "LOSS" | "BREAKEVEN",
-  ) => {
-    const exit = parseFloat(exitPrice);
-    if (!exit) {
-      toast.error("Enter exit price");
+  const handleClose = async (id: number) => {
+    const exit = Number.parseFloat(exitPrice);
+    if (!Number.isFinite(exit) || exit <= 0) {
+      toast.error("Enter a valid exit price");
       return;
     }
-    await closeTrade({
-      id: id as Id<"manualTrades">,
-      exitPrice: exit,
-      status,
-    });
-    toast.success(`Trade closed as ${status}`);
+    // Outcome is derived server-side from entry vs exit rather than asserted
+    // here, so the journal cannot record a result its own prices contradict.
+    await closeTrade({ id, exitPrice: exit });
+    toast.success("Trade closed");
     setCloseModal(null);
     setExitPrice("");
   };
@@ -125,12 +126,14 @@ export function RiskManagerPage() {
         <RMCard
           label="Profit Factor"
           value={
-            stats.profitFactor === Infinity
+            (stats.profitFactor ?? 0) === Infinity
               ? "∞"
-              : stats.profitFactor.toFixed(2)
+              : (stats.profitFactor ?? 0).toFixed(2)
           }
           color={
-            stats.profitFactor >= 1.5 ? "text-emerald-400" : "text-yellow-400"
+            (stats.profitFactor ?? 0) >= 1.5
+              ? "text-emerald-400"
+              : "text-yellow-400"
           }
         />
         <RMCard
@@ -142,12 +145,12 @@ export function RiskManagerPage() {
         />
         <RMCard
           label="Avg Win"
-          value={`+${stats.avgWinPoints.toFixed(1)}`}
+          value={`+${stats.avgWinDollars.toFixed(1)}`}
           color="text-emerald-400"
         />
         <RMCard
           label="Avg Loss"
-          value={`-${stats.avgLossPoints.toFixed(1)}`}
+          value={`-${stats.avgLossDollars.toFixed(1)}`}
           color="text-red-400"
         />
       </div>
@@ -239,7 +242,7 @@ export function RiskManagerPage() {
           <div className="space-y-1">
             {openTrades.map(trade => (
               <div
-                key={trade._id}
+                key={trade.id}
                 className="bg-[#12141A] border border-blue-500/20 rounded-lg px-3 py-2 flex items-center gap-3"
               >
                 <span
@@ -269,7 +272,7 @@ export function RiskManagerPage() {
                   </span>
                 )}
                 <div className="ml-auto flex gap-1">
-                  {closeModal === trade._id ? (
+                  {closeModal === trade.id ? (
                     <div className="flex items-center gap-1.5">
                       <input
                         type="number"
@@ -280,22 +283,11 @@ export function RiskManagerPage() {
                         className="w-24 bg-[#0A0C10] border border-white/10 rounded px-2 py-1 text-xs font-mono"
                       />
                       <button
-                        onClick={() => handleClose(trade._id, "WIN")}
-                        className="text-[10px] px-2 py-1 rounded bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30"
+                        type="button"
+                        onClick={() => handleClose(trade.id)}
+                        className="text-[10px] px-2 py-1 rounded bg-primary/20 text-primary hover:bg-primary/30"
                       >
-                        WIN
-                      </button>
-                      <button
-                        onClick={() => handleClose(trade._id, "LOSS")}
-                        className="text-[10px] px-2 py-1 rounded bg-red-500/20 text-red-400 hover:bg-red-500/30"
-                      >
-                        LOSS
-                      </button>
-                      <button
-                        onClick={() => handleClose(trade._id, "BREAKEVEN")}
-                        className="text-[10px] px-2 py-1 rounded bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30"
-                      >
-                        BE
+                        Close
                       </button>
                       <button
                         onClick={() => {
@@ -310,14 +302,14 @@ export function RiskManagerPage() {
                   ) : (
                     <>
                       <button
-                        onClick={() => setCloseModal(trade._id)}
+                        onClick={() => setCloseModal(trade.id)}
                         className="text-[10px] px-2 py-1 rounded bg-white/5 text-muted-foreground hover:text-white hover:bg-white/10"
                       >
                         Close
                       </button>
                       <button
                         onClick={() => {
-                          deleteTrade({ id: trade._id as Id<"manualTrades"> });
+                          deleteTrade(trade.id as number);
                           toast.success("Deleted");
                         }}
                         className="text-red-400/50 hover:text-red-400"
@@ -346,7 +338,7 @@ export function RiskManagerPage() {
           ) : (
             closedTrades.map(trade => (
               <div
-                key={trade._id}
+                key={trade.id}
                 className="flex items-center gap-2 px-3 py-1.5 bg-[#12141A] rounded-lg text-xs border border-white/5"
               >
                 <span
@@ -401,7 +393,7 @@ export function RiskManagerPage() {
                 </span>
                 <button
                   onClick={() => {
-                    deleteTrade({ id: trade._id as Id<"manualTrades"> });
+                    deleteTrade(trade.id as number);
                     toast.success("Deleted");
                   }}
                   className="text-red-400/30 hover:text-red-400"

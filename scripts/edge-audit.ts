@@ -19,9 +19,9 @@
  *   bun run edge-audit -- --atr 0.15   # assume a livelier 5m bar
  */
 
-import { getEnabledAssets } from "../convex/lib/assets";
-import { breakevenWinRate, entryCost, exitCost } from "../convex/lib/costs";
-import { DEFAULT_STRATEGY_CONFIG } from "../convex/lib/strategy";
+import { getEnabledAssets } from "../core/assets";
+import { breakevenWinRate, entryCost, exitCost } from "../core/costs";
+import { DEFAULT_STRATEGY_CONFIG } from "../core/strategy";
 
 /**
  * 5-minute ATR as a percentage of price.

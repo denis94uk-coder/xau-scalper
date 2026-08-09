@@ -12,16 +12,27 @@ beforeEach(() => {
   db = new Db(":memory:");
 });
 
-function call(path: string, method = "GET") {
+function call(path: string, method = "GET", body?: unknown) {
   const url = new URL(`http://localhost${path}`);
-  return handleApi(db, new Request(url.toString(), { method }), url);
+  const init: RequestInit = { method };
+  if (body !== undefined) {
+    init.body = typeof body === "string" ? body : JSON.stringify(body);
+    init.headers = { "Content-Type": "application/json" };
+  }
+  return handleApi(db, new Request(url.toString(), init), url);
 }
 
 async function body<T = Record<string, unknown>>(
-  res: Response | null,
+  res: Promise<Response | null> | Response | null,
 ): Promise<T> {
-  if (!res) throw new Error("route returned null");
-  return (await res.json()) as T;
+  const r = await res;
+  if (!r) throw new Error("route returned null");
+  return (await r.json()) as T;
+}
+
+/** Await a route and assert it produced a response. */
+async function status(res: Promise<Response | null>): Promise<number | null> {
+  return (await res)?.status ?? null;
 }
 
 function idea(over: Partial<NewIdea> = {}) {
@@ -38,10 +49,10 @@ function idea(over: Partial<NewIdea> = {}) {
 }
 
 describe("routing", () => {
-  test("returns null for non-API paths so static serving can take over", () => {
-    expect(call("/")).toBeNull();
-    expect(call("/dashboard")).toBeNull();
-    expect(call("/assets.js")).toBeNull();
+  test("returns null for non-API paths so static serving can take over", async () => {
+    expect(await call("/")).toBeNull();
+    expect(await call("/dashboard")).toBeNull();
+    expect(await call("/assets.js")).toBeNull();
   });
 
   test("health reports engine liveness", async () => {
@@ -85,15 +96,14 @@ describe("ideas", () => {
   test("an unknown asset is a 404, not an empty list", async () => {
     // Silently returning [] would be indistinguishable from "no activity yet",
     // which hides typos in a filter.
-    const res = call("/api/ideas?asset=NOTREAL");
-    expect(res?.status).toBe(404);
+    expect(await status(call("/api/ideas?asset=NOTREAL"))).toBe(404);
   });
 
   test("a single idea can be fetched and deleted", async () => {
     const id = idea();
-    expect(call(`/api/ideas/${id}`)?.status).toBe(200);
-    expect(call(`/api/ideas/${id}`, "DELETE")?.status).toBe(200);
-    expect(call(`/api/ideas/${id}`)?.status).toBe(404);
+    expect(await status(call(`/api/ideas/${id}`))).toBe(200);
+    expect(await status(call(`/api/ideas/${id}`, "DELETE"))).toBe(200);
+    expect(await status(call(`/api/ideas/${id}`))).toBe(404);
   });
 
   test("open ideas exclude resolved ones", async () => {
@@ -111,9 +121,9 @@ describe("ideas", () => {
     const b = await body<{ ideas: unknown[] }>(call("/api/ideas?limit=2"));
     expect(b.ideas).toHaveLength(2);
     // Absurd values fall back to the cap instead of trying to allocate them.
-    expect(call("/api/ideas?limit=999999")?.status).toBe(200);
-    expect(call("/api/ideas?limit=-1")?.status).toBe(200);
-    expect(call("/api/ideas?limit=abc")?.status).toBe(200);
+    expect(await status(call("/api/ideas?limit=999999"))).toBe(200);
+    expect(await status(call("/api/ideas?limit=-1"))).toBe(200);
+    expect(await status(call("/api/ideas?limit=abc"))).toBe(200);
   });
 });
 
@@ -141,9 +151,11 @@ describe("performance", () => {
     db.updateIdea(btc, { status: "TP2_HIT", pnl_points: 1200 });
 
     const b = await body<{
-      byAsset: Array<{ asset: string; netPoints: number }>;
+      byAsset: Array<{ asset: string; totalPnlPoints: number }>;
     }>(call("/api/performance"));
-    const map = Object.fromEntries(b.byAsset.map(r => [r.asset, r.netPoints]));
+    const map = Object.fromEntries(
+      b.byAsset.map(r => [r.asset, r.totalPnlPoints]),
+    );
     expect(map.PAXGUSDT).toBe(75);
     expect(map.BTCUSDT).toBe(1200);
     // No aggregate field exists to accidentally render.
@@ -152,8 +164,8 @@ describe("performance", () => {
 });
 
 describe("candles", () => {
-  test("requires an asset", () => {
-    expect(call("/api/candles")?.status).toBe(400);
+  test("requires an asset", async () => {
+    expect(await status(call("/api/candles"))).toBe(400);
   });
 
   test("returns stored candles for an asset and interval", async () => {
@@ -169,10 +181,126 @@ describe("candles", () => {
 
 describe("intel state", () => {
   test("404s until an engine has written it", async () => {
-    expect(call("/api/state/regime")?.status).toBe(404);
+    expect(await status(call("/api/state/regime"))).toBe(404);
     db.setSetting("regime", { regime: "RANGING" });
     expect(await body<{ regime: string }>(call("/api/state/regime"))).toEqual({
       regime: "RANGING",
     });
+  });
+});
+
+describe("manual trades", () => {
+  const open = () =>
+    call("/api/trades", "POST", {
+      asset: "PAXGUSDT",
+      direction: "LONG",
+      entryPrice: 3450,
+      stopLoss: 3420,
+      takeProfit: 3500,
+      lotSize: 2,
+    });
+
+  test("opens, lists and reports stats", async () => {
+    expect(await status(open())).toBe(200);
+    const list = await body<{ trades: unknown[] }>(call("/api/trades"));
+    expect(list.trades).toHaveLength(1);
+    const stats = await body<{ openTrades: number; totalTrades: number }>(
+      call("/api/trades/stats"),
+    );
+    expect(stats.openTrades).toBe(1);
+    expect(stats.totalTrades).toBe(1);
+  });
+
+  test("closing derives P&L from the stored entry, not the caller", async () => {
+    // A journal whose numbers can be supplied independently of its prices
+    // cannot be audited, so the client does not get to state the result.
+    const { id } = await body<{ id: number }>(open());
+    await call(`/api/trades/${id}`, "POST", {
+      exitPrice: 3470,
+      pnlDollars: 99999,
+    });
+    const stats = await body<{ wins: number; netDollars: number }>(
+      call("/api/trades/stats"),
+    );
+    expect(stats.wins).toBe(1);
+    expect(stats.netDollars).toBeCloseTo(40); // (3470-3450) * 2 lots
+  });
+
+  test("a losing close is classified as a loss", async () => {
+    const { id } = await body<{ id: number }>(open());
+    await call(`/api/trades/${id}`, "POST", { exitPrice: 3430 });
+    const stats = await body<{ losses: number }>(call("/api/trades/stats"));
+    expect(stats.losses).toBe(1);
+  });
+
+  test("rejects a bad direction and a non-numeric price", async () => {
+    expect(
+      await status(
+        call("/api/trades", "POST", {
+          direction: "SIDEWAYS",
+          entryPrice: 1,
+          stopLoss: 1,
+          takeProfit: 1,
+          lotSize: 1,
+        }),
+      ),
+    ).toBe(400);
+    expect(
+      await status(
+        call("/api/trades", "POST", {
+          direction: "LONG",
+          entryPrice: "cheap",
+          stopLoss: 1,
+          takeProfit: 1,
+          lotSize: 1,
+        }),
+      ),
+    ).toBe(400);
+  });
+
+  test("rejects a malformed body rather than throwing", async () => {
+    expect(await status(call("/api/trades", "POST", "not json{"))).toBe(400);
+    expect(await status(call("/api/trades", "POST", [1, 2, 3]))).toBe(400);
+  });
+
+  test("deletes", async () => {
+    const { id } = await body<{ id: number }>(open());
+    expect(await status(call(`/api/trades/${id}`, "DELETE"))).toBe(200);
+    expect(
+      (await body<{ trades: unknown[] }>(call("/api/trades"))).trades,
+    ).toHaveLength(0);
+  });
+});
+
+describe("logging an idea by hand", () => {
+  test("creates a dashboard-sourced idea", async () => {
+    const res = await body<{ id: number }>(
+      call("/api/ideas", "POST", {
+        asset: "BTCUSDT",
+        direction: "SHORT",
+        entryPrice: 95000,
+        stopLoss: 96000,
+        tp1: 94000,
+        tp2: 92000,
+      }),
+    );
+    const idea = db.getIdea(res.id)!;
+    expect(idea.source).toBe("dashboard");
+    expect(idea.asset).toBe("BTCUSDT");
+  });
+
+  test("rejects an unknown asset", async () => {
+    expect(
+      await status(
+        call("/api/ideas", "POST", {
+          asset: "NOPE",
+          direction: "LONG",
+          entryPrice: 1,
+          stopLoss: 1,
+          tp1: 1,
+          tp2: 1,
+        }),
+      ),
+    ).toBe(404);
   });
 });

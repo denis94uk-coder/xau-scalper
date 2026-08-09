@@ -1,4 +1,3 @@
-import { useQuery } from "convex/react";
 import {
   BarChart3,
   Bot,
@@ -11,14 +10,30 @@ import {
   User,
 } from "lucide-react";
 import { useState } from "react";
-import { api } from "../../convex/_generated/api";
+import { useLive } from "@/hooks/useLive";
+import { api } from "@/lib/api";
 
 type SourceFilter = "all" | "engine" | "dashboard" | "experimental";
 
 export function PerformanceTrackerPage() {
   const [source, setSource] = useState<SourceFilter>("all");
-  const stats = useQuery(api.tradingIdeas.getPerformanceStats, { source });
-  const allIdeas = useQuery(api.tradingIdeas.listIdeas, { limit: 500 });
+  // Performance is per asset. Summing points across gold, BTC and LINK would
+  // produce a headline number with no unit and no meaning, so the page picks
+  // one instrument rather than aggregating them.
+  const [asset, setAsset] = useState<string>("");
+
+  const assets = useLive(() => api.assets().then(r => r.assets), ["hello"]);
+  const byAsset = useLive(
+    () => api.performance().then(r => r.byAsset),
+    ["ideas"],
+  );
+  const allIdeas = useLive(
+    () => api.ideas({ limit: 500 }).then(r => r.ideas),
+    ["ideas"],
+  );
+
+  const selected = asset || byAsset?.[0]?.asset || "";
+  const stats = byAsset?.find(a => a.asset === selected) ?? byAsset?.[0];
 
   if (!stats || !allIdeas) {
     return (
@@ -28,10 +43,24 @@ export function PerformanceTrackerPage() {
     );
   }
 
+  const forAsset = allIdeas.filter(i => i.asset === selected);
+
+  // Derived here rather than served: it is a running sum of the same resolved
+  // ideas already on this page, so a second endpoint could only disagree.
+  const resolved = forAsset
+    .filter(i => i.pnlPoints !== null)
+    .sort(
+      (a, b) => (a.resolvedAt ?? a.createdAt) - (b.resolvedAt ?? b.createdAt),
+    );
+  let running = 0;
+  const equityCurve = resolved.map(i => {
+    running += i.pnlPoints ?? 0;
+    return { equity: running, at: i.resolvedAt ?? i.createdAt };
+  });
   const filtered =
     source === "all"
-      ? allIdeas
-      : allIdeas.filter(i => (i.source ?? "dashboard") === source);
+      ? forAsset
+      : forAsset.filter(i => (i.source ?? "dashboard") === source);
   const closed = filtered.filter(
     i =>
       i.status === "TP1_HIT" ||
@@ -96,11 +125,31 @@ export function PerformanceTrackerPage() {
         </div>
       </div>
 
+      {/* Asset selector — points are only comparable within one instrument */}
+      <div className="flex flex-wrap items-center gap-1">
+        {(assets ?? [])
+          .filter(a => a.enabled)
+          .map(a => (
+            <button
+              type="button"
+              key={a.id}
+              onClick={() => setAsset(a.id)}
+              className={`px-2 py-1 rounded-md text-[11px] font-mono transition-colors ${
+                a.id === selected
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-white"
+              }`}
+            >
+              {a.symbol}
+            </button>
+          ))}
+      </div>
+
       {/* Main Stats Grid */}
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
         <PerfCard
           label="Win Rate"
-          value={`${stats.winRate}%`}
+          value={`${stats.winRate.toFixed(1)}%`}
           color={stats.winRate >= 50 ? "text-emerald-400" : "text-red-400"}
           icon={<Target className="w-4 h-4" />}
           detail={`${stats.wins}W / ${stats.losses}L`}
@@ -108,12 +157,14 @@ export function PerformanceTrackerPage() {
         <PerfCard
           label="Profit Factor"
           value={
-            stats.profitFactor >= 999 ? "∞" : stats.profitFactor.toFixed(2)
+            (stats.profitFactor ?? 0) >= 999
+              ? "∞"
+              : (stats.profitFactor ?? 0).toFixed(2)
           }
           color={
-            stats.profitFactor >= 1.5
+            (stats.profitFactor ?? 0) >= 1.5
               ? "text-emerald-400"
-              : stats.profitFactor >= 1
+              : (stats.profitFactor ?? 0) >= 1
                 ? "text-yellow-400"
                 : "text-red-400"
           }
@@ -151,8 +202,10 @@ export function PerformanceTrackerPage() {
         />
         <PerfCard
           label="Avg R:R"
-          value={stats.avgRR.toFixed(2)}
-          color={stats.avgRR >= 1.5 ? "text-emerald-400" : "text-yellow-400"}
+          value={(stats.avgRR ?? 0).toFixed(2)}
+          color={
+            (stats.avgRR ?? 0) >= 1.5 ? "text-emerald-400" : "text-yellow-400"
+          }
           icon={<Shield className="w-4 h-4" />}
           detail="Risk/Reward ratio"
         />
@@ -198,17 +251,15 @@ export function PerformanceTrackerPage() {
           <div className="space-y-1 text-xs">
             <div className="flex justify-between">
               <span className="text-muted-foreground">Total</span>
-              <span className="font-mono">{stats.totalSignals}</span>
+              <span className="font-mono">{stats.closed + stats.open}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Active</span>
-              <span className="font-mono text-blue-400">
-                {stats.activeSignals}
-              </span>
+              <span className="font-mono text-blue-400">{stats.open}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Closed</span>
-              <span className="font-mono">{stats.closedSignals}</span>
+              <span className="font-mono">{stats.closed}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Expired</span>
@@ -222,18 +273,18 @@ export function PerformanceTrackerPage() {
           <div className="text-sm font-medium mb-2">Win/Loss Breakdown</div>
           <div className="space-y-2">
             <div className="h-4 rounded-full overflow-hidden bg-white/5 flex">
-              {stats.closedSignals > 0 && (
+              {stats.closed > 0 && (
                 <>
                   <div
                     className="bg-emerald-500 h-full transition-all"
                     style={{
-                      width: `${(stats.wins / stats.closedSignals) * 100}%`,
+                      width: `${(stats.wins / stats.closed) * 100}%`,
                     }}
                   />
                   <div
                     className="bg-red-500 h-full transition-all"
                     style={{
-                      width: `${(stats.losses / stats.closedSignals) * 100}%`,
+                      width: `${(stats.losses / stats.closed) * 100}%`,
                     }}
                   />
                 </>
@@ -242,15 +293,15 @@ export function PerformanceTrackerPage() {
             <div className="flex justify-between text-[10px]">
               <span className="text-emerald-400">
                 {stats.wins} wins (
-                {stats.closedSignals > 0
-                  ? Math.round((stats.wins / stats.closedSignals) * 100)
+                {stats.closed > 0
+                  ? Math.round((stats.wins / stats.closed) * 100)
                   : 0}
                 %)
               </span>
               <span className="text-red-400">
                 {stats.losses} losses (
-                {stats.closedSignals > 0
-                  ? Math.round((stats.losses / stats.closedSignals) * 100)
+                {stats.closed > 0
+                  ? Math.round((stats.losses / stats.closed) * 100)
                   : 0}
                 %)
               </span>
@@ -260,12 +311,12 @@ export function PerformanceTrackerPage() {
       </div>
 
       {/* Equity Curve */}
-      {stats.equityCurve.length > 0 && (
+      {equityCurve.length > 0 && (
         <div className="bg-[#12141A] border border-white/5 rounded-lg p-3">
           <div className="text-sm font-medium mb-3">Equity Curve (Points)</div>
           <div className="h-40 flex items-end gap-0.5">
             {(() => {
-              const data = stats.equityCurve;
+              const data = equityCurve;
               const maxEquity = Math.max(...data.map(d => d.equity), 0);
               const minEquity = Math.min(...data.map(d => d.equity), 0);
               const range = maxEquity - minEquity || 1;
@@ -297,8 +348,8 @@ export function PerformanceTrackerPage() {
                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 opacity-0 group-hover:opacity-100 transition-opacity bg-[#1A1D27] border border-white/10 rounded px-2 py-1 text-[10px] whitespace-nowrap z-50 pointer-events-none">
                       <div>Equity: {d.equity.toFixed(1)} pts</div>
                       <div className="text-muted-foreground">
-                        Trade P&L: {d.pnl >= 0 ? "+" : ""}
-                        {d.pnl.toFixed(1)}
+                        Trade P&L: {d.equity >= 0 ? "+" : ""}
+                        {d.equity.toFixed(1)}
                       </div>
                     </div>
                   </div>
@@ -362,7 +413,7 @@ export function PerformanceTrackerPage() {
           ) : (
             closed.slice(0, 30).map(idea => (
               <div
-                key={idea._id}
+                key={idea.id}
                 className="flex items-center gap-2 text-xs py-1 border-b border-white/5"
               >
                 <span

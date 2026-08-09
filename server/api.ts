@@ -11,9 +11,14 @@
  * token check here first — see the README.
  */
 
-import { ASSETS, getAsset, getEnabledAssets } from "../convex/lib/assets";
+import {
+  ASSETS,
+  DEFAULT_ASSET_ID,
+  getAsset,
+  getEnabledAssets,
+} from "../core/assets";
 import type { Db } from "./db";
-import { type AppEvent, subscribe } from "./events";
+import { type AppEvent, publish, subscribe } from "./events";
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -51,7 +56,54 @@ function assetParam(url: URL): string | undefined | Response {
   return asset;
 }
 
-export function handleApi(db: Db, req: Request, url: URL): Response | null {
+/** Parse a JSON object body, or return an error Response. */
+async function readBody(
+  req: Request,
+): Promise<Record<string, unknown> | Response> {
+  try {
+    const raw = await req.json();
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+      return bad("body must be a JSON object");
+    }
+    return raw as Record<string, unknown>;
+  } catch {
+    return bad("invalid JSON body");
+  }
+}
+
+/** Require a finite number field. */
+function num(body: Record<string, unknown>, key: string): number | Response {
+  const v = body[key];
+  if (typeof v !== "number" || !Number.isFinite(v)) {
+    return bad(`${key} must be a finite number`);
+  }
+  return v;
+}
+
+/**
+ * snake_case rows → camelCase for the wire.
+ *
+ * Column names are a storage detail; leaking them into the API would make every
+ * consumer depend on the schema's spelling. Shallow by design — no nested row
+ * shapes are returned.
+ */
+function camel(row: object): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(row)) {
+    out[k.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase())] = v;
+  }
+  return out;
+}
+
+function camelAll(rows: object[]): Record<string, unknown>[] {
+  return rows.map(camel);
+}
+
+export async function handleApi(
+  db: Db,
+  req: Request,
+  url: URL,
+): Promise<Response | null> {
   const path = url.pathname;
 
   // ─── Assets ───
@@ -67,7 +119,9 @@ export function handleApi(db: Db, req: Request, url: URL): Response | null {
   }
 
   // ─── Ideas ───
-  if (path === "/api/ideas") {
+  // Method-guarded: without this the POST handler further down is unreachable,
+  // because a POST would match here first and be answered with the list.
+  if (path === "/api/ideas" && req.method === "GET") {
     const asset = assetParam(url);
     if (asset instanceof Response) return asset;
     const ideas = db.listIdeas({
@@ -75,14 +129,14 @@ export function handleApi(db: Db, req: Request, url: URL): Response | null {
       limit: intParam(url, "limit", 100, 500),
     });
     return json({
-      ideas: ideas.map(i => ({ ...i, events: db.ideaEvents(i.id) })),
+      ideas: ideas.map(i => ({ ...camel(i), events: db.ideaEvents(i.id) })),
     });
   }
 
   if (path === "/api/ideas/open") {
     const asset = assetParam(url);
     if (asset instanceof Response) return asset;
-    return json({ ideas: db.openIdeas(asset) });
+    return json({ ideas: camelAll(db.openIdeas(asset)) });
   }
 
   const ideaMatch = path.match(/^\/api\/ideas\/(\d+)$/);
@@ -90,11 +144,12 @@ export function handleApi(db: Db, req: Request, url: URL): Response | null {
     const id = Number(ideaMatch[1]);
     if (req.method === "DELETE") {
       db.deleteIdea(id);
+      publish("ideas");
       return json({ ok: true });
     }
     const idea = db.getIdea(id);
     if (!idea) return bad("not found", 404);
-    return json({ ...idea, events: db.ideaEvents(id) });
+    return json({ ...camel(idea), events: db.ideaEvents(id) });
   }
 
   // ─── Journal ───
@@ -102,10 +157,9 @@ export function handleApi(db: Db, req: Request, url: URL): Response | null {
     const asset = assetParam(url);
     if (asset instanceof Response) return asset;
     return json({
-      entries: db.listJournal({
-        asset,
-        limit: intParam(url, "limit", 200, 1000),
-      }),
+      entries: camelAll(
+        db.listJournal({ asset, limit: intParam(url, "limit", 200, 1000) }),
+      ),
     });
   }
 
@@ -155,6 +209,102 @@ export function handleApi(db: Db, req: Request, url: URL): Response | null {
       lastSignalRun: db.lastRun("signals"),
       lastMonitorRun: db.lastRun("monitor"),
     });
+  }
+
+  // ─── Manual trades (Risk Manager) ───
+  if (path === "/api/trades") {
+    if (req.method === "POST") {
+      const body = await readBody(req);
+      if (body instanceof Response) return body;
+
+      const entryPrice = num(body, "entryPrice");
+      if (entryPrice instanceof Response) return entryPrice;
+      const stopLoss = num(body, "stopLoss");
+      if (stopLoss instanceof Response) return stopLoss;
+      const takeProfit = num(body, "takeProfit");
+      if (takeProfit instanceof Response) return takeProfit;
+      const lotSize = num(body, "lotSize");
+      if (lotSize instanceof Response) return lotSize;
+      if (body.direction !== "LONG" && body.direction !== "SHORT") {
+        return bad("direction must be LONG or SHORT");
+      }
+      const asset = (body.asset as string) ?? DEFAULT_ASSET_ID;
+      if (!getAsset(asset)) return bad(`unknown asset "${asset}"`, 404);
+
+      const id = db.createManualTrade({
+        asset,
+        direction: body.direction,
+        entryPrice,
+        stopLoss,
+        takeProfit,
+        lotSize,
+        riskAmount: (body.riskAmount as number) ?? null,
+        notes: (body.notes as string) ?? null,
+      });
+      publish("trades");
+      return json({ ok: true, id });
+    }
+    return json({
+      trades: camelAll(db.listManualTrades(intParam(url, "limit", 100, 500))),
+    });
+  }
+
+  if (path === "/api/trades/stats") return json(db.manualTradeStats());
+
+  const tradeMatch = path.match(/^\/api\/trades\/(\d+)$/);
+  if (tradeMatch) {
+    const id = Number(tradeMatch[1]);
+    if (req.method === "DELETE") {
+      db.deleteManualTrade(id);
+      publish("trades");
+      return json({ ok: true });
+    }
+    if (req.method === "POST" || req.method === "PATCH") {
+      const body = await readBody(req);
+      if (body instanceof Response) return body;
+      const exitPrice = num(body, "exitPrice");
+      if (exitPrice instanceof Response) return exitPrice;
+      // P&L is derived server-side from the stored entry — see db.closeManualTrade.
+      db.closeManualTrade(id, exitPrice);
+      publish("trades");
+      return json({ ok: true });
+    }
+  }
+
+  // ─── Manual idea logging (dashboard / experimental sources) ───
+  if (path === "/api/ideas" && req.method === "POST") {
+    const body = await readBody(req);
+    if (body instanceof Response) return body;
+
+    for (const k of ["entryPrice", "stopLoss", "tp1", "tp2"]) {
+      const v = num(body, k);
+      if (v instanceof Response) return v;
+    }
+    if (body.direction !== "LONG" && body.direction !== "SHORT") {
+      return bad("direction must be LONG or SHORT");
+    }
+    const asset = (body.asset as string) ?? DEFAULT_ASSET_ID;
+    if (!getAsset(asset)) return bad(`unknown asset "${asset}"`, 404);
+
+    const entryPrice = body.entryPrice as number;
+    const id = db.createIdea({
+      asset,
+      direction: body.direction,
+      source: (body.source as "dashboard" | "experimental") ?? "dashboard",
+      entryPrice,
+      stopLoss: body.stopLoss as number,
+      tp1: body.tp1 as number,
+      tp2: body.tp2 as number,
+      confidence: (body.confidence as number) ?? 0,
+      grade: (body.grade as string) ?? null,
+      reason: (body.reason as string) ?? "",
+      timeframe: (body.timeframe as string) ?? "5m",
+      bias: (body.bias as string) ?? "NEUTRAL",
+      biasStrength: (body.biasStrength as number) ?? 0,
+      spotPrice: (body.spotPrice as number) ?? entryPrice,
+    });
+    publish("ideas");
+    return json({ ok: true, id });
   }
 
   return null; // not an API route

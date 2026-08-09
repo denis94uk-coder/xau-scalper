@@ -13,8 +13,8 @@
  *     fresh 200-bar window every cycle.
  */
 
-import type { AssetDefinition } from "../convex/lib/assets";
-import type { Candle } from "../convex/lib/strategy";
+import type { AssetDefinition } from "../core/assets";
+import type { Candle } from "../core/strategy";
 
 const BINANCE_API =
   process.env.TEO_BINANCE_BASE_URL ?? "https://data-api.binance.vision/api/v3";

@@ -278,8 +278,8 @@ describe("performance", () => {
     const btc = db.createIdea(idea({ asset: "BTCUSDT" }));
     db.updateIdea(btc, { status: "TP2_HIT", pnl_points: 1200 });
 
-    expect(db.performance("PAXGUSDT").netPoints).toBe(75);
-    expect(db.performance("BTCUSDT").netPoints).toBe(1200);
+    expect(db.performance("PAXGUSDT").totalPnlPoints).toBe(75);
+    expect(db.performance("BTCUSDT").totalPnlPoints).toBe(1200);
   });
 
   test("computes win rate and profit factor over resolved trades", () => {
@@ -295,7 +295,7 @@ describe("performance", () => {
     expect(p.wins).toBe(2);
     expect(p.losses).toBe(1);
     expect(p.winRate).toBeCloseTo(66.67, 1);
-    expect(p.netPoints).toBeCloseTo(40);
+    expect(p.totalPnlPoints).toBeCloseTo(40);
     expect(p.profitFactor).toBeCloseTo(3);
   });
 
@@ -309,7 +309,7 @@ describe("performance", () => {
     const p = db.performance("NOTHING");
     expect(p.closed).toBe(0);
     expect(p.winRate).toBe(0);
-    expect(p.netPoints).toBe(0);
+    expect(p.totalPnlPoints).toBe(0);
     expect(p.profitFactor).toBeNull();
   });
 });

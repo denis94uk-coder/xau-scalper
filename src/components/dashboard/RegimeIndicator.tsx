@@ -1,5 +1,5 @@
-import { useQuery } from "convex/react";
-import { api } from "../../../convex/_generated/api";
+import { useLive } from "@/hooks/useLive";
+import { api } from "@/lib/api";
 
 const REGIME_CONFIG: Record<
   string,
@@ -42,7 +42,10 @@ const REGIME_CONFIG: Record<
 };
 
 export function RegimeIndicator() {
-  const regime = useQuery(api.regimeQueries.getRegime);
+  const regime = useLive<any>(
+    () => api.state<any>("marketRegime").catch(() => null),
+    ["engine"],
+  );
 
   if (!regime) {
     return (

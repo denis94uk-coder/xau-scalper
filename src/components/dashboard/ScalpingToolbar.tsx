@@ -1,7 +1,7 @@
-import { useMutation } from "convex/react";
 import { toast } from "sonner";
+import { useMutation } from "@/hooks/useLive";
+import { api } from "@/lib/api";
 import type { ScalpAnalysis, ScalpEntry } from "@/lib/indicators";
-import { api } from "../../../convex/_generated/api";
 
 interface ScalpingToolbarProps {
   analysis1m: ScalpAnalysis | null;
@@ -224,7 +224,9 @@ function EntryCard({
   bias: string;
   biasStrength: number;
 }) {
-  const logIdea = useMutation(api.tradingIdeas.logIdea);
+  const [logIdea] = useMutation((idea: Record<string, unknown>) =>
+    api.logIdea(idea),
+  );
   const isLong = entry.direction === "LONG";
   const dirColor = isLong ? "#00E676" : "#FF1744";
   const slDistance = Math.abs(entry.entryPrice - entry.stopLoss);

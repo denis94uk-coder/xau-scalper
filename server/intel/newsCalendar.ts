@@ -1,7 +1,7 @@
-"use node";
+import type { Db } from "../db";
+import type { Fetcher } from "../market";
 
-import { internal } from "./_generated/api";
-import { internalAction } from "./_generated/server";
+const KEY = "newsShield";
 
 // ═══════════════════════════════════════════════════
 // ECONOMIC CALENDAR + NEWS SHIELD
@@ -226,38 +226,43 @@ function calculateShieldStatus(events: EconomicEvent[]) {
   };
 }
 
-export const updateCalendar = internalAction({
-  args: {},
-  handler: async ctx => {
-    try {
-      const events = generateUpcomingEvents();
-      const shield = calculateShieldStatus(events);
+/**
+ * The economic calendar is generated from a recurring-events table rather than
+ * fetched, so this takes no fetcher — the signature stays uniform with the other
+ * intel engines so the scheduler can treat them alike.
+ */
+export async function updateCalendar(
+  db: Db,
+  _fetcher?: Fetcher,
+): Promise<void> {
+  try {
+    const events = generateUpcomingEvents();
+    const shield = calculateShieldStatus(events);
 
-      await ctx.runMutation(internal.newsQueries.saveNewsState, {
-        events: JSON.stringify(events),
-        isShieldActive: shield.isShieldActive,
-        shieldReason: shield.shieldReason,
-        nextHighImpactEvent: shield.nextHighImpactEvent
-          ? JSON.stringify(shield.nextHighImpactEvent)
-          : "",
-        minutesToNextEvent: shield.minutesToNextEvent,
-        shieldStartsAt: shield.shieldStartsAt,
-        shieldEndsAt: shield.shieldEndsAt,
-      });
+    db.setSetting(KEY, {
+      events: JSON.stringify(events),
+      isShieldActive: shield.isShieldActive,
+      shieldReason: shield.shieldReason,
+      nextHighImpactEvent: shield.nextHighImpactEvent
+        ? JSON.stringify(shield.nextHighImpactEvent)
+        : "",
+      minutesToNextEvent: shield.minutesToNextEvent,
+      shieldStartsAt: shield.shieldStartsAt,
+      shieldEndsAt: shield.shieldEndsAt,
+    });
 
-      if (shield.isShieldActive) {
-        console.log(`[News] 🛡️ SHIELD ACTIVE: ${shield.shieldReason}`);
-      } else if (shield.minutesToNextEvent < 60) {
-        console.log(
-          `[News] Next high-impact: ${shield.nextHighImpactEvent?.title} in ${shield.minutesToNextEvent} min`,
-        );
-      } else {
-        console.log(
-          `[News] No imminent events. ${events.length} events in queue.`,
-        );
-      }
-    } catch (e: any) {
-      console.error("[News] Error:", e.message);
+    if (shield.isShieldActive) {
+      console.log(`[News] 🛡️ SHIELD ACTIVE: ${shield.shieldReason}`);
+    } else if (shield.minutesToNextEvent < 60) {
+      console.log(
+        `[News] Next high-impact: ${shield.nextHighImpactEvent?.title} in ${shield.minutesToNextEvent} min`,
+      );
+    } else {
+      console.log(
+        `[News] No imminent events. ${events.length} events in queue.`,
+      );
     }
-  },
-});
+  } catch (e: any) {
+    console.error("[News] Error:", e.message);
+  }
+}

@@ -1,7 +1,7 @@
-"use node";
+import type { Db } from "../db";
+import type { Fetcher } from "../market";
 
-import { internal } from "./_generated/api";
-import { internalAction } from "./_generated/server";
+const KEY = "liquiditySweeps";
 
 // ═══════════════════════════════════════════════════
 // LIQUIDITY SWEEP / STOP HUNT DETECTION
@@ -22,12 +22,16 @@ interface Candle {
   volume: number;
 }
 
-async function fetchCandles(tf: string, limit: number): Promise<Candle[]> {
-  const r = await fetch(
+async function fetchCandles(
+  doFetch: Fetcher,
+  tf: string,
+  limit: number,
+): Promise<Candle[]> {
+  const r = await doFetch(
     `${BINANCE_BASE}/klines?symbol=${SYMBOL}&interval=${tf}&limit=${limit}`,
   );
   if (!r.ok) throw new Error(`Binance klines: ${r.status}`);
-  const data = await r.json();
+  const data = (await r.json()) as any;
   return data.map((k: any) => ({
     time: k[0] / 1000,
     open: parseFloat(k[1]),
@@ -192,39 +196,40 @@ function detectSweeps(
   return sweeps.sort((a, b) => b.confidence - a.confidence).slice(0, 5);
 }
 
-export const scanLiquiditySweeps = internalAction({
-  args: {},
-  handler: async ctx => {
-    try {
-      const candles = await fetchCandles("5m", 200);
-      if (candles.length < 30) return;
+export async function scanLiquiditySweeps(
+  db: Db,
+  fetcher?: Fetcher,
+): Promise<void> {
+  const doFetch = fetcher ?? fetch;
+  try {
+    const candles = await fetchCandles(doFetch, "5m", 200);
+    if (candles.length < 30) return;
 
-      const levels = findKeyLevels(candles);
-      const sweeps = detectSweeps(candles, levels);
+    const levels = findKeyLevels(candles);
+    const sweeps = detectSweeps(candles, levels);
 
-      await ctx.runMutation(internal.sweepQueries.saveSweeps, {
-        sweeps: JSON.stringify(sweeps),
-        supportLevels: JSON.stringify(
-          levels.supports.map(l => Math.round(l * 100) / 100),
-        ),
-        resistanceLevels: JSON.stringify(
-          levels.resistances.map(l => Math.round(l * 100) / 100),
-        ),
-        totalSweepsDetected: sweeps.length,
-        actionableSweeps: sweeps.filter((s: any) => s.actionable).length,
-      });
+    db.setSetting(KEY, {
+      sweeps: JSON.stringify(sweeps),
+      supportLevels: JSON.stringify(
+        levels.supports.map(l => Math.round(l * 100) / 100),
+      ),
+      resistanceLevels: JSON.stringify(
+        levels.resistances.map(l => Math.round(l * 100) / 100),
+      ),
+      totalSweepsDetected: sweeps.length,
+      actionableSweeps: sweeps.filter((s: any) => s.actionable).length,
+    });
 
-      if (sweeps.length > 0) {
-        console.log(
-          `[Sweep] ${sweeps.length} sweeps (${sweeps.filter((s: any) => s.actionable).length} actionable)`,
-        );
-      } else {
-        console.log(
-          `[Sweep] No sweeps | S: ${levels.supports.length} R: ${levels.resistances.length}`,
-        );
-      }
-    } catch (e: any) {
-      console.error("[Sweep] Error:", e.message);
+    if (sweeps.length > 0) {
+      console.log(
+        `[Sweep] ${sweeps.length} sweeps (${sweeps.filter((s: any) => s.actionable).length} actionable)`,
+      );
+    } else {
+      console.log(
+        `[Sweep] No sweeps | S: ${levels.supports.length} R: ${levels.resistances.length}`,
+      );
     }
-  },
-});
+  } catch (e: any) {
+    console.error("[Sweep] Error:", e.message);
+  }
+}

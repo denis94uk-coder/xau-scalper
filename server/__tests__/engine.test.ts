@@ -6,12 +6,9 @@
  * process can be asleep when a stop is hit.
  */
 import { beforeEach, describe, expect, test } from "bun:test";
-import type { AssetDefinition } from "../../convex/lib/assets";
-import { ZERO_COST_MODEL } from "../../convex/lib/costs";
-import {
-  type Candle,
-  DEFAULT_STRATEGY_CONFIG,
-} from "../../convex/lib/strategy";
+import type { AssetDefinition } from "../../core/assets";
+import { ZERO_COST_MODEL } from "../../core/costs";
+import { type Candle, DEFAULT_STRATEGY_CONFIG } from "../../core/strategy";
 import { Db, type NewIdea } from "../db";
 import {
   applyPrice,

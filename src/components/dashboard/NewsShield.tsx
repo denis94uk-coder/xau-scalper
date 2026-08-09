@@ -1,9 +1,12 @@
-import { useQuery } from "convex/react";
 import { useTimezone } from "@/contexts/TimezoneContext";
-import { api } from "../../../convex/_generated/api";
+import { useLive } from "@/hooks/useLive";
+import { api } from "@/lib/api";
 
 export function NewsShield() {
-  const news = useQuery(api.newsQueries.getNewsState);
+  const news = useLive<any>(
+    () => api.state<any>("newsShield").catch(() => null),
+    ["engine"],
+  );
   const { formatShortTime } = useTimezone();
 
   if (!news) {
@@ -134,7 +137,10 @@ export function NewsShield() {
 
 /** Compact shield indicator for top bar */
 export function NewsShieldBadge() {
-  const news = useQuery(api.newsQueries.getNewsState);
+  const news = useLive<any>(
+    () => api.state<any>("newsShield").catch(() => null),
+    ["engine"],
+  );
 
   if (!news) return null;
 

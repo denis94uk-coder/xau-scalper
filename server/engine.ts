@@ -1,5 +1,5 @@
 /**
- * Signal engine and position monitor. Ports convex/signalEngine.ts to run
+ * Signal engine and position monitor. Ports the Convex signal engine to run
  * in-process against SQLite, with three behavioural fixes.
  *
  * 1. NO WEEKEND GATE. The Convex version skipped Fri 22:00 → Sun 21:00 UTC on
@@ -21,13 +21,13 @@ import {
   type AssetDefinition,
   DEFAULT_ASSET_ID,
   getEnabledAssets,
-} from "../convex/lib/assets";
+} from "../core/assets";
 import {
   analyzeCandles,
   type Candle,
   calcATR,
   roundTo,
-} from "../convex/lib/strategy";
+} from "../core/strategy";
 import type { Db, TradingIdea } from "./db";
 import { publish } from "./events";
 import {

@@ -11,6 +11,7 @@
 
 export type EventKind =
   | "ideas"
+  | "trades"
   | "journal"
   | "prices"
   | "regime"

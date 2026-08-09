@@ -1,18 +1,15 @@
-import { ConvexProvider, ConvexReactClient } from "convex/react";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App";
 import "./index.css";
 
-const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string);
-
+// No backend provider: the app talks to the local server on its own origin
+// over plain fetch + SSE (src/lib/api.ts, src/hooks/useLive.ts).
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <ConvexProvider client={convex}>
-      <BrowserRouter>
-        <App />
-      </BrowserRouter>
-    </ConvexProvider>
+    <BrowserRouter>
+      <App />
+    </BrowserRouter>
   </StrictMode>,
 );

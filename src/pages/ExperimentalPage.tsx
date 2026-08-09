@@ -1,4 +1,3 @@
-import { useMutation } from "convex/react";
 import {
   Activity,
   BarChart3,
@@ -26,6 +25,8 @@ import { MiniChart } from "@/components/dashboard/MultiTimeframeView";
 import { PriceTicker } from "@/components/dashboard/PriceTicker";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useMutation } from "@/hooks/useLive";
+import { api } from "@/lib/api";
 import {
   analyzeExperimental,
   type ExperimentalAnalysis,
@@ -38,7 +39,6 @@ import {
   fetchGoldPrice,
   type PriceData,
 } from "@/lib/priceApi";
-import { api } from "../../convex/_generated/api";
 
 // Error boundary
 class ErrorBoundary extends Component<
@@ -597,7 +597,9 @@ function ExperimentalEntries({
   bias: string;
   biasStrength: number;
 }) {
-  const logIdea = useMutation(api.tradingIdeas.logIdea);
+  const [logIdea] = useMutation((idea: Record<string, unknown>) =>
+    api.logIdea(idea),
+  );
 
   const handleLog = async (entry: ScalpEntry) => {
     try {

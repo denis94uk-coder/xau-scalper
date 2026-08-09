@@ -35,17 +35,17 @@
  * On failure: { "error": "..." } with exit code 1.
  */
 
-import { DEFAULT_ASSET_ID, getAsset } from "../convex/lib/assets";
+import { DEFAULT_ASSET_ID, getAsset } from "../core/assets";
 import {
   type BacktestMetrics,
   computeMetrics,
   runBacktest,
-} from "../convex/lib/backtest";
+} from "../core/backtest";
 import {
   type Candle,
   DEFAULT_STRATEGY_CONFIG,
   type StrategyConfig,
-} from "../convex/lib/strategy";
+} from "../core/strategy";
 
 const BINANCE_API = "https://data-api.binance.vision/api/v3";
 const CONFIG_KEYS = new Set(Object.keys(DEFAULT_STRATEGY_CONFIG));

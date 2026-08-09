@@ -15,11 +15,15 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { getEnabledAssets } from "../convex/lib/assets";
+import { getEnabledAssets } from "../core/assets";
 import { handleApi, handleEvents } from "./api";
 import { Db } from "./db";
 import { generateSignals, monitorIdeas, recoverGap } from "./engine";
 import { publish } from "./events";
+import { scanLiquiditySweeps } from "./intel/liquiditySweep";
+import { fetchMacroData } from "./intel/macroCorrelation";
+import { updateCalendar } from "./intel/newsCalendar";
+import { detectMarketRegime } from "./intel/regime";
 
 const HOST = process.env.TEO_HOST ?? "127.0.0.1";
 const PORT = Number(process.env.TEO_PORT ?? 4000);
@@ -29,6 +33,10 @@ const DIST = join(import.meta.dir, "..", "dist");
 const MONITOR_MS = 60_000;
 const SIGNAL_MS = 5 * 60_000;
 const PRUNE_MS = 6 * 60 * 60_000;
+// Regime, macro, news and sweeps move on a much slower clock than price, so
+// running them every 5 minutes (as the Convex crons did) spent requests to
+// recompute values that had not changed.
+const INTEL_MS = 15 * 60_000;
 const JOURNAL_RETENTION_DAYS = Number(process.env.TEO_JOURNAL_DAYS ?? 90);
 
 const db = new Db();
@@ -97,7 +105,7 @@ const server = Bun.serve({
 
     if (url.pathname === "/api/events") return handleEvents();
 
-    const api = handleApi(db, req, url);
+    const api = await handleApi(db, req, url);
     if (api) return api;
 
     return serveStatic(url.pathname);
@@ -124,9 +132,19 @@ await safely("recover", async () => {
   if (changed > 0) console.log(`[recover] resolved ${changed} state change(s)`);
 });
 
+/** The four intel engines, run together. One failing must not stop the rest. */
+async function runIntel(): Promise<void> {
+  await safely("regime", () => detectMarketRegime(db));
+  await safely("macro", () => fetchMacroData(db));
+  await safely("news", () => updateCalendar(db));
+  await safely("sweeps", () => scanLiquiditySweeps(db));
+  publish("regime");
+}
+
 // Prime candles and evaluate immediately rather than idling for a full cycle.
 await safely("signals", () => generateSignals({ db }));
 await safely("monitor", () => monitorIdeas({ db }));
+await runIntel();
 
 const timers = [
   setInterval(
@@ -137,6 +155,7 @@ const timers = [
     () => void safely("signals", () => generateSignals({ db })),
     SIGNAL_MS,
   ),
+  setInterval(() => void runIntel(), INTEL_MS),
   setInterval(() => {
     const removed = db.pruneJournal(JOURNAL_RETENTION_DAYS);
     if (removed > 0) {

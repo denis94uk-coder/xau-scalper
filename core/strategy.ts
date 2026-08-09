@@ -2,7 +2,7 @@
  * Shared, framework-agnostic strategy core for XAU Scalper.
  *
  * This module has NO Convex imports so it can be consumed by BOTH the Convex
- * signal engine (convex/signalEngine.ts) AND standalone Bun/Node scripts (the
+ * signal engine (the Convex signal engine) AND standalone Bun/Node scripts (the
  * backtest harness in scripts/). Keeping the indicator math, signal analysis,
  * grading and TP/SL math in one place guarantees the live engine and the
  * backtester can never drift apart.
@@ -29,7 +29,7 @@ export type Bias = "BULLISH" | "BEARISH" | "NEUTRAL";
  * Every tunable knob of the scalping strategy. The DEFAULT_STRATEGY_CONFIG
  * below keeps the exact hardcoded values the engine used before this refactor,
  * so behaviour is unchanged for existing assets. Per-asset overrides live in
- * the asset registry (convex/lib/assets.ts).
+ * the asset registry (core/assets.ts).
  */
 export interface StrategyConfig {
   /** EMA lookback periods (was 9 / 21 / 50). */

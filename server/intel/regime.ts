@@ -1,7 +1,7 @@
-"use node";
+import type { Db } from "../db";
+import type { Fetcher } from "../market";
 
-import { internal } from "./_generated/api";
-import { internalAction } from "./_generated/server";
+const KEY = "marketRegime";
 
 // ═══════════════════════════════════════════════════
 // MARKET REGIME DETECTION ENGINE
@@ -20,12 +20,16 @@ interface Candle {
   volume: number;
 }
 
-async function fetchCandles(tf: string, limit: number): Promise<Candle[]> {
-  const r = await fetch(
+async function fetchCandles(
+  doFetch: Fetcher,
+  tf: string,
+  limit: number,
+): Promise<Candle[]> {
+  const r = await doFetch(
     `${BINANCE_BASE}/klines?symbol=${SYMBOL}&interval=${tf}&limit=${limit}`,
   );
   if (!r.ok) throw new Error(`Binance klines: ${r.status}`);
-  const data = await r.json();
+  const data = (await r.json()) as any;
   return data.map((k: any) => ({
     time: k[0] / 1000,
     open: parseFloat(k[1]),
@@ -219,42 +223,43 @@ function detectRegime(candles: Candle[]) {
   };
 }
 
-export const detectMarketRegime = internalAction({
-  args: {},
-  handler: async ctx => {
-    try {
-      const candles = await fetchCandles("15m", 250);
-      if (candles.length < 50) {
-        console.log("[Regime] Not enough candles");
-        return;
-      }
-
-      const r = detectRegime(candles);
-
-      await ctx.runMutation(internal.regimeQueries.saveRegime, {
-        regime: r.regime,
-        confidence: r.confidence,
-        atrRatio: r.atrRatio,
-        adxProxy: r.adxProxy,
-        trendStrength: r.trendStrength,
-        priceVsEma50: r.priceVsEma50,
-        priceVsEma200: r.priceVsEma200,
-        bbWidth: r.bbWidth,
-        rangeHighLow: r.rangeHighLow,
-        recommendedStrategy: r.recommendedStrategy,
-        description: r.description,
-        slMultiplier: r.slMultiplier,
-        tpMultiplier: r.tpMultiplier,
-        positionSizeMultiplier: r.positionSizeMultiplier,
-        minGrade: r.minGrade,
-        favorDirection: r.favorDirection,
-      });
-
-      console.log(
-        `[Regime] ${r.regime} (${r.confidence}%) | ATR: ${r.atrRatio.toFixed(2)} | ADX: ${r.adxProxy.toFixed(0)}`,
-      );
-    } catch (e: any) {
-      console.error("[Regime] Error:", e.message);
+export async function detectMarketRegime(
+  db: Db,
+  fetcher?: Fetcher,
+): Promise<void> {
+  const doFetch = fetcher ?? fetch;
+  try {
+    const candles = await fetchCandles(doFetch, "15m", 250);
+    if (candles.length < 50) {
+      console.log("[Regime] Not enough candles");
+      return;
     }
-  },
-});
+
+    const r = detectRegime(candles);
+
+    db.setSetting(KEY, {
+      regime: r.regime,
+      confidence: r.confidence,
+      atrRatio: r.atrRatio,
+      adxProxy: r.adxProxy,
+      trendStrength: r.trendStrength,
+      priceVsEma50: r.priceVsEma50,
+      priceVsEma200: r.priceVsEma200,
+      bbWidth: r.bbWidth,
+      rangeHighLow: r.rangeHighLow,
+      recommendedStrategy: r.recommendedStrategy,
+      description: r.description,
+      slMultiplier: r.slMultiplier,
+      tpMultiplier: r.tpMultiplier,
+      positionSizeMultiplier: r.positionSizeMultiplier,
+      minGrade: r.minGrade,
+      favorDirection: r.favorDirection,
+    });
+
+    console.log(
+      `[Regime] ${r.regime} (${r.confidence}%) | ATR: ${r.atrRatio.toFixed(2)} | ADX: ${r.adxProxy.toFixed(0)}`,
+    );
+  } catch (e: any) {
+    console.error("[Regime] Error:", e.message);
+  }
+}
