@@ -20,6 +20,9 @@ class Settings:
     kronos_model: str = _env("TEO_KRONOS_MODEL", "")
     kronos_tokenizer: str = _env("TEO_KRONOS_TOKENIZER", "")  # empty => sensible default
     kronos_device: str = _env("TEO_KRONOS_DEVICE", "cpu")
+    # Local weights directory. When set and populated, inference never touches
+    # the network — see teo/forecasting/fetch_weights.py.
+    kronos_local_dir: str = _env("TEO_KRONOS_LOCAL_DIR", "")
     kronos_max_context: int = int(_env("TEO_KRONOS_MAX_CONTEXT", "512"))
 
     # Regime-tagged outcome memory (roadmap 1). JSON file; the self-heal loop appends to it.

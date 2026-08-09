@@ -52,3 +52,6 @@ data/
 *.db
 *.db-wal
 *.db-shm
+
+# Kronos weights (fetched once via `python -m teo.forecasting.fetch_weights`)
+models/
