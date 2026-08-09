@@ -1,9 +1,18 @@
--- Local SQLite schema. Replaces convex/schema.ts.
+/**
+ * Database schema.
+ *
+ * Kept as a TypeScript module rather than a .sql file read at runtime so it
+ * is embedded when the server is compiled to a standalone binary
+ * (`bun build --compile`). A readFileSync against import.meta.dir resolves to
+ * the virtual /$bunfs root inside a compiled executable, where nothing exists.
+ */
+
+export const SCHEMA_SQL = `-- Local SQLite schema. Replaces convex/schema.ts.
 --
 -- Ported table-for-table so the migration is mechanical, with three changes the
 -- Convex version could not express well:
---   * `asset` is NOT NULL with a default, instead of optional-and-assume-gold.
---     The optional field meant every read had to remember `?? DEFAULT_ASSET_ID`,
+--   * \`asset\` is NOT NULL with a default, instead of optional-and-assume-gold.
+--     The optional field meant every read had to remember \`?? DEFAULT_ASSET_ID\`,
 --     and exit-journal rows that forgot it were silently filed under gold.
 --   * Real indexes on the columns actually filtered, so the full-table scans
 --     that would have broken Convex's per-query limits are ordinary lookups.
@@ -147,3 +156,4 @@ CREATE TABLE IF NOT EXISTS job_runs (
   last_ok_at   INTEGER,
   last_error   TEXT
 ) WITHOUT ROWID;
+`;

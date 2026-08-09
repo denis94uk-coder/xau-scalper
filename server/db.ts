@@ -10,9 +10,10 @@
  */
 
 import { Database } from "bun:sqlite";
-import { mkdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import type { Candle } from "../core/strategy";
+import { SCHEMA_SQL } from "./schema";
 
 export type Direction = "LONG" | "SHORT";
 export type IdeaStatus =
@@ -107,9 +108,9 @@ export class Db {
     this.migrate();
   }
 
-  /** Apply schema.sql. Every statement is CREATE ... IF NOT EXISTS, so this is idempotent. */
+  /** Apply the schema. Every statement is CREATE ... IF NOT EXISTS, so this is idempotent. */
   migrate(): void {
-    this.raw.exec(readFileSync(join(import.meta.dir, "schema.sql"), "utf8"));
+    this.raw.exec(SCHEMA_SQL);
   }
 
   close(): void {

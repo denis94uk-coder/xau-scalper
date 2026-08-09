@@ -102,6 +102,37 @@ a price that never existed.
 | `bun run serve` | Same, with `--watch` for development. |
 | `bun run dev` | Vite dev server for UI work only — needs `bun run start` alongside for data. |
 | `bun run build` | Typecheck then build the UI into `dist/`. |
+| `bun run package` | Compile a standalone executable into `release/`. Bundles the Bun runtime, server and strategy — no Node, no `node_modules`, nothing to install. |
+| `bun run package -- --target darwin-arm64 --app` | Build a double-clickable `XAU Scalper.app`. |
+
+### Desktop app
+
+`bun build --compile` produces one executable containing the runtime, the
+server and the whole strategy. The built UI ships beside it, because a compiled
+binary resolves `import.meta.dir` into a virtual filesystem that holds no assets.
+
+```bash
+bun run build
+bun run package -- --target darwin-arm64 --app
+open "release/XAU Scalper.app"
+```
+
+The bundle starts the server, waits for it to answer, then opens the dashboard
+in your default browser. It is deliberately not a webview wrapper: the UI is
+already a web app, so embedding a second rendering engine would add ~100 MB and
+a class of bugs for no gain. `LSUIElement` keeps it out of the dock.
+
+Data lives in `~/Library/Application Support/XAU Scalper/`, not inside the
+bundle — bundles can be read-only and are replaced wholesale on upgrade.
+
+Targets: `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`,
+`windows-x64`. Cross-compiling works, but a binary built on another platform
+cannot be run or signed there — verify on the target machine. macOS will refuse
+an unsigned bundle that arrived from elsewhere; built locally it just runs.
+
+**Python is not required for the app.** The server, strategy, engine, backtest
+and cost model are all TypeScript and compile into the binary. `teo/` is an
+optional sidecar — see below for what actually still needs it.
 
 ### Analysis
 
@@ -229,7 +260,16 @@ costs decide the outcome.
 
 ## Teo (Python sidecar)
 
-Optional. The app runs fine without it.
+Optional, and **not part of the packaged app**. The dashboard, engine, backtest
+and cost model are all TypeScript.
+
+What genuinely still needs Python is narrower than it looks: Kronos is PyTorch,
+so it has to be. Everything else in `teo/` — the sweep grid, threshold logic,
+the JSON memory store, the loop — is ~800 lines of orchestration, and regime
+detection is *already* reimplemented in `server/intel/regime.ts`. Scoring
+already happens in TypeScript via the bridge. If you never want to install
+Python, skip this section; you lose Kronos forecasting, which has not been shown
+to beat its own baseline (see Known limitations).
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"

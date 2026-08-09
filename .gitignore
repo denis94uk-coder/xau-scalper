@@ -55,3 +55,6 @@ data/
 
 # Kronos weights (fetched once via `python -m teo.forecasting.fetch_weights`)
 models/
+
+# Packaged builds
+release/

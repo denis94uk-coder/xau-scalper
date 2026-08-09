@@ -18,7 +18,8 @@
     "serve": "bun run --watch server/index.ts",
     "edge-audit": "bun run --bun scripts/edge-audit.ts",
     "kronos:fetch": "python -m teo.forecasting.fetch_weights",
-    "test": "bun test core server"
+    "test": "bun test core server",
+    "package": "bun run --bun scripts/package-app.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

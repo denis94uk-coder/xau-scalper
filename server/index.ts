@@ -14,7 +14,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { getEnabledAssets } from "../core/assets";
 import { handleApi, handleEvents } from "./api";
 import { Db } from "./db";
@@ -27,7 +27,19 @@ import { detectMarketRegime } from "./intel/regime";
 
 const HOST = process.env.TEO_HOST ?? "127.0.0.1";
 const PORT = Number(process.env.TEO_PORT ?? 4000);
-const DIST = join(import.meta.dir, "..", "dist");
+/**
+ * Where the built UI lives.
+ *
+ * When compiled with `bun build --compile`, import.meta.dir points into the
+ * binary's virtual filesystem (/$bunfs/root), which contains no assets — so the
+ * UI is resolved next to the executable instead. TEO_DIST overrides both.
+ */
+const COMPILED = import.meta.dir.startsWith("/$bunfs");
+const DIST =
+  process.env.TEO_DIST ??
+  (COMPILED
+    ? join(dirname(process.execPath), "dist")
+    : join(import.meta.dir, "..", "dist"));
 
 /** Timer cadences. Monitor is the tight loop; the rest are housekeeping. */
 const MONITOR_MS = 60_000;
@@ -121,6 +133,7 @@ console.log(`
   ─────────────────────────────
   UI + API   http://${HOST}:${PORT}
   Database   ${process.env.TEO_DB_PATH ?? "data/teo.db"}
+  UI assets  ${DIST}
   Assets     ${getEnabledAssets().length} enabled
   Feed       public market data (no account, no key)
 `);
