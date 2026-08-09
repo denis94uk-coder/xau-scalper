@@ -3,7 +3,7 @@
  *
  * Fetches historical klines from the FREE keyless Binance endpoint (paginated,
  * 1000 candles per call) and replays them through the SHARED strategy core in
- * convex/lib/strategy.ts. The entry + exit simulation mirrors the live
+ * core/strategy.ts. The entry + exit simulation mirrors the live
  * monitorIdeas cron EXACTLY (entry on signal, TP1 partial + move-to-BE, ATR
  * trailing to TP2, SL / trailing-SL) so the backtester and live engine can
  * never diverge — there is NO duplicated strategy re-implementation here.
@@ -12,9 +12,9 @@
  *   bun run backtest -- --asset BTCUSDT --from 2024-01-01 --to 2024-06-01 --interval 5m
  */
 
-import { DEFAULT_ASSET_ID, getAsset } from "../convex/lib/assets";
-import { computeMetrics, runBacktest } from "../convex/lib/backtest";
-import type { Candle } from "../convex/lib/strategy";
+import { DEFAULT_ASSET_ID, getAsset } from "../core/assets";
+import { computeMetrics, runBacktest } from "../core/backtest";
+import type { Candle } from "../core/strategy";
 
 const BINANCE_API = "https://data-api.binance.vision/api/v3";
 
@@ -95,7 +95,7 @@ async function main() {
   const asset = getAsset(cli.asset);
   if (!asset) {
     console.error(
-      `Unknown asset "${cli.asset}". Known assets: see convex/lib/assets.ts`,
+      `Unknown asset "${cli.asset}". Known assets: see core/assets.ts`,
     );
     process.exit(1);
   }
@@ -126,10 +126,16 @@ async function main() {
     process.exit(1);
   }
 
-  const trades = runBacktest(candles, asset.config, asset.pricePrecision);
+  const trades = runBacktest(
+    candles,
+    asset.config,
+    asset.pricePrecision,
+    60,
+    asset.costs,
+  );
   const m = computeMetrics(trades);
 
-  console.log("─── Results ───");
+  console.log("─── Results (net of spread, fees and slippage) ───");
   console.log(`Total trades:   ${m.trades}`);
   console.log(
     `Win rate:       ${fmt(m.winRate)}%  (${m.wins}W / ${m.losses}L)`,
@@ -140,6 +146,20 @@ async function main() {
   console.log(`Max drawdown:   ${fmt(m.maxDrawdown)} pts`);
   console.log(
     `Profit factor:  ${m.profitFactor === null ? "n/a (no losing trades)" : fmt(m.profitFactor)}`,
+  );
+  console.log("");
+  console.log("─── Edge ───");
+  console.log(`Gross points:   ${fmt(m.grossPoints)}`);
+  console.log(`Cost paid:      ${fmt(m.costPoints)} pts`);
+  console.log(`Expectancy:     ${fmt(m.expectancyPerTrade)} pts/trade`);
+  console.log(
+    `Breakeven WR:   ${m.breakevenWinRate === null ? "n/a" : `${fmt(m.breakevenWinRate)}%`}` +
+      `   (actual ${fmt(m.winRate)}%)`,
+  );
+  console.log(
+    m.expectancyPerTrade > 0
+      ? "  → positive expectancy after costs on this window"
+      : "  → NO edge after costs on this window",
   );
   console.log("");
 }

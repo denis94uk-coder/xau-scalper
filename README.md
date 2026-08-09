@@ -1,785 +1,576 @@
-# Convex + Vite + React + shadcn/ui Starter
+# XAU Scalper
 
-A production-ready full-stack web app template.
+A local-first multi-asset trading dashboard. One process serves the UI, the API
+and the signal engine; all state lives in a single SQLite file.
 
-> **Viktor Spaces projects**: Your project is already configured with Convex, auth, and email. Skip to [Adding New Variables](#adding-new-variables) if you need to add integrations.
-
-## Stack
-
-- **Convex** — Real-time backend & database
-- **Convex Auth** — Email/password authentication
-- **Vite** — Lightning-fast dev server & build
-- **React 19** — UI framework
-- **Tailwind CSS v4** — CSS-native utility styling with theming
-- **shadcn/ui** — 53 beautiful, accessible components
-- **Biome** — Fast linter & formatter (replaces ESLint + Prettier)
-- **TypeScript** — Full type safety
-- **Bun** — Fast package manager & runtime
-
-**Convex includes**: real-time subscriptions, ACID transactions, file storage, full-text & vector search, scheduled functions, HTTP endpoints, and automatic caching. See [Convex docs](https://docs.convex.dev/) for details.
-
-## Quick Start
-
-Your project is already set up. To start developing:
+No hosted services, no accounts, no API keys, no deploy step. The only thing it
+reaches for is public market data, which needs no signup.
 
 ```bash
-# Start Convex backend (watches for changes)
-bunx convex dev
-
-# In another terminal, start frontend
-bun run dev
+bun install
+bun run build
+bun run start          # → http://127.0.0.1:4000
 ```
 
-### For Agents / CI (No Background Terminals)
+---
 
-If you can't run background processes, use these one-shot commands:
+## What it does
+
+Watches seven instruments on 5-minute bars, grades setups against a
+six-indicator model, records the ones that qualify, then tracks each to its exit
+(partial take-profit → breakeven → ATR trail → target or stop). Every signal and
+every exit is written to an append-only journal before the outcome is known, so
+performance is a record rather than a reconstruction.
+
+**Registered assets** — `PAXGUSDT` (gold), `BTCUSDT`, `ETHUSDT`, `BNBUSDT`,
+`LINKUSDT`, `AAVEUSDT`, `TAOUSDT`.
+
+### Read this before trusting a number
+
+`bun run edge-audit` reports, per asset, the win rate the strategy must exceed
+just to break even after spread, fees and slippage. On the **built-in exchange
+cost estimates** that is **69–87%**, against a gross breakeven of 45.5% — which
+would make the default configuration unprofitable at TP1 no matter how good the
+entries were.
+
+**But that number is only as good as the spread it assumes**, and the built-in
+figures are estimates for crypto-exchange proxies. Gold is priced from PAXGUSDT,
+a token, not from a CFD broker. Sync a real MT5 account and the picture can
+change completely:
+
+```
+  symbol      spread     TP1      TP2
+  XAUUSD       0.72bps   48.3%   30.7%     ← a typical retail CFD spread
+  (estimate)   8.00bps   83.0%   58.6%     ← what the app assumes without MT5
+```
+
+48% is a demanding but reachable bar; 83% is not. So **run `bun run mt5:sync`
+before drawing any conclusion about viability** — see [MetaTrader 5](#metatrader-5).
+The estimates are the pessimistic case, not the truth about your account.
+
+And beating breakeven is not the same as having an edge. A 58% win rate over 30
+trades looks convincing and is well inside what a coin flip produces. The app
+now refuses to let that pass: every win rate it reports is served with a verdict
+on whether it is distinguishable from chance — see
+[Is the edge real?](#is-the-edge-real).
+
+What has not changed: nothing here has been validated against live results.
+There is no forward-test record. The machinery to reach a verdict exists and is
+tested; the trades to feed it do not exist yet.
+
+---
+
+## Architecture
+
+```
+┌──────────────────────────────────────────────────────┐
+│  bun run start   —   one process                     │
+│                                                      │
+│  Bun.serve ──┬── /            built React UI         │
+│              ├── /api/*       REST                   │
+│              └── /api/events  SSE (live updates)     │
+│                                                      │
+│  timers   ──┬── monitor  60s   open positions        │
+│             ├── signals   5m   generate signals      │
+│             ├── intel    15m   regime/macro/news     │
+│             └── prune     6h   journal retention     │
+│                                                      │
+│  bun:sqlite ──── data/teo.db                         │
+└──────────────────────────────────────────────────────┘
+             ▲                          │
+             │ same SQLite file         │ public market data
+             │                          ▼
+┌────────────────────────┐      data-api.binance.vision
+│  teo/  (Python)        │      query1.finance.yahoo.com
+│  forecasting, sweeps,  │      (keyless, no account)
+│  self-heal proposals   │
+└────────────────────────┘
+```
+
+**Why one process:** the machine hosting this can sleep. On startup the engine
+replays candles elapsed since its last run and resolves exits at the bar that
+actually hit them, rather than comparing open positions against the current
+price — which would either miss a stop that was hit and recovered, or book it at
+a price that never existed.
+
+---
+
+## Layout
+
+| Path | What lives there |
+|---|---|
+| `core/` | Strategy, indicators, asset registry, backtest replay, cost model, regime tagging, parameter sweep, self-heal decision, statistical significance, portfolio risk. No framework imports — shared by the server, the CLI tools and the tests. |
+| `server/` | HTTP + SSE, SQLite layer, signal engine, scheduler. |
+| `server/intel/` | Regime, macro correlation, news calendar, liquidity sweeps. |
+| `src/` | React UI (Vite, Tailwind, shadcn/ui). |
+| `scripts/` | Backtest, batch scorer, edge audit. |
+| `teo/` | Python sidecar: Kronos forecasting, parameter sweeps, self-heal. |
+| `tests/`, `core/__tests__/`, `server/__tests__/` | 249 TypeScript + 89 Python tests. |
+
+---
+
+## Commands
+
+### Running
+
+| Command | What it does |
+|---|---|
+| `bun run start` | The app. UI + API + engine on `127.0.0.1:4000`. |
+| `bun run serve` | Same, with `--watch` for development. |
+| `bun run dev` | Vite dev server for UI work only — needs `bun run start` alongside for data. |
+| `bun run build` | Typecheck then build the UI into `dist/`. |
+| `bun run package` | Compile a standalone executable into `release/`. Bundles the Bun runtime, server and strategy — no Node, no `node_modules`, nothing to install. |
+| `bun run package -- --target darwin-arm64 --app` | Build a double-clickable `XAU Scalper.app`. |
+
+### Desktop app
+
+`bun build --compile` produces one executable containing the runtime, the
+server and the whole strategy. The built UI ships beside it, because a compiled
+binary resolves `import.meta.dir` into a virtual filesystem that holds no assets.
 
 ```bash
-# Push Convex functions once (no watching)
-bun run sync
-
-# Push Convex + build frontend in one command (most important one)
-bun run sync:build
-
-# Fetch recent backend logs afterwards (exits after 5s)
-bun run logs:fetch
+bun run build
+bun run package -- --target darwin-arm64 --app
+open "release/XAU Scalper.app"
 ```
 
-The `sync` command uses `convex dev --once` which pushes your functions and exits immediately. Use `bun run logs:fetch` to get recent backend logs (console.log, errors, function executions) — it fetches logs and exits after 5 seconds.
+The bundle starts the server, waits for it to answer, then opens the dashboard
+in your default browser. It is deliberately not a webview wrapper: the UI is
+already a web app, so embedding a second rendering engine would add ~100 MB and
+a class of bugs for no gain. `LSUIElement` keeps it out of the dock.
 
-### Running E2E Tests
+Data lives in `~/Library/Application Support/XAU Scalper/`, not inside the
+bundle — bundles can be read-only and are replaced wholesale on upgrade.
 
-To run Playwright e2e tests after building:
+Targets: `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`,
+`windows-x64`. Cross-compiling works, but a binary built on another platform
+cannot be run or signed there — verify on the target machine. macOS will refuse
+an unsigned bundle that arrived from elsewhere; built locally it just runs.
+
+**Python is not required for the app.** The server, strategy, engine, backtest
+and cost model are all TypeScript and compile into the binary. `teo/` is an
+optional sidecar — see below for what actually still needs it.
+
+### Analysis
+
+| Command | What it does |
+|---|---|
+| `bun run edge-audit` | Cost-adjusted breakeven win rate per asset. Pure arithmetic on the strategy's own geometry — no backtest, so no sample can flatter it. `-- --atr 0.15` to assume a livelier bar. |
+| `bun run backtest -- --asset BTCUSDT --from 2024-01-01 --to 2024-06-01` | Replay history through the real strategy. Reports net of costs, plus expectancy per trade and the breakeven rate. |
+| `bun run score` | Batch config scorer. Reads a JSON job on stdin, scores N configs over one candle window, writes JSON to stdout. This is what Teo's sweep calls, so it optimises the *real* strategy rather than a re-implementation. |
 
 ```bash
-# 1. Build the app
-bun run sync:build
-
-# 2. Run your test (starts preview server automatically)
-bun run test scripts/demo-test.ts
-
-# Or run multiple tests
-bun run test scripts/test-feature1.ts scripts/test-feature2.ts
+# score three configs, with a 70/30 in-sample / out-of-sample split
+echo '{"symbol":"BTCUSDT","interval":"5m","lookback":1000,"splitRatio":0.7,
+       "configs":[{},{"atrSlMultiplier":2.0,"tp2R":3.5},{"atrSlMultiplier":1.0}]}' \
+  | bun run score
 ```
 
-The `test` command handles the Vite server lifecycle automatically:
-1. Starts `vite preview` (serves built frontend files on port 4173)
-2. Waits for server to be ready
-3. Runs your test with `APP_URL` set correctly
-4. Stops the Vite server when done
+Config entries are **partial overrides** merged onto the asset's own
+`StrategyConfig`. Unknown keys are rejected rather than ignored — silently
+dropping them is how a sweep ends up reporting that it tuned a knob it never
+applied.
 
-Note: The Convex backend is always running in the cloud after running the sync command — only the frontend server needs to be started locally.
+### Quality
 
-Your app is automatically built and deployed when you use the deploy tool.
+| Command | What it does |
+|---|---|
+| `bun run typecheck` | `tsc -b --force` across UI, server, core and scripts. |
+| `bun test core server` | 102 tests. |
+| `bun run check` / `format` | Biome lint + format. |
+| `.venv/bin/python -m pytest` | 89 Python tests. |
 
-### Taking Screenshots
+---
+
+## HTTP API
+
+Served on the same origin as the UI. No authentication: the server binds to
+`127.0.0.1`, so the only callers are processes on this machine.
+
+### Reads
+
+| Method | Path | Returns |
+|---|---|---|
+| `GET` | `/api/health` | Engine liveness, open position count, last run timestamps. |
+| `GET` | `/api/assets` | The asset registry. |
+| `GET` | `/api/ideas?asset&limit` | Signals, newest first, each with its journey events. |
+| `GET` | `/api/ideas/open?asset` | Positions still being tracked (`ACTIVE` + `TP1_HIT`). |
+| `GET` | `/api/ideas/:id` | One signal with its events. |
+| `GET` | `/api/journal?asset&limit` | Audit trail. |
+| `GET` | `/api/journal/counts` | Row counts by event type (a SQL aggregate, not a table read). |
+| `GET` | `/api/performance?asset` | Per-asset stats: win rate, expectancy, streaks, profit factor — each with a `significance` block stating whether the record beats chance. |
+| `GET` | `/api/portfolio` | Open book as one number: effective risk, concentration, net exposure, every pairwise correlation with its sample count, and the record discounted for correlated positions. |
+| `GET` | `/api/candles?asset&interval&limit` | Stored OHLCV from the database. |
+| `GET` | `/api/klines?symbol&interval&limit` | Live OHLCV proxied from the venue. Serves intervals the engine does not persist (1m, 3m); the browser cannot call the venue directly because of CORS. |
+| `GET` | `/api/prices?symbols` | Batched 24h ticker. One upstream request for all symbols. |
+| `GET` | `/api/state/:key` | Intel engine output — `marketRegime`, `macroState`, `newsShield`, `liquiditySweeps`. |
+| `GET` | `/api/events` | SSE stream. Pushes `{kind}` on change; clients refetch. |
+
+### Writes
+
+| Method | Path | Notes |
+|---|---|---|
+| `POST` | `/api/ideas` | Log a signal by hand (`source: dashboard`). |
+| `DELETE` | `/api/ideas/:id` | Remove a signal. Journal rows survive as orphans — an audit trail that vanishes with its subject is not an audit trail. |
+| `POST` | `/api/trades` | Open a manual trade. |
+| `POST` | `/api/trades/:id` | Close at `exitPrice`. **P&L and WIN/LOSS/BREAKEVEN are derived server-side** from the stored entry; the caller does not get to state the result. |
+| `DELETE` | `/api/trades/:id` | Remove a manual trade. |
+| `GET` | `/api/trades/stats` | Aggregate manual-trade performance. |
+| `POST` | `/teo/propose` | Teo forward-test entry, recorded before the outcome is known. |
+| `POST` | `/teo/decision` | Teo self-heal decision. Append-only — it never applies a config change. |
+
+Set `TEO_SHARED_SECRET` to require a matching `x-teo-secret` header on the two
+`/teo/*` routes. The server binds to localhost, so a local process is already
+the only possible caller; the secret matters if you ever bind wider.
+
+Any unmatched `/api/*` path is a `404`, not the SPA shell — returning HTML
+where JSON was expected surfaces as an opaque parse error rather than a missing
+route.
+
+An unknown `asset` is a `404`, not an empty list — silently returning `[]` is
+indistinguishable from "no activity yet" and hides typos in a filter.
+
+---
+
+## The strategy
+
+`core/strategy.ts`. Six indicators vote; the winning side's score becomes a bias
+strength, which is graded A/B/C.
+
+| Signal | Weight |
+|---|---|
+| EMA alignment (9/21/50) | 25 aligned, 10 partial |
+| Price vs EMA21 | 10 |
+| RSI extreme (<30 / >70) | 20 + extreme, 5 for merely being the right side of 50 |
+| MACD histogram cross | 20 + extreme, 8 for direction only |
+| Stochastic extreme (<20 / >80) | 15 + extreme |
+| Bollinger band touch | 18 + extreme, 8 for the zone |
+
+**Grades** — A: ≥3 extremes and ≥70 strength. B: ≥2 and ≥60. C: ≥50. Only A and
+B are traded.
+
+**Entry** requires the 5-minute signal to be A or B, and the 15-minute read to
+agree if it has an opinion (silence does not veto). A per-asset, per-direction
+cooldown prevents restacking the same idea.
+
+**Exit** — stop at 1.5×ATR. TP1 at 1.2R books a partial and moves the stop to
+breakeven; the remainder trails at 2×ATR to TP2 at 2.5R. A bar wide enough to
+reach both targets resolves fully at TP2.
+
+Every knob is a field on `StrategyConfig`, per asset in `core/assets.ts`.
+
+### Costs
+
+`core/costs.ts` models spread, fees and slippage, **asymmetrically** — which is
+the part that decides profitability:
+
+- A take-profit is a resting limit order. It fills at your price and pays a
+  maker fee.
+- A stop is a market order triggered into the move that is hurting you. It pays
+  the spread, taker fees **and** slippage past the trigger.
+
+So costs shrink every win and enlarge every loss. On gold a stop-out costs
+**2.6× what the chart shows**. Rates are per asset — gold quotes wider than BTC,
+and TAO wider still; a blended rate flatters exactly the illiquid assets where
+costs decide the outcome.
+
+---
+
+## The hedge
+
+`core/portfolio.ts`. The engine decides one asset at a time, and nothing in a
+per-asset view can see the problem that creates: six of the seven registered
+assets are crypto that move as a block, so "one signal per asset, each risking
+1R" routinely opens **five simultaneous longs that are one bet at five times the
+size**. The first correlated drawdown is where that becomes visible.
+
+Portfolio risk is `sqrt(wᵀΣw)` with **signed** weights, in units of one
+independent position:
+
+| Book | Risk | Reading |
+|---|---|---|
+| 4 uncorrelated longs | 2.00 | Four bets' worth of diversification. |
+| 4 longs at ρ = 0.85 | 3.77 | Barely better than four times one bet. |
+| 4 longs at ρ = 1.00 | 4.00 | One position at 4× size. |
+| 2 longs + 2 shorts at ρ = 0.85 | 0.77 | The shorts hedge the longs. |
+
+The sign is what makes the last row a **real hedge** rather than a label: a
+short on a correlated asset subtracts from portfolio risk. That falls out of the
+arithmetic; there is no special case for it.
+
+**The cap is on risk, not on position count.** `maxRisk` defaults to 3, which
+admits nine genuinely uncorrelated positions or three that move together. Feed
+six correlated signals in one at a time and three are refused; feed six
+uncorrelated ones and all six are taken. That asymmetry is the entire reason the
+limit is expressed this way.
+
+A trade that *lowers* portfolio risk is admitted unconditionally, including when
+the book is already over its cap — refusing the one trade that reduces exposure
+because exposure is too high would be exactly backwards.
+
+Refusals are not silent. Each writes a `SIGNAL_BLOCKED` journal row naming the
+correlation that caused it:
+
+```
+[BTC/USD] A LONG not taken. Refused: would take portfolio risk to 3.41,
+over the 3.00 cap, on 3 open position(s). Closest open position is
+ETHUSDT at ρ = 0.91.
+```
+
+**Correlations are measured, not assumed.** Pearson on log returns from the 5m
+candles the engine already stores, aligned **by bar timestamp** — correlating
+index-for-index across series that start on different days produces a confident
+number that means nothing. Where fewer than 30 bars overlap, the estimate falls
+back to a prior of **0.8 and flags itself as assumed**. Not 0: defaulting an
+unmeasured correlation to "independent" would wave through exactly the cluster
+the cap exists to catch, and erring toward refusing a trade is the cheap
+direction to be wrong in.
+
+`GET /api/portfolio` serves the book, every pairwise correlation with its sample
+count, and the discounted evidence below. The Risk Manager page renders it.
+
+---
+
+## Is the edge real?
+
+`core/significance.ts`. Every other number in the system describes what
+happened; these describe **how much of it you are entitled to believe**.
+
+The failure this exists to prevent is specific and common: a strategy runs for a
+few weeks, shows a 58% win rate against a 48% breakeven, and the operator scales
+up. With 30 trades that gap is comfortably inside what a coin flip produces.
+
+`GET /api/performance` returns a `significance` block on every asset, and the
+Performance page renders its verdict **above** the win rate — a rate read before
+its sample size is the whole error.
+
+| Field | Meaning |
+|---|---|
+| `verdict` | `insufficient_data` (under 30 trades — no verdict offered at all), `indistinguishable_from_chance`, or `significant`. |
+| `pValue` | One-sided binomial: probability of a record this good if the true edge were zero. |
+| `interval` | 95% Wilson score interval on the true win rate. Wilson rather than the textbook normal approximation, which at 20 trades can return bounds below 0% or above 100%. |
+| `breakevenRate` | The rate that must be beaten after costs, derived from the realised average win and loss. |
+| `tradesNeeded` | Trades required to settle an edge of the observed size, at 95% confidence and 80% power. `null` when the observed rate is at or below breakeven — there is no positive edge to size for. |
+
+What that looks like across sample sizes, against a 48% breakeven:
+
+```
+  trades  wins   rate   p-value   verdict
+      12     8   66.7%   0.1575   too few to judge
+      30    18   60.0%   0.1286   could be luck
+     120    66   55.0%   0.0745   could be luck
+     400   212   53.0%   0.0255   real edge
+    1000   530   53.0%   0.0009   real edge
+```
+
+Note the third row: 55% over 120 trades is a result most people would act on,
+and it does not clear the bar.
+
+**Correlated positions are not independent evidence.** Six of the seven
+registered assets are crypto that move together, so seven simultaneous longs are
+close to one bet repeated — but every statistic above counts them as seven,
+which overstates confidence exactly when a correlated drawdown is most likely.
+`effectiveSampleSize(trades, avgConcurrent, correlation)` applies the
+equicorrelation discount: 600 trades across 6 assets at ρ = 0.8 are worth **120**.
+
+`GET /api/portfolio` reports that discount against the real record, with both
+inputs measured rather than supplied: `averageConcurrency` integrates open
+position count over time (so a one-second brush does not score the same as a
+week held side by side), and the correlation is the measured average from
+stored candles.
+
+The maths is exact rather than approximated — log-factorials are summed and
+cached, not estimated with Stirling, because being wrong about a four-trade
+probability is precisely the case this module exists to get right. 27 tests
+check it against hand-computable values.
+
+---
+
+## MetaTrader 5
+
+Source bars and — more importantly — your broker's **real symbol specifications**
+from a running MT5 terminal. No Python: the official MetaTrader5 package ships
+`win_amd64` wheels only, so on macOS that route does not exist at all. MT5 runs
+there under Wine, and its `MQL5/Files` directory is an ordinary directory on the
+host, so a small MQL5 exporter plus a file read is the whole bridge.
+
+**Setup**
+
+1. MT5 → File → Open Data Folder → `MQL5/Experts`, copy `mt5/TeoExporter.mq5` there
+2. MetaEditor → F7 to compile
+3. Drag **TeoExporter** onto any chart
+4. Tools → Options → Expert Advisors → allow automated trading
+
+Then:
 
 ```bash
-# After building
-bun run sync:build
-
-# Screenshot the landing page (default)
-bun run screenshot
-
-# Screenshot a specific page with custom filename
-bun run screenshot /dashboard dashboard.png
-bun run screenshot /settings settings.png
+bun run mt5:sync              # find the terminal, ingest, report
+bun run mt5:sync -- --watch   # keep pulling every 30s
+bun run mt5:sync -- --dir "/path/to/MQL5/Files/teo"
 ```
 
-The `screenshot` command also starts the Vite preview server automatically.
+The exporter takes symbol and timeframe inputs — use the names **your** broker
+uses, since gold is `XAUUSD` at some and `GOLD` or `XAUUSD.r` at others.
 
-### Troubleshooting
+**What it gets you**
 
-**WebSocket errors with `convex env`**: If you see connection errors, read `.env.local` directly:
-```bash
-grep VITE_CONVEX_URL .env.local
-```
+- Bars normalised to UTC. Timestamps arrive in broker server time (usually UTC+2
+  or +3, shifting with DST); the exporter reports the offset so it is subtracted
+  rather than guessed. A two-hour error would misalign every bar.
+- Your actual spread, contract size, tick value and digits — which is what makes
+  the edge audit describe your account instead of a plausible one.
+- Bars are stored under a namespaced asset id (`MT5:XAUUSD`) so broker data can
+  never be mixed with an exchange symbol of the same name.
 
-## Scripts
+**What it does not do**: place orders, or read your credentials. It is a
+read-only data path. Volume is tick count, not traded size — most FX and CFD
+brokers do not publish real volume.
 
-| Command                            | Description                                    |
-| ---------------------------------- | ---------------------------------------------- |
-| `bun run dev`                      | Start Vite dev server                          |
-| `bun run build`                    | Build for production                           |
-| `bun run sync`                     | Push Convex functions once (no watching)       |
-| `bun run sync:build`               | Push Convex + build frontend in one command    |
-| `bun run test <file>`              | Run e2e test (starts server, runs test, stops) |
-| `bun run test:unit`                | Run shared-strategy unit tests (`bun test`)    |
-| `bun run backtest -- <flags>`      | Backtest the strategy on historical klines     |
-| `bun run logs`                     | Tail Convex backend logs (streaming)           |
-| `bun run logs:fetch`               | Fetch recent logs and exit (agent-friendly)    |
-| `bun run check`                    | Lint + format check with Biome                 |
-| `bun run format`                   | Format & fix with Biome                        |
-| `bun run lint`                     | Lint only with Biome                           |
-| `bun run typecheck`                | Type check with TypeScript (no emit)           |
-| `bun run screenshot [path] [name]` | Take screenshot of a page                      |
-| `bun run test:auth`                | Set up test user authentication                |
-| `bun run test:demo`                | Run demo test with test user                   |
+Only the spread is measured. Fees and stop slippage cannot be read from a quote,
+so they remain assumptions and are labelled as such in the output.
 
-## Project Structure
+---
 
-```
-├── convex/              # Backend
-│   ├── auth.ts          # Auth config & currentUser query
-│   ├── users.ts         # User mutations (deleteAccount)
-│   ├── http.ts          # HTTP routes
-│   └── schema.ts        # Database schema
-├── src/
-│   ├── components/
-│   │   ├── ui/          # shadcn components (including sidebar)
-│   │   ├── AppLayout.tsx     # Authenticated pages layout (with sidebar)
-│   │   ├── AppSidebar.tsx    # Sidebar navigation for authenticated users
-│   │   ├── Header.tsx        # Public pages header
-│   │   ├── PublicLayout.tsx  # Public pages layout (landing, login, signup)
-│   │   ├── ProtectedRoute.tsx # Auth guard with loading skeleton
-│   │   ├── SignIn.tsx        # Sign in form
-│   │   └── SignUp.tsx        # Sign up form
-│   ├── pages/           # Page components
-│   ├── contexts/        # ThemeContext (with system preference support)
-│   ├── hooks/           # use-mobile, usePersistFn, useComposition
-│   ├── lib/             # cn() utility
-│   ├── App.tsx          # Main app with routes & providers
-│   └── index.css        # Tailwind theme (CSS variables)
-├── biome.json           # Biome config (linting + formatting)
-├── components.json      # shadcn CLI config
-└── package.json
-```
+## Teo (Python sidecar)
 
-**Path alias**: Use `@/` for clean imports:
+Optional, and **not part of the packaged app**. The dashboard, engine, backtest
+and cost model are all TypeScript.
 
-```tsx
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
-import { useTheme } from "@/contexts/ThemeContext";
-```
+**Regime tagging, the parameter sweep and the self-heal decision are now
+TypeScript** (`core/regime.ts`, `core/sweep.ts`, `core/selfheal.ts`) and score
+with the real strategy directly — no proxy, no subprocess. The Python
+equivalents remain for the FastAPI service, but nothing in the app depends on
+them.
 
-## Customizing This Starter
-
-This template is designed to be easily customized. Here's how to make it your own:
-
-### 1. Adjust the Design (CSS Variables)
-
-All colors, spacing, and visual tokens are defined in `src/index.css`. Change these to match your brand:
-
-```css
-:root {
-  /* Primary colors */
-  --primary: var(--color-slate-900);     /* Main action color (dark, modern) */
-  --primary-foreground: var(--color-white);
-
-  /* Semantic colors */
-  --success: var(--color-emerald-600);
-  --warning: var(--color-amber-500);
-  --info: var(--color-cyan-500);
-
-  /* Chart/accent colors (for stats, icons, highlights) */
-  --chart-1: var(--color-teal-500);
-  --chart-2: var(--color-orange-500);
-  --chart-3: var(--color-cyan-500);
-  --chart-4: var(--color-rose-500);
-  --chart-5: var(--color-lime-500);
-
-  /* Sidebar */
-  --sidebar-width: 16rem;
-
-  --radius: 0.625rem;                    /* Border radius */
-  /* ... other tokens */
-}
-```
-
-Changes here automatically apply to all pages and components.
-
-### 2. Customize Shared Layouts
-
-The project uses shared layout components for consistency:
-
-| Component      | Purpose                                          | Location                          |
-| -------------- | ------------------------------------------------ | --------------------------------- |
-| `Header`       | Navigation header for public pages               | `src/components/Header.tsx`       |
-| `PublicLayout` | Layout for public pages (landing, login, signup) | `src/components/PublicLayout.tsx` |
-| `AppLayout`    | Layout for authenticated pages (with sidebar)    | `src/components/AppLayout.tsx`    |
-| `AppSidebar`   | Sidebar navigation for authenticated users       | `src/components/AppSidebar.tsx`   |
-
-**Navigation patterns:**
-- **Public pages** use `PublicLayout` with a top header
-- **Authenticated pages** use `AppLayout` with a sidebar (shadcn/ui sidebar component)
-- On mobile, the sidebar becomes a full-screen slide-out menu
-
-**To change the app name** — update `APP_NAME` in these files:
-- `src/lib/constants.ts` — used by `Header.tsx` and `AppSidebar.tsx`
-- `convex/constants.ts` — used by email templates in `ViktorSpacesEmail.ts`
-- `index.html` — the `<title>` tag (static HTML, must be updated manually)
-
-### 3. Remove Unused Pages
-
-Delete pages you don't need from `src/pages/` and remove their routes from `src/App.tsx`:
-
-```tsx
-// src/App.tsx — remove routes you don't need
-<Route path="/settings" element={<SettingsPage />} />
-```
-
-### 4. Design Your Pages
-
-Each page in `src/pages/` uses the shared UI components from `src/components/ui/`. Design them using:
-
-- **shadcn/ui components** — Button, Card, Input, etc. from `@/components/ui/*`
-- **Tailwind utilities** — for layout and custom styling
-- **CSS variables** — colors automatically match your theme
-
-## Features
-
-### 🎨 Theming
-
-Full light/dark mode support with OKLCH colors and system preference detection:
-
-```tsx
-import { useTheme } from "@/contexts/ThemeContext";
-
-function ThemeToggle() {
-  const { theme, toggleTheme, switchable } = useTheme();
-  if (!switchable) return null;
-  return <button onClick={toggleTheme}>{theme}</button>;
-}
-```
-
-**Theme options in `App.tsx`:**
-```tsx
-// Use system preference (default)
-<ThemeProvider defaultTheme="system" switchable>
-
-// Force light or dark
-<ThemeProvider defaultTheme="light" switchable>
-<ThemeProvider defaultTheme="dark" switchable>
-
-// Follow system, no toggle
-<ThemeProvider defaultTheme="system" switchable={false}>
-```
-
-**Priority:** User's saved preference (localStorage) → System preference → Fallback
-
-Customize colors in `src/index.css`:
-- `--primary`, `--secondary`, `--accent`, `--destructive`
-- `--success`, `--warning`, `--info` (semantic colors)
-- `--chart-1` through `--chart-5` (accent colors for stats, icons)
-- `--background`, `--foreground`, `--muted`, `--card`
-- `--sidebar-*` (sidebar-specific colors)
-- `--radius` for border radius
-
-### 🧱 Built-in Features
-
-- **53 shadcn/ui components** — add more with `bunx shadcn@latest add [component-name]`
-- **Responsive hook** — `useIsMobile()` returns true when viewport < 768px
-- **Toast notifications** — `toast.success("Saved!")` / `toast.error("Failed")` via Sonner
-- **Error boundary** — app-level error catching
-
-### 🛠️ Utility Hooks
-
-| Hook                      | Purpose                                                                                                                                               |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `useIsMobile()`           | Returns `true` when viewport < 768px. Reactive to window resize.                                                                                      |
-| `useSidebar()`            | Access sidebar state (open, collapsed, mobile). Must be used inside `SidebarProvider`.                                                                |
-| `usePersistFn(fn)`        | Returns a stable function reference that always calls the latest `fn`. Like `useCallback` but never stale.                                            |
-| `useComposition(options)` | Handles IME composition for CJK language input. Blocks Enter/Escape during character composition to prevent accidental form submits or dialog closes. |
-
-```tsx
-import { useIsMobile } from "@/hooks/use-mobile";
-import { usePersistFn } from "@/hooks/usePersistFn";
-import { useComposition } from "@/hooks/useComposition";
-import { useSidebar } from "@/components/ui/sidebar";
-```
-
-## Signal Engine — Multi-Asset & Backtesting
-
-The server-side scalping engine is now **multi-asset**. All strategy logic lives
-in a single Convex-free module so the live engine and the backtester share the
-exact same code and can never drift apart.
-
-### Where things live
-
-| File                          | Responsibility                                                        |
-| ----------------------------- | --------------------------------------------------------------------- |
-| `convex/lib/strategy.ts`      | Pure indicators, `analyzeCandles`, grading, TP/SL math, `StrategyConfig` |
-| `convex/lib/assets.ts`        | The **asset registry** (one entry per tradable symbol)                |
-| `convex/signalEngine.ts`      | Convex crons that call the shared strategy per asset                  |
-| `scripts/backtest.ts`         | Standalone harness that replays history through the same strategy     |
-
-The strategy is fully parameterised via `StrategyConfig` (RSI thresholds, ATR SL
-multiplier, TP1/TP2 R-multiples, grade thresholds, cooldown, EMA/Bollinger
-periods, ATR trailing multiple, …). `DEFAULT_STRATEGY_CONFIG` keeps the original
-hardcoded numbers, so gold (`PAXGUSDT`) behaviour is unchanged — this is verified
-by a fixture test in `convex/lib/__tests__/`.
-
-### Adding a new asset
-
-Append an entry to `ASSETS` in `convex/lib/assets.ts`:
-
-```ts
-{
-  id: "SOLUSDT",              // stable id stored on every record's `asset` field
-  displaySymbol: "SOL/USD",   // shown in the UI
-  dataSourceSymbol: "SOLUSDT", // symbol queried on the data source
-  dataSource: "binance",      // keyless / free feed
-  sessionType: "24_7",
-  pricePrecision: 2,           // decimals used for entry/SL/TP rounding
-  config: DEFAULT_STRATEGY_CONFIG, // or a per-asset tuned config
-  enabled: true,
-}
-```
-
-Nothing else needs to change: the `generateSignals` and `monitorIdeas` crons
-iterate `getEnabledAssets()` automatically, each fetching its own candles and
-monitoring only its own open ideas. Signal cooldown is scoped per asset.
-
-Registered Tier-1 assets (all on the free keyless Binance feed): `PAXGUSDT`
-(gold), `BTCUSDT`, `ETHUSDT`, `BNBUSDT`, `LINKUSDT`, `AAVEUSDT`, `TAOUSDT`.
-
-### Running the backtest
-
-The harness fetches paginated historical klines from the free Binance endpoint
-(1000 candles per request) and replays them through the **same** signal + exit
-logic the live `monitorIdeas` cron uses (entry → TP1 partial + move-to-BE → ATR
-trailing → TP2 / SL):
+What genuinely still needs Python is Kronos, which is PyTorch. If you never want
+to install Python, skip this section; you lose Kronos forecasting, which has not
+been shown to beat its own baseline (see Known limitations).
 
 ```bash
-bun run backtest -- --asset BTCUSDT --from 2024-01-01 --to 2024-06-01 --interval 5m
+python -m venv .venv && .venv/bin/pip install -e ".[dev]"
+.venv/bin/python -m pytest
 ```
 
-Flags (all optional; defaults shown): `--asset PAXGUSDT`, `--from 2024-01-01`,
-`--to 2024-06-01`, `--interval 5m`. It prints total trades, win rate, net
-points, average win/loss, max drawdown and profit factor.
-
-Run the strategy parity unit tests with:
+| Endpoint | Purpose |
+|---|---|
+| `GET /health` | Liveness, active forecaster. |
+| `POST /forecast` | OHLCV → forecast cone. |
+| `POST /backtest` | Replay a config. |
+| `POST /optimize` | Parameter sweep, ranked. |
+| `POST /selfheal` | Detect degradation, propose a config swap. |
+| `GET /assets` | Teo's asset registry (tiers 1–3). |
 
 ```bash
-bun run test:unit
+uvicorn teo.main:app --port 8000
+python -m teo.loop --interval 15m --lookback 1000    # self-heal across assets
 ```
 
-## Code navigation with Graphify
+Teo **proposes**; it never applies. Swaps are recorded for audit and applied by
+you.
 
-For AI-assisted navigation of this codebase you can build a local knowledge
-graph with [Graphify](https://pypi.org/project/graphifyy/):
+### How a proposal is validated
+
+`teo/backtest/ts_bridge.py` shells out to `scripts/score.ts`, so the winner of a
+sweep is re-scored against the **real** strategy — `analyzeCandles`, net of real
+per-asset costs — on a held-out slice it was not selected on.
+
+This matters because the sweep itself ranks candidates with a fast Python
+EMA-crossover proxy that is *not* the dashboard's strategy. On a random walk the
+real strategy produces ~0 trades where the proxy fires 34.
+
+`assess()` will not propose a swap without out-of-sample evidence. Best-of-36 on
+one window measures selection luck: on synthetic data with no signal at all, the
+in-sample "improvement" cleared the swap threshold by 14×. Set
+`require_out_of_sample=False` to disable the gate, knowingly.
+
+### Kronos forecasting
+
+The architecture is **vendored** at `teo/vendor/kronos` (MIT, from
+[shiyu-coder/Kronos](https://github.com/shiyu-coder/Kronos)) rather than
+installed from PyPI, because the published `kronos-model-arch` hard-pins
+`matplotlib==3.9.3`, `einops==0.8.1` and others — pins from the research repo's
+plotting examples that the model code never imports.
+
+Weights are a one-time anonymous download, no account:
 
 ```bash
-pip install graphifyy   # PyPI package name is `graphifyy`
-graphify                # CLI is `graphify` — turns the repo into a local graph
+.venv/bin/pip install -e ".[kronos]"
+python -m teo.forecasting.fetch_weights          # Kronos-mini, ~20 MB
+export TEO_KRONOS_LOCAL_DIR=models/kronos
 ```
 
-Graphify indexes the code into a queryable graph (functions, imports, call
-sites) that AI tools can traverse to answer "where is X used?" style questions.
-Its output directory `graphify-out/` is git-ignored.
-
-## Environment Variables
-
-Your project comes **pre-configured** with all required environment variables. You only need to add new ones when integrating additional services.
-
-### What's Already Set Up
-
-**Local file** (`.env.local`) — already exists, don't modify:
-- `CONVEX_DEPLOY_KEY` — Authenticates CLI with your deployment
-- `VITE_CONVEX_URL` — Frontend connects to your Convex backend
-
-**Convex deployment** — already configured:
-- `AUTH_PRIVATE_KEY` — For Convex Auth JWT signing
-- `SITE_URL` — Your app's URL for auth redirects
-- `VIKTOR_SPACES_*` — Email sending configuration
-
-### Adding New Variables
-
-When integrating a new service (e.g., OpenAI, Stripe):
-
-```bash
-# Set on Convex deployment (takes effect immediately)
-bunx convex env set OPENAI_API_KEY "sk-..."
-bunx convex env set STRIPE_SECRET_KEY "sk_live_..."
-```
-
-Then use in your Convex functions:
-
-```ts
-const apiKey = process.env.OPENAI_API_KEY;
-```
-
-**Note**: Runtime vars must be set via CLI — they are NOT read from `.env.local`.
-
-### CLI Commands
-
-```bash
-# List all env vars on deployment
-bunx convex env list
-
-# Set a variable (takes effect immediately, no redeploy needed)
-bunx convex env set API_KEY "your-api-key"
-
-# Get a specific variable
-bunx convex env get API_KEY
-
-# Remove a variable
-bunx convex env remove API_KEY
-```
-
-### Adding New Integrations
-
-When your code needs a new API key:
-
-1. **Set on Convex deployment** (takes effect immediately):
-   ```bash
-   bunx convex env set OPENAI_API_KEY "sk-..."
-   ```
-
-2. **Use in your Convex functions**:
-   ```ts
-   const apiKey = process.env.OPENAI_API_KEY;
-   ```
-
-No redeploy needed — env var changes take effect immediately.
-
-## Auth Flows
-
-This starter includes complete email/password authentication with OTP verification.
-
-### Sign Up Flow
-
-```
-1. User enters name + email + password
-2. Clicks "Sign Up" → OTP code sent to email
-3. User enters 6-digit code
-4. Account created + signed in
-```
-
-### Sign In Flow
-
-```
-1. User enters email + password
-2. Clicks "Sign In" → Authenticated
-```
-
-### Password Reset Flow
-
-```
-1. Click "Forgot password?"
-2. Enter email → Reset code sent
-3. Enter code → Set new password
-4. Signed in with new password
-```
-
-### Preview Mode (One-Click Test Login)
-
-In preview deployments, a prominent "Continue as Test User" button appears on login/signup pages for instant access without credentials.
-
-Two env vars gate this, and both are set automatically by `init_app_project`:
-
-- **`VITE_IS_PREVIEW`** (Vercel build env): controls whether the button is rendered in the frontend.
-  - Preview build: `true` → button visible. Production build: `false` → button hidden.
-- **`VIKTOR_SPACES_IS_PREVIEW`** (Convex deployment env): controls whether the `@test.local` credentials provider is registered server-side in `convex/auth.ts`.
-  - Dev deployment: `true` → provider registered. Prod deployment: `false` (or unset) → provider omitted; calling `signIn("test", ...)` against prod returns "Provider not configured".
-
-The button signs in as the per-app test user (or creates the account on first click via the `signUp` flow). This is for the user to check out the preview app quickly without needing to log in each time.
-
-### Test User (for Automated Testing)
-
-Each app has its own auto-generated test user. The credentials are baked into `scripts/testUser.ts`, `convex/seedTestUser.ts`, and `src/components/TestUserLoginSection.tsx` at `init_app_project` time.
-
-`runTest()` for e2e tests automatically logs in as that user:
-
-```ts
-import { runTest } from "./scripts/auth";
-
-runTest("My Feature Test", async helper => {
-  const { page } = helper;
-  // Already authenticated, starts on /
-  await helper.goto("/dashboard");
-  await page.waitForTimeout(1500);  // Wait for Convex to sync
-  await page.click("button");
-  await page.waitForTimeout(1500);
-  await helper.screenshot("my-feature.png");
-}).catch(() => process.exit(1));
-```
-
-**Tip**: Add short waits (1-2 seconds) between steps. Convex real-time updates and page loads can take a moment, which often causes flaky tests without delays.
-
-On failure, you'll see error screenshots, page content, console logs, and backend logs automatically.
-
-### Customizing Auth
-
-Email templates are in `convex/ViktorSpacesEmail.ts`.
-
-### Internal Apps (Domain Restriction)
-
-For internal apps, YOU HAVE TO restrict signups to the user's company Slack email domain. Extract the allowed domain from the user's Slack email address (do not assume email address by other context. you have to get the list of all email addresses to find all the dmoans from them by listing all the users in the company Slack workspace via your tool) and modify `convex/ViktorSpacesEmail.ts`:
-
-```ts
-const ALLOWED_DOMAINS = ["yourcompany.com"]; // Use your Slack workspace email domains
-
-export const ViktorSpacesEmail: EmailConfig = {
-  async sendVerificationRequest({ identifier: email }) {
-    const domain = email.split("@")[1];
-    if (!ALLOWED_DOMAINS.includes(domain)) {
-      throw new Error("Only company email addresses are allowed");
-    }
-    // ... rest of the email sending logic
-  },
-  // ...
-};
-```
-
-This check runs before the OTP email is sent, so unauthorized domains are rejected immediately during signup.
-
-## HTTP Endpoints
-
-Create API routes in `convex/http.ts`:
-
-```ts
-import { httpRouter } from "convex/server";
-import { httpAction } from "./_generated/server";
-
-const http = httpRouter();
-
-// Webhook endpoint
-http.route({
-  path: "/webhooks/stripe",
-  method: "POST",
-  handler: httpAction(async (ctx, req) => {
-    const body = await req.json();
-    
-    // Call a mutation to process the webhook
-    await ctx.runMutation(internal.payments.handleWebhook, { 
-      event: body 
-    });
-    
-    return new Response("OK", { status: 200 });
-  }),
-});
-
-// Public API endpoint
-http.route({
-  path: "/api/health",
-  method: "GET",
-  handler: httpAction(async () => {
-    return Response.json({ status: "ok" });
-  }),
-});
-
-export default http;
-```
-
-**Note**: Paths are exact (no wildcards). Endpoint URL: `https://your-deployment.convex.site/webhooks/stripe`
-
-## Viktor Tools Integration
-
-This template includes `convex/viktorTools.ts` which lets your app call Viktor's SDK functions (AI search, image generation, etc.) from Convex actions.
-
-### Using the Included Tools
-
-```tsx
-import { useAction } from "convex/react";
-import { api } from "../convex/_generated/api";
-
-function SearchComponent() {
-  const search = useAction(api.viktorTools.quickAiSearch);
-
-  const handleSearch = async () => {
-    const result = await search({ query: "What is the capital of France?" });
-    console.log(result); // Returns the AI summary directly as a string
-  };
-}
-```
-
-### Adding More Tools
-
-To add a new tool, first test it to see the response shape, then create a typed wrapper in `convex/viktorTools.ts`. Any tool from the SDK is available to be added. If you need new functionality, pls check the SDK what is available there. It has tons of usefull stuff like ai structured output, search api, image generation, etc.
-
-```ts
-export const generateImage = action({
-  args: { prompt: v.string() },
-  returns: v.string(),
-  handler: async (_ctx, { prompt }) => {
-    const result = await callTool<{ response_text: string }>("text2im", { prompt });
-    return result.response_text;
-  },
-});
-```
-
-## 🎨 Design Guide
-
-### Design Principles
-
-When generating frontend UI, avoid generic patterns that lack visual distinction:
-
-- **Avoid generic full-page centered layouts** — prefer asymmetric/sidebar/grid structures for landing pages and dashboards
-- **Match navigation to app type** — use sidebar patterns for internal tools/dashboards, but design custom navigation (top nav, contextual nav) for public-facing apps (forums, communities, e-commerce)
-- **Make creative design decisions** — when requirements are vague, choose specific color palettes, typography, and layout approaches
-- **Prioritize visual diversity** — combine different design systems (e.g., one color scheme + different typography + another layout principle)
-- **Landing pages** — prefer asymmetric layouts, specific color values (not just "blue"), and textured backgrounds over flat colors
-- **Dashboards** — use defined spacing systems, soft shadows over borders, and accent colors for hierarchy
-
-### UI & Styling
-
-- **Use shadcn/ui components** for interactions to keep a modern, consistent look; import from `@/components/ui/*`
-- **Compose Tailwind utilities** with component variants for layout and states; avoid excessive custom CSS
-- **Preserve design tokens** — keep the `@layer base` rules in `src/index.css`. Utilities like `border-border` and `font-sans` depend on them
-- **Consistent design language** — use spacing, radius, shadows, and typography via tokens. Extract shared UI into `components/` for reuse
-- **Accessibility and responsiveness** — keep visible focus rings and ensure keyboard reachability; design mobile-first with thoughtful breakpoints
-- **Theming** — choose dark/light theme in `ThemeProvider`, then manage color palette with CSS variables in `src/index.css`
-- **Micro-interactions and empty states** — add motion, empty states, and icons tastefully to improve quality without distraction
-- **Placeholder UI elements** — when adding placeholders for not-yet-implemented features, show toast on click ("Feature coming soon")
-
-### Customized Defaults
-
-This template customizes some Tailwind/shadcn defaults for simplified usage:
-
-| Customization              | Behavior                                                                                                                                             |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.container`               | Auto-centered with responsive padding (see `index.css`). Use directly without `mx-auto`/`px-*`. For custom widths, use `max-w-*` with `mx-auto px-4` |
-| `.flex`                    | Has `min-width: 0` and `min-height: 0` by default                                                                                                    |
-| `button` variant `outline` | Uses transparent background (not `bg-background`). Add bg color class manually if needed                                                             |
-| `<Empty>`                  | Supports shorthand props: `<Empty icon={<Icon />} title="..." description="..." />`. Also supports child composition for advanced layouts            |
-
-
-## Convex Cheatsheet
-
-**Queries** = read data (cached, reactive, real-time). **Mutations** = write data (transactional, atomic). **Actions** = side effects (external APIs, no direct DB access).
-
-Quick reference for common gotchas:
-
-### Function Syntax
-
-**Always include `returns` validator** (use `v.null()` for void functions):
-
-```ts
-import { query, mutation } from "./_generated/server";
-import { v } from "convex/values";
-
-export const getUser = query({
-  args: { id: v.id("users") },
-  returns: v.union(v.object({ name: v.string() }), v.null()),
-  handler: async (ctx, args) => {
-    return await ctx.db.get(args.id);
-  },
-});
-
-export const deleteUser = mutation({
-  args: { id: v.id("users") },
-  returns: v.null(), // Required even when returning nothing
-  handler: async (ctx, args) => {
-    await ctx.db.delete(args.id);
-    return null;
-  },
-});
-```
-
-### Public vs Internal Functions
-
-```ts
-// Public (exposed to clients)
-import { query, mutation, action } from "./_generated/server";
-
-// Internal (only callable from other Convex functions)
-import { internalQuery, internalMutation, internalAction } from "./_generated/server";
-```
-
-### Calling Functions
-
-```ts
-import { api, internal } from "./_generated/api";
-
-// From mutation/action:
-await ctx.runQuery(api.users.get, { id });        // public query
-await ctx.runQuery(internal.users.getInternal, { id }); // internal query
-await ctx.runMutation(internal.users.update, { id, name });
-
-// Same-file calls need type annotation:
-const result: string = await ctx.runQuery(api.example.f, { name: "Bob" });
-```
-
-### Queries
-
-```ts
-// ❌ Don't use filter()
-const users = await ctx.db.query("users").filter(q => q.eq(q.field("email"), email));
-
-// ✅ Use withIndex() (define index in schema first)
-const users = await ctx.db.query("users").withIndex("by_email", q => q.eq("email", email));
-
-// ❌ No .delete() on queries
-await ctx.db.query("users").delete();
-
-// ✅ Collect and delete individually
-const users = await ctx.db.query("users").collect();
-for (const user of users) {
-  await ctx.db.delete(user._id);
-}
-
-// Get single document
-const user = await ctx.db.query("users").withIndex("by_email", q => q.eq("email", email)).unique();
-```
-
-### Schema
-
-```ts
-// convex/schema.ts
-import { defineSchema, defineTable } from "convex/server";
-import { v } from "convex/values";
-
-export default defineSchema({
-  users: defineTable({
-    email: v.string(),
-    name: v.string(),
-    role: v.union(v.literal("admin"), v.literal("user")),
-  })
-    .index("by_email", ["email"])           // Name = "by_" + field names
-    .index("by_role_and_name", ["role", "name"]), // Multi-field index
-});
-```
-
-**Note**: Every document automatically has `_id` and `_creationTime` fields. Don't define these in your schema. Also, `_creationTime` is auto-appended to all indexes — don't include it explicitly or you'll get an error.
-
-### Actions
-
-```ts
-// Actions can't access ctx.db directly
-export const sendEmail = internalAction({
-  args: { userId: v.id("users"), message: v.string() },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    // ❌ ctx.db.get(args.userId) - doesn't work in actions
-    
-    // ✅ Call a query to get data
-    const user = await ctx.runQuery(internal.users.get, { id: args.userId });
-    
-    await fetch("https://api.email.com/send", { ... });
-    return null;
-  },
-});
-```
-
-### Types
-
-```ts
-import { Id, Doc } from "./_generated/dataModel";
-
-// Typed IDs
-function getUser(userId: Id<"users">) { ... }
-
-// Full document type
-function formatUser(user: Doc<"users">) { ... }
-
-// Record with ID keys
-const cache: Record<Id<"users">, string> = {};
-```
-
-### Validators Reference
-
-| Type     | Validator                          | Example               |
-| -------- | ---------------------------------- | --------------------- |
-| String   | `v.string()`                       | `"hello"`             |
-| Number   | `v.number()`                       | `42`, `3.14`          |
-| Boolean  | `v.boolean()`                      | `true`                |
-| Null     | `v.null()`                         | `null`                |
-| ID       | `v.id("tableName")`                | `"jh7..."`            |
-| Array    | `v.array(v.string())`              | `["a", "b"]`          |
-| Object   | `v.object({ name: v.string() })`   | `{ name: "Jo" }`      |
-| Optional | `v.optional(v.string())`           | `undefined` or `"hi"` |
-| Union    | `v.union(v.string(), v.null())`    | `"hi"` or `null`      |
-| Literal  | `v.literal("admin")`               | `"admin"`             |
-| Record   | `v.record(v.string(), v.number())` | `{ a: 1, b: 2 }`      |
+After that, inference never touches the network. With nothing configured,
+`/forecast` serves a transparent baseline instead of failing.
+
+---
+
+## Configuration
+
+Everything has a working default; none of this is required.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `TEO_HOST` | `127.0.0.1` | Bind address. See the warning below before changing. |
+| `TEO_PORT` | `4000` | Server port. |
+| `TEO_DB_PATH` | `data/teo.db` | SQLite file. |
+| `TEO_JOURNAL_DAYS` | `90` | Journal retention. |
+| `TEO_BINANCE_BASE_URL` | public mirror | Market data endpoint. |
+| `TEO_KRONOS_LOCAL_DIR` | — | Local Kronos weights. |
+| `TEO_KRONOS_DEVICE` | `cpu` | Kronos inference device. |
+
+> **Binding beyond localhost.** There is no authentication. Setting
+> `TEO_HOST=0.0.0.0` exposes read *and write* endpoints to your whole network.
+> Put a token check in `server/api.ts` first.
+
+---
+
+## Data model
+
+One SQLite file, inspectable with any SQLite tool.
+
+| Table | Holds |
+|---|---|
+| `candles` | OHLCV per asset/interval. Fetched incrementally from the newest stored bar. |
+| `trading_ideas` | Signals and their outcomes. |
+| `idea_events` | Journey events per idea (own rows, so appending is an INSERT rather than rewriting an array). |
+| `signal_journal` | Append-only audit trail. |
+| `manual_trades` | Risk Manager entries. |
+| `settings` | Intel engine state, keyed. |
+| `job_runs` | Last run per scheduled job — what gap recovery reads. |
+
+`asset` is `NOT NULL` throughout. An optional asset column meant every read had
+to remember a default, and writes that forgot were silently filed under gold.
+
+---
+
+## Known limitations
+
+Stated plainly, because a trading tool that hides these is worse than no tool.
+
+1. **No demonstrated edge.** See the edge audit above. The default targets are
+   unprofitable after costs on every asset; nothing has been forward-tested.
+2. **The backtest is not the live engine.** `core/backtest.ts` is
+   single-position and single-timeframe; the live engine requires 15m confluence
+   and can hold several ideas per asset. Treat backtest output as a comparison
+   between configs, not a P&L forecast.
+3. **It only runs while the machine is on.** Gap recovery resolves exits
+   correctly after downtime, but it cannot act during it. For continuous
+   monitoring, run it on something always-on.
+4. **Forecast confidence is not accuracy.** It measures how narrow the predicted
+   cone is. Nothing scores forecasts against what actually happened, so there is
+   no evidence Kronos beats the baseline — or that either beats guessing.
+5. **No portfolio view.** Six of seven assets are crypto that move together.
+   Seven simultaneous longs is one leveraged bet on a single factor, currently
+   reported as seven independent results. The `hedge` strategy in Teo scales
+   position size and drawdown by the same constant, so every ratio is identical
+   to `edge` — it is not a hedge.
+6. **Credentials in git history.** `.env.local` was committed while this repo
+   was public. Those keys are now dead (they addressed a Convex deployment and
+   an email service the app no longer uses) but the values remain in history.
+
+---
+
+## Licence
+
+MIT. Vendored Kronos source is MIT, © 2025 ShiYu — see
+`teo/vendor/kronos/LICENSE`.

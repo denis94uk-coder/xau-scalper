@@ -1,9 +1,12 @@
-import { useQuery } from "convex/react";
 import { useTimezone } from "@/contexts/TimezoneContext";
-import { api } from "../../../convex/_generated/api";
+import { useLive } from "@/hooks/useLive";
+import { api } from "@/lib/api";
 
 export function LiquiditySweepPanel() {
-  const sweepData = useQuery(api.sweepQueries.getSweeps);
+  const sweepData = useLive<any>(
+    () => api.state<any>("liquiditySweeps").catch(() => null),
+    ["engine"],
+  );
   const { formatShortTime } = useTimezone();
 
   if (!sweepData) {

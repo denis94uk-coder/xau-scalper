@@ -1,4 +1,3 @@
-import { useMutation, useQuery } from "convex/react";
 import {
   Bot,
   ChevronDown,
@@ -10,8 +9,8 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { api } from "../../convex/_generated/api";
-import type { Id } from "../../convex/_generated/dataModel";
+import { useLive, useMutation } from "@/hooks/useLive";
+import { api } from "@/lib/api";
 
 const STATUS_COLORS: Record<string, string> = {
   ACTIVE: "bg-blue-500/20 text-blue-400 border-blue-500/30",
@@ -82,11 +81,14 @@ function JourneyTimeline({
 }
 
 export function TradingIdeasPage() {
-  const ideas = useQuery(api.tradingIdeas.listIdeas, { limit: 300 });
-  const deleteIdea = useMutation(api.tradingIdeas.deleteIdea);
+  const ideas = useLive(
+    () => api.ideas({ limit: 300 }).then(r => r.ideas),
+    ["ideas"],
+  );
+  const [deleteIdea] = useMutation((id: number) => api.deleteIdea(id));
   const [filter, setFilter] = useState<string>("ALL");
   const [sourceFilter, setSourceFilter] = useState<string>("ALL");
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
   const [sortField, setSortField] = useState<"date" | "pnl" | "confidence">(
     "date",
   );
@@ -226,11 +228,11 @@ export function TradingIdeasPage() {
               SOURCE_ICONS[idea.source ?? "dashboard"] ??
               SOURCE_ICONS.dashboard;
             const SrcIcon = src.icon;
-            const isExpanded = expandedId === idea._id;
+            const isExpanded = expandedId === idea.id;
 
             return (
               <div
-                key={idea._id}
+                key={idea.id}
                 className="bg-[#12141A] border border-white/5 rounded-lg overflow-hidden hover:border-white/10 transition-colors"
               >
                 {/* Main Row */}
@@ -238,7 +240,7 @@ export function TradingIdeasPage() {
                   role="button"
                   tabIndex={0}
                   className="flex items-center gap-3 px-3 py-2.5 cursor-pointer"
-                  onClick={() => setExpandedId(isExpanded ? null : idea._id)}
+                  onClick={() => setExpandedId(isExpanded ? null : idea.id)}
                 >
                   {/* Direction */}
                   <span
@@ -270,7 +272,7 @@ export function TradingIdeasPage() {
 
                   {/* Journey */}
                   <div className="flex-1 hidden sm:block">
-                    <JourneyTimeline log={idea.journeyLog ?? []} />
+                    <JourneyTimeline log={idea.events ?? []} />
                   </div>
 
                   {/* Status badge */}
@@ -292,8 +294,8 @@ export function TradingIdeasPage() {
                           : "text-muted-foreground"
                     }`}
                   >
-                    {idea.pnlPoints !== undefined
-                      ? `${idea.pnlPoints >= 0 ? "+" : ""}${idea.pnlPoints.toFixed(1)}`
+                    {(idea.pnlPoints ?? 0) !== undefined
+                      ? `${(idea.pnlPoints ?? 0) >= 0 ? "+" : ""}${(idea.pnlPoints ?? 0).toFixed(1)}`
                       : "—"}
                   </span>
 
@@ -318,7 +320,7 @@ export function TradingIdeasPage() {
                       <div className="text-[10px] text-muted-foreground mb-1">
                         JOURNEY
                       </div>
-                      <JourneyTimeline log={idea.journeyLog ?? []} />
+                      <JourneyTimeline log={idea.events ?? []} />
                     </div>
 
                     {/* Levels */}
@@ -331,16 +333,16 @@ export function TradingIdeasPage() {
                       </div>
                       <div>
                         <span className="text-red-400">
-                          {idea.trailingSL ? "Trailing SL" : "Stop Loss"}
+                          {idea.trailingSl ? "Trailing SL" : "Stop Loss"}
                         </span>
                         <div className="font-mono text-red-400">
-                          {(idea.trailingSL ?? idea.stopLoss).toFixed(2)}
-                          {idea.trailingSL && (
+                          {(idea.trailingSl ?? idea.stopLoss).toFixed(2)}
+                          {idea.trailingSl && (
                             <span className="text-orange-400 ml-1 text-[10px]">
                               (orig: {idea.stopLoss.toFixed(2)})
                             </span>
                           )}
-                          {!idea.trailingSL && (
+                          {!idea.trailingSl && (
                             <span className="text-muted-foreground ml-1">
                               (
                               {Math.abs(
@@ -392,13 +394,13 @@ export function TradingIdeasPage() {
                     </div>
 
                     {/* Journey log details */}
-                    {idea.journeyLog && idea.journeyLog.length > 0 && (
+                    {idea.events && idea.events.length > 0 && (
                       <div>
                         <div className="text-[10px] text-muted-foreground mb-1">
                           JOURNEY LOG
                         </div>
                         <div className="space-y-0.5">
-                          {idea.journeyLog.map((entry, i) => (
+                          {idea.events.map((entry, i) => (
                             <div
                               key={i}
                               className="flex items-center gap-2 text-[10px]"
@@ -432,7 +434,7 @@ export function TradingIdeasPage() {
                       <button
                         onClick={e => {
                           e.stopPropagation();
-                          deleteIdea({ id: idea._id as Id<"tradingIdeas"> });
+                          deleteIdea(idea.id as number);
                           toast.success("Idea deleted");
                         }}
                         className="text-xs text-red-400/60 hover:text-red-400 flex items-center gap-1"

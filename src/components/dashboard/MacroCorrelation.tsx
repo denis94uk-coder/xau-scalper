@@ -1,5 +1,5 @@
-import { useQuery } from "convex/react";
-import { api } from "../../../convex/_generated/api";
+import { useLive } from "@/hooks/useLive";
+import { api } from "@/lib/api";
 
 interface MacroAsset {
   label: string;
@@ -13,7 +13,10 @@ interface MacroAsset {
 }
 
 export function MacroCorrelation() {
-  const macro = useQuery(api.macroQueries.getMacroState);
+  const macro = useLive<any>(
+    () => api.state<any>("macroState").catch(() => null),
+    ["engine"],
+  );
 
   if (!macro) {
     return (

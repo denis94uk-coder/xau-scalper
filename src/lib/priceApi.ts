@@ -1,9 +1,9 @@
 /**
- * Client-side XAU/USD price & candle data fetching.
+ * Price and candle fetching for the chart and ticker.
  *
- * Uses Convex HTTP actions as server-side proxy to avoid CORS issues.
- * The Convex deployment URL is configured via VITE_CONVEX_URL env var.
- * HTTP endpoints live at the .convex.site domain (not .convex.cloud).
+ * Goes through the local server rather than the venue directly: the browser
+ * cannot call the market data host itself (CORS), and routing through the
+ * server means one place holds the feed URL.
  */
 
 export interface PriceData {
@@ -31,10 +31,9 @@ export interface Candle {
 // Convex HTTP endpoint base
 // ──────────────────────────────────────────────
 
-function getConvexSiteUrl(): string {
-  // VITE_CONVEX_URL = https://xxx.convex.cloud → HTTP endpoint = https://xxx.convex.site
-  const convexUrl = import.meta.env.VITE_CONVEX_URL || "";
-  return convexUrl.replace(".convex.cloud", ".convex.site");
+function apiBase(): string {
+  // Same origin — the server serves this page and the API.
+  return "";
 }
 
 // ──────────────────────────────────────────────
@@ -65,48 +64,34 @@ function makeSnapshot(
   };
 }
 
-export async function fetchGoldPrice(): Promise<PriceData> {
-  const base = getConvexSiteUrl();
+export async function fetchGoldPrice(asset = "PAXGUSDT"): Promise<PriceData> {
+  const res = await fetch(`${apiBase()}/api/prices?symbols=${asset}`, {
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error(`price API returned ${res.status}`);
 
-  try {
-    const res = await fetch(`${base}/api/gold-price`, {
-      signal: AbortSignal.timeout(8000),
-    });
+  const { tickers } = (await res.json()) as {
+    tickers: Array<{
+      symbol: string;
+      price: number;
+      high24h: number;
+      low24h: number;
+      change24h: number;
+      changePct24h: number;
+    }>;
+  };
 
-    if (!res.ok) throw new Error(`API returned ${res.status}`);
+  const t = tickers[0];
+  // No fallback price. A made-up number rendered as live spot is worse than a
+  // visible failure — it would size positions off fiction.
+  if (!t) throw new Error(`no price available for ${asset}`);
 
-    const result = await res.json();
-    const { source, data } = result;
-
-    if (source === "metals.live") {
-      if (Array.isArray(data) && data.length > 0) {
-        const price = Number(data[0].price);
-        if (price > 0) return makeSnapshot(price, "metals.live");
-      }
-    } else if (source === "goldprice.org") {
-      if (data?.items?.[0]?.xauPrice) {
-        const item = data.items[0];
-        return makeSnapshot(item.xauPrice, "goldprice.org", {
-          change24h: item.chgXau,
-          changePct24h: item.pcXau,
-        });
-      }
-    } else if (source === "binance") {
-      const price = parseFloat(data.lastPrice);
-      if (price > 0) {
-        return makeSnapshot(price, "binance/PAXG", {
-          change24h: parseFloat(data.priceChange),
-          changePct24h: parseFloat(data.priceChangePercent),
-          high24h: parseFloat(data.highPrice),
-          low24h: parseFloat(data.lowPrice),
-        });
-      }
-    }
-  } catch (e: any) {
-    console.warn("Convex gold-price proxy failed:", e.message);
-  }
-
-  throw new Error("Unable to fetch gold price");
+  return makeSnapshot(t.price, "local/binance", {
+    change24h: t.change24h,
+    changePct24h: t.changePct24h,
+    high24h: t.high24h,
+    low24h: t.low24h,
+  });
 }
 
 // ──────────────────────────────────────────────
@@ -125,7 +110,7 @@ export async function fetchGoldCandles(
   limit = 200,
 ): Promise<Candle[]> {
   const binanceInterval = BINANCE_INTERVALS[interval] || "5m";
-  const base = getConvexSiteUrl();
+  const base = apiBase();
 
   try {
     const url = `${base}/api/klines?symbol=PAXGUSDT&interval=${binanceInterval}&limit=${limit}`;
@@ -133,16 +118,9 @@ export async function fetchGoldCandles(
 
     if (!res.ok) throw new Error(`API returned ${res.status}`);
 
-    const data = await res.json();
-
-    return data.map((k: any[]) => ({
-      time: Math.floor(Number(k[0]) / 1000),
-      open: parseFloat(k[1]),
-      high: parseFloat(k[2]),
-      low: parseFloat(k[3]),
-      close: parseFloat(k[4]),
-      volume: parseFloat(k[5]),
-    }));
+    // The server returns parsed candles; the venue's array format does not
+    // leak past it.
+    return (await res.json()) as Candle[];
   } catch (e: any) {
     console.error(`Failed to fetch candles (${interval}):`, e.message);
     throw e;

@@ -1,4 +1,3 @@
-import { useQuery } from "convex/react";
 import {
   Activity,
   AlertTriangle,
@@ -7,7 +6,8 @@ import {
   ScrollText,
 } from "lucide-react";
 import { useState } from "react";
-import { api } from "../../convex/_generated/api";
+import { useLive } from "@/hooks/useLive";
+import { api } from "@/lib/api";
 
 const EVENT_CONFIG: Record<
   string,
@@ -44,8 +44,11 @@ const EVENT_CONFIG: Record<
 };
 
 export function SignalJournalPage() {
-  const journal = useQuery(api.signalJournal.list, { limit: 500 });
-  const counts = useQuery(api.signalJournal.countByType, {});
+  const journal = useLive(
+    () => api.journal({ limit: 500 }).then(r => r.entries),
+    ["journal", "ideas"],
+  );
+  const counts = useLive(() => api.journalCounts(), ["journal", "ideas"]);
   const [typeFilter, setTypeFilter] = useState<string>("ALL");
   const [showEngine, setShowEngine] = useState(false);
 
@@ -159,7 +162,7 @@ export function SignalJournalPage() {
 
             return (
               <div
-                key={entry._id}
+                key={entry.id}
                 className={`flex items-start gap-3 px-3 py-2 rounded-lg ${cfg.bg} border border-white/5`}
               >
                 {/* Icon */}

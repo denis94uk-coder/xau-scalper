@@ -46,3 +46,15 @@ venv/
 
 # Teo regime-tagged outcome memory (local run artifact)
 .teo_memory.json
+
+# Local database (created on first run)
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Kronos weights (fetched once via `python -m teo.forecasting.fetch_weights`)
+models/
+
+# Packaged builds
+release/

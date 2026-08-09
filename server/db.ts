@@ -10,9 +10,10 @@
  */
 
 import { Database } from "bun:sqlite";
-import { mkdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import type { Candle } from "../convex/lib/strategy";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import type { Candle } from "../core/strategy";
+import { SCHEMA_SQL } from "./schema";
 
 export type Direction = "LONG" | "SHORT";
 export type IdeaStatus =
@@ -107,9 +108,9 @@ export class Db {
     this.migrate();
   }
 
-  /** Apply schema.sql. Every statement is CREATE ... IF NOT EXISTS, so this is idempotent. */
+  /** Apply the schema. Every statement is CREATE ... IF NOT EXISTS, so this is idempotent. */
   migrate(): void {
-    this.raw.exec(readFileSync(join(import.meta.dir, "schema.sql"), "utf8"));
+    this.raw.exec(SCHEMA_SQL);
   }
 
   close(): void {
@@ -429,6 +430,134 @@ export class Db {
     return row?.last_run_at ?? null;
   }
 
+  // ─── Manual trades (Risk Manager) ───
+
+  createManualTrade(t: {
+    asset: string;
+    direction: Direction;
+    entryPrice: number;
+    stopLoss: number;
+    takeProfit: number;
+    lotSize: number;
+    riskAmount?: number | null;
+    notes?: string | null;
+  }): number {
+    const row = this.raw
+      .query<{ id: number }, never[]>(
+        `INSERT INTO manual_trades
+           (asset, direction, status, entry_price, stop_loss, take_profit,
+            lot_size, risk_amount, notes, opened_at)
+         VALUES ($asset, $dir, 'OPEN', $entry, $sl, $tp, $lot, $risk, $notes, $now)
+         RETURNING id`,
+      )
+      .get({
+        $asset: t.asset,
+        $dir: t.direction,
+        $entry: t.entryPrice,
+        $sl: t.stopLoss,
+        $tp: t.takeProfit,
+        $lot: t.lotSize,
+        $risk: t.riskAmount ?? null,
+        $notes: t.notes ?? null,
+        $now: Date.now(),
+      } as never);
+    return row!.id;
+  }
+
+  /**
+   * Close a manual trade at `exitPrice`.
+   *
+   * P&L is derived here rather than accepted from the caller: a journal whose
+   * numbers can be supplied independently of its prices cannot be audited.
+   */
+  closeManualTrade(id: number, exitPrice: number): void {
+    const t = this.raw
+      .query<
+        { direction: Direction; entry_price: number; lot_size: number },
+        [number]
+      >(
+        `SELECT direction, entry_price, lot_size FROM manual_trades WHERE id = ?`,
+      )
+      .get(id);
+    if (!t) return;
+
+    const points =
+      t.direction === "LONG"
+        ? exitPrice - t.entry_price
+        : t.entry_price - exitPrice;
+    const dollars = points * t.lot_size;
+    const status = points > 0 ? "WIN" : points < 0 ? "LOSS" : "BREAKEVEN";
+
+    this.raw
+      .prepare(
+        `UPDATE manual_trades
+         SET status = ?, exit_price = ?, pnl_points = ?, pnl_dollars = ?, closed_at = ?
+         WHERE id = ?`,
+      )
+      .run(status, exitPrice, points, dollars, Date.now(), id);
+  }
+
+  deleteManualTrade(id: number): void {
+    this.raw.prepare(`DELETE FROM manual_trades WHERE id = ?`).run(id);
+  }
+
+  listManualTrades(limit = 100): Record<string, unknown>[] {
+    return this.raw
+      .query<Record<string, unknown>, [number]>(
+        `SELECT * FROM manual_trades ORDER BY opened_at DESC LIMIT ?`,
+      )
+      .all(limit);
+  }
+
+  manualTradeStats(): {
+    totalTrades: number;
+    openTrades: number;
+    wins: number;
+    losses: number;
+    breakeven: number;
+    winRate: number;
+    netDollars: number;
+    totalPnlPoints: number;
+    avgWinDollars: number;
+    avgLossDollars: number;
+    profitFactor: number | null;
+  } {
+    const r = this.raw
+      .query<Record<string, number | null>, []>(
+        `SELECT
+           COUNT(*)                                        AS total,
+           COUNT(*) FILTER (WHERE status = 'OPEN')         AS open,
+           COUNT(*) FILTER (WHERE status = 'WIN')          AS wins,
+           COUNT(*) FILTER (WHERE status = 'LOSS')         AS losses,
+           COUNT(*) FILTER (WHERE status = 'BREAKEVEN')    AS breakeven,
+           COALESCE(SUM(pnl_dollars), 0)                   AS net,
+           COALESCE(SUM(pnl_points), 0)                    AS net_points,
+           COALESCE(SUM(pnl_dollars) FILTER (WHERE pnl_dollars > 0), 0)   AS gross_win,
+           COALESCE(-SUM(pnl_dollars) FILTER (WHERE pnl_dollars < 0), 0)  AS gross_loss
+         FROM manual_trades`,
+      )
+      .get()!;
+    const wins = Number(r.wins ?? 0);
+    const losses = Number(r.losses ?? 0);
+    const decided = wins + losses;
+    const grossWin = Number(r.gross_win ?? 0);
+    const grossLoss = Number(r.gross_loss ?? 0);
+    return {
+      totalTrades: Number(r.total ?? 0),
+      openTrades: Number(r.open ?? 0),
+      wins,
+      losses,
+      breakeven: Number(r.breakeven ?? 0),
+      winRate: decided ? (wins / decided) * 100 : 0,
+      netDollars: Number(r.net ?? 0),
+      totalPnlPoints: Number(r.net_points ?? 0),
+      avgWinDollars: wins ? grossWin / wins : 0,
+      avgLossDollars: losses ? grossLoss / losses : 0,
+      // null, not 0 — zero reads as "worst possible" to any comparison.
+      profitFactor: grossLoss === 0 ? null : grossWin / grossLoss,
+    };
+  }
+
   // ─── Performance ───
 
   /**
@@ -444,19 +573,25 @@ export class Db {
     open: number;
     wins: number;
     losses: number;
+    expired: number;
     winRate: number;
-    netPoints: number;
-    avgWin: number;
-    avgLoss: number;
+    totalPnlPoints: number;
+    avgWinPoints: number;
+    avgLossPoints: number;
+    avgRR: number | null;
+    maxWinStreak: number;
+    maxLossStreak: number;
+    currentStreak: number;
     profitFactor: number | null;
   } {
-    const row = this.raw
+    const agg = this.raw
       .query<Record<string, number | null>, [string]>(
         `SELECT
            COUNT(*) FILTER (WHERE status IN ('TP1_HIT','TP2_HIT','STOPPED','EXPIRED')) AS closed,
            COUNT(*) FILTER (WHERE status IN ('ACTIVE','TP1_HIT'))                      AS open,
            COUNT(*) FILTER (WHERE pnl_points > 0)                                      AS wins,
            COUNT(*) FILTER (WHERE pnl_points <= 0 AND pnl_points IS NOT NULL)          AS losses,
+           COUNT(*) FILTER (WHERE status = 'EXPIRED')                                  AS expired,
            COALESCE(SUM(pnl_points), 0)                                                AS net,
            COALESCE(SUM(pnl_points) FILTER (WHERE pnl_points > 0), 0)                  AS gross_win,
            COALESCE(-SUM(pnl_points) FILTER (WHERE pnl_points <= 0), 0)                AS gross_loss
@@ -464,25 +599,93 @@ export class Db {
       )
       .get(asset)!;
 
-    const wins = Number(row.wins ?? 0);
-    const losses = Number(row.losses ?? 0);
-    const grossWin = Number(row.gross_win ?? 0);
-    const grossLoss = Number(row.gross_loss ?? 0);
-    const resolved = wins + losses;
+    // Streaks need the resolved sequence in order, which an aggregate cannot give.
+    const resolved = this.raw
+      .query<{ pnl_points: number }, [string]>(
+        `SELECT pnl_points FROM trading_ideas
+         WHERE asset = ? AND pnl_points IS NOT NULL
+         ORDER BY COALESCE(resolved_at, created_at)`,
+      )
+      .all(asset);
+
+    let maxWinStreak = 0;
+    let maxLossStreak = 0;
+    let run = 0;
+    for (const r of resolved) {
+      const won = r.pnl_points > 0;
+      // Reset to +/-1 when the sign flips, otherwise extend the run.
+      run = won ? (run > 0 ? run + 1 : 1) : run < 0 ? run - 1 : -1;
+      if (run > maxWinStreak) maxWinStreak = run;
+      if (-run > maxLossStreak) maxLossStreak = -run;
+    }
+
+    const wins = Number(agg.wins ?? 0);
+    const losses = Number(agg.losses ?? 0);
+    const grossWin = Number(agg.gross_win ?? 0);
+    const grossLoss = Number(agg.gross_loss ?? 0);
+    const decided = wins + losses;
+    const avgWinPoints = wins ? grossWin / wins : 0;
+    const avgLossPoints = losses ? grossLoss / losses : 0;
 
     return {
       asset,
-      closed: Number(row.closed ?? 0),
-      open: Number(row.open ?? 0),
+      closed: Number(agg.closed ?? 0),
+      open: Number(agg.open ?? 0),
       wins,
       losses,
-      winRate: resolved ? (wins / resolved) * 100 : 0,
-      netPoints: Number(row.net ?? 0),
-      avgWin: wins ? grossWin / wins : 0,
-      avgLoss: losses ? grossLoss / losses : 0,
-      // null, not 0 — see convex/lib/backtest.ts computeMetrics.
+      expired: Number(agg.expired ?? 0),
+      winRate: decided ? (wins / decided) * 100 : 0,
+      totalPnlPoints: Number(agg.net ?? 0),
+      avgWinPoints,
+      avgLossPoints,
+      avgRR: avgLossPoints > 0 ? avgWinPoints / avgLossPoints : null,
+      maxWinStreak,
+      maxLossStreak,
+      // Positive = consecutive wins, negative = consecutive losses.
+      currentStreak: run,
+      // null, not 0 — see core/backtest.ts computeMetrics.
       profitFactor: grossLoss === 0 ? null : grossWin / grossLoss,
     };
+  }
+
+  /**
+   * Every resolved position across all assets, with the window it was held for.
+   *
+   * Cross-asset on purpose: this feeds the portfolio view, where the question
+   * is how many of these results were independent of each other rather than how
+   * one instrument did. `performance()` answers the per-asset question and this
+   * one deliberately does not duplicate it.
+   */
+  holdingPeriods(): Array<{
+    asset: string;
+    start: number;
+    end: number;
+    won: boolean;
+  }> {
+    return this.raw
+      .query<
+        {
+          asset: string;
+          created_at: number;
+          resolved_at: number | null;
+          pnl_points: number;
+        },
+        []
+      >(
+        `SELECT asset, created_at, resolved_at, pnl_points FROM trading_ideas
+         WHERE pnl_points IS NOT NULL
+         ORDER BY created_at`,
+      )
+      .all()
+      .map(r => ({
+        asset: r.asset,
+        start: r.created_at,
+        // A resolved row with no timestamp predates that column being written.
+        // Treating it as instantaneous understates concurrency; the alternative
+        // is dropping the trade, which understates the sample. Keep the trade.
+        end: r.resolved_at ?? r.created_at,
+        won: r.pnl_points > 0,
+      }));
   }
 }
 

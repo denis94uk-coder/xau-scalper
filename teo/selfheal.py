@@ -25,6 +25,25 @@ class HealthThresholds:
     min_trades: int = 10
     # A candidate must beat the current score by at least this margin to be proposed.
     min_score_improvement: float = 0.15
+    # A candidate must also hold up on data it was NOT selected on.
+    #
+    # Without this the sweep proposes swaps on pure noise: picking the best of
+    # 36 configs on one window and calling the gain "improvement" measures
+    # selection luck, not edge. Measured on a synthetic random walk with zero
+    # signal, the in-sample gain cleared the 0.15 bar by 14x.
+    require_out_of_sample: bool = True
+    # Out-of-sample score must be at least this — a candidate that only works
+    # on the window it was chosen from is not a candidate.
+    min_out_of_sample_score: float = 0.0
+
+
+# The engine reports 999 for "no losing trades", because 0 would rank a flawless
+# config last. That sentinel should never reach a human as a number.
+_PF_SENTINEL = 999.0
+
+
+def _pf(value: float) -> str:
+    return "n/a (no losing trades)" if value >= _PF_SENTINEL else f"{value:.2f}"
 
 
 @dataclass(frozen=True)
@@ -44,8 +63,14 @@ def assess(
     *,
     regime: Regime | None = None,
     thresholds: HealthThresholds | None = None,
+    candidate_out_of_sample: BacktestMetrics | None = None,
 ) -> HealthDecision:
-    """Compare current live performance against the best swept candidate."""
+    """Compare current live performance against the best swept candidate.
+
+    `candidate_out_of_sample` is the winner's performance on data it was NOT
+    selected on. When thresholds require it and it is absent, no swap is
+    proposed — an unvalidated candidate is treated as no candidate.
+    """
     t = thresholds or HealthThresholds()
     current_score = score_metrics(current_metrics, min_trades=t.min_trades)
 
@@ -70,8 +95,8 @@ def assess(
             status="healthy",
             action="hold",
             reason=(
-                f"profit factor {current_metrics.profit_factor:.2f} ≥ {t.min_profit_factor} and "
-                f"win rate {current_metrics.win_rate:.0%} ≥ {t.min_win_rate:.0%}"
+                f"profit factor {_pf(current_metrics.profit_factor)} ≥ {t.min_profit_factor} "
+                f"and win rate {current_metrics.win_rate:.0%} ≥ {t.min_win_rate:.0%}"
             ),
             current_score=current_score,
             proposed_config=None,
@@ -93,6 +118,36 @@ def assess(
 
     improvement = round(best_candidate.score - current_score, 6)
     regime_note = f" (regime: {regime.label})" if regime else ""
+
+    if t.require_out_of_sample:
+        if candidate_out_of_sample is None:
+            return HealthDecision(
+                status="degraded",
+                action="hold",
+                reason=(
+                    "degraded, but the candidate was not validated out of sample "
+                    f"— holding rather than swapping on in-sample fit{regime_note}"
+                ),
+                current_score=current_score,
+                proposed_config=None,
+                proposed_score=None,
+                improvement=improvement,
+            )
+        oos_score = score_metrics(candidate_out_of_sample, min_trades=t.min_trades)
+        if oos_score < t.min_out_of_sample_score:
+            return HealthDecision(
+                status="degraded",
+                action="hold",
+                reason=(
+                    f"degraded, and the best candidate improves in-sample by "
+                    f"{improvement:.3f} but scores {oos_score:.3f} out of sample "
+                    f"— that is selection noise, not edge{regime_note}"
+                ),
+                current_score=current_score,
+                proposed_config=None,
+                proposed_score=None,
+                improvement=improvement,
+            )
 
     if improvement >= t.min_score_improvement:
         return HealthDecision(

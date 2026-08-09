@@ -18,13 +18,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Real Kronos inference. Optional so the service runs & tests without heavy ML deps.
-# `kronos-model-arch` is the official PyPI package for the Kronos architecture; it installs
-# the `Kronos`, `KronosTokenizer` and `KronosPredictor` classes under the top-level `model`
-# package (which our adapter imports) and pulls torch + einops + safetensors + huggingface-hub.
+# Real Kronos inference. Optional so the service runs and tests without heavy ML deps.
+#
+# The architecture itself is vendored at teo/vendor/kronos (MIT), NOT installed from
+# PyPI: `kronos-model-arch` hard-pins matplotlib, einops, huggingface_hub and tqdm to
+# exact versions its plotting examples want, none of which the model code imports.
+# These are the deps the vendored source actually uses, unpinned.
 kronos = [
-    "kronos-model-arch>=0.1.0",
     "torch>=2.2",
+    "einops>=0.7",
+    "tqdm>=4.66",
     "huggingface-hub>=0.23",
     "safetensors>=0.4",
     "pandas>=2.2",
@@ -39,9 +42,16 @@ dev = [
 [tool.setuptools.packages.find]
 include = ["teo*"]
 
+[tool.setuptools.package-data]
+"teo.vendor.kronos" = ["LICENSE"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+# Vendored upstream source is kept byte-identical to its origin (bar one import
+# rewrite) so it can be re-synced from upstream cheaply. Reformatting it to our
+# house style would make every future update a merge conflict.
+extend-exclude = ["teo/vendor"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
