@@ -7,11 +7,7 @@
  * out-of-sample split.
  */
 import { describe, expect, test } from "bun:test";
-import {
-  type ClosedTrade,
-  computeMetrics,
-  runBacktest,
-} from "../backtest";
+import { type ClosedTrade, computeMetrics, runBacktest } from "../backtest";
 import { type Candle, DEFAULT_STRATEGY_CONFIG } from "../strategy";
 
 function trade(pnlPoints: number): ClosedTrade {

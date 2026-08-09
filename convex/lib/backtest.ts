@@ -22,8 +22,8 @@ import {
   analyzeCandles,
   type Candle,
   calcATR,
-  type StrategyConfig,
   roundTo,
+  type StrategyConfig,
 } from "./strategy";
 
 export interface ClosedTrade {
@@ -178,10 +178,11 @@ export function runBacktest(
       } else if (open.status === "ACTIVE") {
         const tp1Hit = isLong ? bar.high >= open.tp1 : bar.low <= open.tp1;
         if (tp1Hit) {
-          open.status = "TP1_HIT";
-          open.trailingSL = open.entryPrice; // move to breakeven
-        } else {
-          // TP2 directly on a gap (rare but possible).
+          // A bar wide enough to reach TP1 may also have reached TP2. This must
+          // be checked here, not as an `else` to the TP1 test: for a long,
+          // high >= tp2 implies high >= tp1, so a TP2-only branch after a TP1
+          // check can never execute, and the position would take an extra bar
+          // to resolve a move it already completed.
           const tp2Hit = isLong ? bar.high >= open.tp2 : bar.low <= open.tp2;
           if (tp2Hit) {
             closed.push({
@@ -189,11 +190,16 @@ export function runBacktest(
               entryPrice: open.entryPrice,
               exitPrice: open.tp2,
               pnlPoints: r(
-                isLong ? open.tp2 - open.entryPrice : open.entryPrice - open.tp2,
+                isLong
+                  ? open.tp2 - open.entryPrice
+                  : open.entryPrice - open.tp2,
               ),
               outcome: "TP1_TP2",
             });
             open = null;
+          } else {
+            open.status = "TP1_HIT";
+            open.trailingSL = open.entryPrice; // move to breakeven
           }
         }
       }

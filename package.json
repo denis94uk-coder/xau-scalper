@@ -23,7 +23,9 @@
     "screenshot": "bun run --bun scripts/screenshot.ts",
     "env:get": "bunx convex env get",
     "env:list": "bunx convex env list",
-    "score": "bun run --bun scripts/score.ts"
+    "score": "bun run --bun scripts/score.ts",
+    "start": "bun run server/index.ts",
+    "serve": "bun run --watch server/index.ts"
   },
   "dependencies": {
     "@auth/core": "^0.37.4",
