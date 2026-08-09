@@ -19,6 +19,7 @@ import {
 } from "../core/assets";
 import type { Db } from "./db";
 import { type AppEvent, publish, subscribe } from "./events";
+import { fetchCandles, fetchTickers } from "./market";
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -306,6 +307,42 @@ export async function handleApi(
     publish("ideas");
     return json({ ok: true, id });
   }
+
+  // ─── Market data proxy ───
+  // The browser cannot call the venue directly (CORS), and these are the
+  // endpoints the dashboard's chart and ticker read. Stored candles come from
+  // /api/candles; these serve intervals the engine does not persist (1m, 3m)
+  // and the live spot price.
+  if (path === "/api/klines") {
+    const symbol = url.searchParams.get("symbol") ?? DEFAULT_ASSET_ID;
+    if (!getAsset(symbol)) return bad(`unknown asset "${symbol}"`, 404);
+    const interval = url.searchParams.get("interval") ?? "5m";
+    const limit = intParam(url, "limit", 200, 1000);
+    try {
+      const candles = await fetchCandles(symbol, interval, { limit });
+      return json(candles);
+    } catch (e) {
+      return bad(e instanceof Error ? e.message : "upstream failed", 502);
+    }
+  }
+
+  if (path === "/api/prices") {
+    const requested = url.searchParams.get("symbols");
+    const ids = requested
+      ? requested.split(",").filter(sym => getAsset(sym))
+      : getEnabledAssets().map(a => a.id);
+    if (ids.length === 0) return bad("no known symbols requested", 404);
+    try {
+      return json({ tickers: await fetchTickers(ids) });
+    } catch (e) {
+      return bad(e instanceof Error ? e.message : "upstream failed", 502);
+    }
+  }
+
+  // Any other /api/* path is a mistake, not a client-side route. Falling
+  // through to the SPA would hand the caller HTML where it expected JSON,
+  // which surfaces as an opaque parse error rather than a 404.
+  if (path.startsWith("/api/")) return bad("no such endpoint", 404);
 
   return null; // not an API route
 }

@@ -151,7 +151,9 @@ Served on the same origin as the UI. No authentication: the server binds to
 | `GET` | `/api/journal?asset&limit` | Audit trail. |
 | `GET` | `/api/journal/counts` | Row counts by event type (a SQL aggregate, not a table read). |
 | `GET` | `/api/performance?asset` | Per-asset stats: win rate, expectancy, streaks, profit factor. |
-| `GET` | `/api/candles?asset&interval&limit` | Stored OHLCV. |
+| `GET` | `/api/candles?asset&interval&limit` | Stored OHLCV from the database. |
+| `GET` | `/api/klines?symbol&interval&limit` | Live OHLCV proxied from the venue. Serves intervals the engine does not persist (1m, 3m); the browser cannot call the venue directly because of CORS. |
+| `GET` | `/api/prices?symbols` | Batched 24h ticker. One upstream request for all symbols. |
 | `GET` | `/api/state/:key` | Intel engine output — `marketRegime`, `macroState`, `newsShield`, `liquiditySweeps`. |
 | `GET` | `/api/events` | SSE stream. Pushes `{kind}` on change; clients refetch. |
 
@@ -165,6 +167,10 @@ Served on the same origin as the UI. No authentication: the server binds to
 | `POST` | `/api/trades/:id` | Close at `exitPrice`. **P&L and WIN/LOSS/BREAKEVEN are derived server-side** from the stored entry; the caller does not get to state the result. |
 | `DELETE` | `/api/trades/:id` | Remove a manual trade. |
 | `GET` | `/api/trades/stats` | Aggregate manual-trade performance. |
+
+Any unmatched `/api/*` path is a `404`, not the SPA shell — returning HTML
+where JSON was expected surfaces as an opaque parse error rather than a missing
+route.
 
 An unknown `asset` is a `404`, not an empty list — silently returning `[]` is
 indistinguishable from "no activity yet" and hides typos in a filter.

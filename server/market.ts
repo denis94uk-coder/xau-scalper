@@ -64,6 +64,49 @@ export async function fetchPrices(
   return out;
 }
 
+export interface Ticker {
+  symbol: string;
+  price: number;
+  high24h: number;
+  low24h: number;
+  change24h: number;
+  changePct24h: number;
+}
+
+/**
+ * 24-hour stats for many symbols in a SINGLE request.
+ *
+ * Feeds the dashboard ticker. Symbols absent from the response are omitted
+ * rather than defaulted, so the UI shows a gap instead of a fabricated price.
+ */
+export async function fetchTickers(
+  symbols: string[],
+  opts: MarketOptions = {},
+): Promise<Ticker[]> {
+  const doFetch = opts.fetcher ?? fetch;
+  if (symbols.length === 0) return [];
+
+  const query = encodeURIComponent(JSON.stringify(symbols));
+  const res = await doFetch(`${BINANCE_API}/ticker/24hr?symbols=${query}`);
+  if (!res.ok) throw new Error(`Binance ticker24 ${res.status}`);
+
+  const rows = (await res.json()) as Array<Record<string, string>>;
+  const out: Ticker[] = [];
+  for (const r of rows) {
+    const price = Number.parseFloat(r.lastPrice);
+    if (!Number.isFinite(price) || price <= 0) continue;
+    out.push({
+      symbol: r.symbol,
+      price,
+      high24h: Number.parseFloat(r.highPrice),
+      low24h: Number.parseFloat(r.lowPrice),
+      change24h: Number.parseFloat(r.priceChange),
+      changePct24h: Number.parseFloat(r.priceChangePercent),
+    });
+  }
+  return out;
+}
+
 /**
  * Klines for one symbol/interval.
  *
