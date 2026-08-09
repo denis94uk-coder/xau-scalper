@@ -82,7 +82,7 @@ a price that never existed.
 
 | Path | What lives there |
 |---|---|
-| `core/` | Strategy, indicators, asset registry, backtest replay, cost model. No framework imports — shared by the server, the CLI tools and the tests. |
+| `core/` | Strategy, indicators, asset registry, backtest replay, cost model, regime tagging, parameter sweep, self-heal decision. No framework imports — shared by the server, the CLI tools and the tests. |
 | `server/` | HTTP + SSE, SQLite layer, signal engine, scheduler. |
 | `server/intel/` | Regime, macro correlation, news calendar, liquidity sweeps. |
 | `src/` | React UI (Vite, Tailwind, shadcn/ui). |
@@ -263,13 +263,15 @@ costs decide the outcome.
 Optional, and **not part of the packaged app**. The dashboard, engine, backtest
 and cost model are all TypeScript.
 
-What genuinely still needs Python is narrower than it looks: Kronos is PyTorch,
-so it has to be. Everything else in `teo/` — the sweep grid, threshold logic,
-the JSON memory store, the loop — is ~800 lines of orchestration, and regime
-detection is *already* reimplemented in `server/intel/regime.ts`. Scoring
-already happens in TypeScript via the bridge. If you never want to install
-Python, skip this section; you lose Kronos forecasting, which has not been shown
-to beat its own baseline (see Known limitations).
+**Regime tagging, the parameter sweep and the self-heal decision are now
+TypeScript** (`core/regime.ts`, `core/sweep.ts`, `core/selfheal.ts`) and score
+with the real strategy directly — no proxy, no subprocess. The Python
+equivalents remain for the FastAPI service, but nothing in the app depends on
+them.
+
+What genuinely still needs Python is Kronos, which is PyTorch. If you never want
+to install Python, skip this section; you lose Kronos forecasting, which has not
+been shown to beat its own baseline (see Known limitations).
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"

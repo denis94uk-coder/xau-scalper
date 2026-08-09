@@ -284,36 +284,81 @@ export interface AnalysisResult {
 
 // ─── Full analysis function ───
 
-export function analyzeCandles(
+/**
+ * Every indicator series the analysis reads, computed once over a whole window.
+ *
+ * All of these are causal — the value at index i depends only on candles up to
+ * i — so a series computed over the full window is identical, at every index, to
+ * one computed over the prefix ending there. That is what makes it valid to
+ * precompute once and index per bar rather than recomputing per bar.
+ */
+export interface IndicatorSeries {
+  closes: number[];
+  rsi: number[];
+  histogram: number[];
+  ema9: number[];
+  ema21: number[];
+  ema50: number[];
+  atr: number[];
+  stochK: number[];
+  bbUpper: number[];
+  bbLower: number[];
+}
+
+/** Compute every indicator series once for a window. */
+export function precomputeIndicators(
   candles: Candle[],
   config: StrategyConfig = DEFAULT_STRATEGY_CONFIG,
-  pricePrecision = 2,
-): AnalysisResult | null {
-  if (candles.length < 60) return null;
-
-  const r = (n: number) => roundTo(n, pricePrecision);
-
+): IndicatorSeries {
   const closes = candles.map(c => c.close);
-  const last = candles.length - 1;
-  const price = closes[last];
-
-  const rsi = calcRSI(closes, config.rsiPeriod);
   const { histogram } = calcMACD(
     closes,
     config.macdFast,
     config.macdSlow,
     config.macdSignal,
   );
-  const ema9 = calcEMA(closes, config.emaFast);
-  const ema21 = calcEMA(closes, config.emaMid);
-  const ema50 = calcEMA(closes, config.emaSlow);
-  const atr = calcATR(candles, config.atrPeriod);
-  const stoch = calcStochastic(candles, config.stochPeriod);
   const bb = calcBollingerBands(
     closes,
     config.bollingerPeriod,
     config.bollingerStdDev,
   );
+  return {
+    closes,
+    rsi: calcRSI(closes, config.rsiPeriod),
+    histogram,
+    ema9: calcEMA(closes, config.emaFast),
+    ema21: calcEMA(closes, config.emaMid),
+    ema50: calcEMA(closes, config.emaSlow),
+    atr: calcATR(candles, config.atrPeriod),
+    stochK: calcStochastic(candles, config.stochPeriod).k,
+    bbUpper: bb.upper,
+    bbLower: bb.lower,
+  };
+}
+
+/**
+ * Analyse the bar at `last`, using precomputed series.
+ *
+ * Equivalent to calling analyzeCandles on `candles.slice(0, last + 1)`, but
+ * without recomputing every indicator. Replaying N bars that way is O(N²) and
+ * dominated by redundant work: a 36-config sweep over 1,200 bars took 16
+ * seconds before this existed.
+ */
+export function analyzeAt(
+  candles: Candle[],
+  ind: IndicatorSeries,
+  last: number,
+  config: StrategyConfig = DEFAULT_STRATEGY_CONFIG,
+  pricePrecision = 2,
+): AnalysisResult | null {
+  if (last < 59 || last >= candles.length) return null;
+
+  const r = (n: number) => roundTo(n, pricePrecision);
+
+  const { closes, rsi, histogram, ema9, ema21, ema50, atr } = ind;
+  const stoch = { k: ind.stochK };
+  const bb = { upper: ind.bbUpper, lower: ind.bbLower };
+  const price = closes[last];
 
   const currentATR = atr[last] ?? price * 0.002;
 
@@ -485,4 +530,26 @@ export function analyzeCandles(
       bbLower: bb.lower[last] ? r(bb.lower[last]) : undefined,
     },
   };
+}
+
+/**
+ * Analyse the most recent bar of a window.
+ *
+ * Thin wrapper over precomputeIndicators + analyzeAt, kept because it is the
+ * shape the live engine wants (one window, one answer) and the shape the
+ * pre-refactor parity fixtures assert against.
+ */
+export function analyzeCandles(
+  candles: Candle[],
+  config: StrategyConfig = DEFAULT_STRATEGY_CONFIG,
+  pricePrecision = 2,
+): AnalysisResult | null {
+  if (candles.length < 60) return null;
+  return analyzeAt(
+    candles,
+    precomputeIndicators(candles, config),
+    candles.length - 1,
+    config,
+    pricePrecision,
+  );
 }

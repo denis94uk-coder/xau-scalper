@@ -26,9 +26,10 @@ import {
   netPoints as netOf,
 } from "./costs";
 import {
-  analyzeCandles,
+  analyzeAt,
   type Candle,
   calcATR,
+  precomputeIndicators,
   roundTo,
   type StrategyConfig,
 } from "./strategy";
@@ -172,9 +173,12 @@ export function runBacktest(
     SHORT: Number.NEGATIVE_INFINITY,
   };
 
-  // ATR is causal (Wilder recursion from index 0), so precomputing over the
-  // full series gives each bar the same value the live cron would have seen.
+  // Every indicator is causal, so precomputing over the full series gives each
+  // bar exactly the value the live engine would have computed at that moment.
+  // Slicing and recomputing per bar instead makes the replay O(n²): a 36-config
+  // sweep over 1,200 bars took 16 seconds that way.
   const atrSeries = calcATR(candles, config.atrPeriod);
+  const indicators = precomputeIndicators(candles, config);
 
   // analyzeCandles needs >= 60 candles of history.
   const from = Math.max(60, startIndex);
@@ -234,8 +238,10 @@ export function runBacktest(
 
     // ── Look for a new entry when flat (mirrors generateSignals) ──
     if (!open) {
-      const analysis = analyzeCandles(
-        candles.slice(0, i + 1),
+      const analysis = analyzeAt(
+        candles,
+        indicators,
+        i,
         config,
         pricePrecision,
       );
