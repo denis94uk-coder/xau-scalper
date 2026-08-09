@@ -124,7 +124,9 @@ describe("journal", () => {
     expect(
       (await body<{ entries: unknown[] }>(call("/api/journal"))).entries,
     ).toHaveLength(2);
-    expect(await body<Record<string, number>>(call("/api/journal/counts"))).toEqual({
+    expect(
+      await body<Record<string, number>>(call("/api/journal/counts")),
+    ).toEqual({
       ENGINE_RUN: 1,
       SL_HIT: 1,
     });
