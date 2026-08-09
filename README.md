@@ -28,18 +28,29 @@ performance is a record rather than a reconstruction.
 ### Read this before trusting a number
 
 `bun run edge-audit` reports, per asset, the win rate the strategy must exceed
-just to break even after spread, fees and slippage. With the shipped defaults
-(1.5×ATR stop, TP1 at 1.2R) that is **69–87% depending on the instrument**,
-against a gross breakeven of 45.5%.
+just to break even after spread, fees and slippage. On the **built-in exchange
+cost estimates** that is **69–87%**, against a gross breakeven of 45.5% — which
+would make the default configuration unprofitable at TP1 no matter how good the
+entries were.
 
-That is not a bug — it is the arithmetic of a tight-target scalper paying costs
-on every trade. No 5-minute mean-reversion signal wins 83% of the time, so the
-default configuration has negative expectancy at TP1 **by construction**. The
-same table shows the bar falls to ~46% at TP2 on the liquid assets, which is
-achievable. Decide that trade-off deliberately before running this with money.
+**But that number is only as good as the spread it assumes**, and the built-in
+figures are estimates for crypto-exchange proxies. Gold is priced from PAXGUSDT,
+a token, not from a CFD broker. Sync a real MT5 account and the picture can
+change completely:
 
-Nothing here has been validated against live results. There is no forward-test
-record yet, and the strategy has never been shown to beat a null hypothesis.
+```
+  symbol      spread     TP1      TP2
+  XAUUSD       0.72bps   48.3%   30.7%     ← a typical retail CFD spread
+  (estimate)   8.00bps   83.0%   58.6%     ← what the app assumes without MT5
+```
+
+48% is a demanding but reachable bar; 83% is not. So **run `bun run mt5:sync`
+before drawing any conclusion about viability** — see [MetaTrader 5](#metatrader-5).
+The estimates are the pessimistic case, not the truth about your account.
+
+What has not changed: nothing here has been validated against live results.
+There is no forward-test record, and the strategy has never been shown to beat a
+null hypothesis.
 
 ---
 
@@ -255,6 +266,51 @@ So costs shrink every win and enlarge every loss. On gold a stop-out costs
 **2.6× what the chart shows**. Rates are per asset — gold quotes wider than BTC,
 and TAO wider still; a blended rate flatters exactly the illiquid assets where
 costs decide the outcome.
+
+---
+
+## MetaTrader 5
+
+Source bars and — more importantly — your broker's **real symbol specifications**
+from a running MT5 terminal. No Python: the official MetaTrader5 package ships
+`win_amd64` wheels only, so on macOS that route does not exist at all. MT5 runs
+there under Wine, and its `MQL5/Files` directory is an ordinary directory on the
+host, so a small MQL5 exporter plus a file read is the whole bridge.
+
+**Setup**
+
+1. MT5 → File → Open Data Folder → `MQL5/Experts`, copy `mt5/TeoExporter.mq5` there
+2. MetaEditor → F7 to compile
+3. Drag **TeoExporter** onto any chart
+4. Tools → Options → Expert Advisors → allow automated trading
+
+Then:
+
+```bash
+bun run mt5:sync              # find the terminal, ingest, report
+bun run mt5:sync -- --watch   # keep pulling every 30s
+bun run mt5:sync -- --dir "/path/to/MQL5/Files/teo"
+```
+
+The exporter takes symbol and timeframe inputs — use the names **your** broker
+uses, since gold is `XAUUSD` at some and `GOLD` or `XAUUSD.r` at others.
+
+**What it gets you**
+
+- Bars normalised to UTC. Timestamps arrive in broker server time (usually UTC+2
+  or +3, shifting with DST); the exporter reports the offset so it is subtracted
+  rather than guessed. A two-hour error would misalign every bar.
+- Your actual spread, contract size, tick value and digits — which is what makes
+  the edge audit describe your account instead of a plausible one.
+- Bars are stored under a namespaced asset id (`MT5:XAUUSD`) so broker data can
+  never be mixed with an exchange symbol of the same name.
+
+**What it does not do**: place orders, or read your credentials. It is a
+read-only data path. Volume is tick count, not traded size — most FX and CFD
+brokers do not publish real volume.
+
+Only the spread is measured. Fees and stop slippage cannot be read from a quote,
+so they remain assumptions and are labelled as such in the output.
 
 ---
 
