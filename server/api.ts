@@ -17,6 +17,7 @@ import {
   getAsset,
   getEnabledAssets,
 } from "../core/assets";
+import { assessSignificance } from "../core/significance";
 import type { Db } from "./db";
 import { type AppEvent, publish, subscribe } from "./events";
 import { fetchCandles, fetchTickers } from "./market";
@@ -175,7 +176,24 @@ export async function handleApi(
     // Per asset always. A combined total would sum points across instruments,
     // which is not a meaningful quantity.
     const assets = asset ? [asset] : getEnabledAssets().map(a => a.id);
-    return json({ byAsset: assets.map(a => db.performance(a)) });
+    return json({
+      byAsset: assets.map(a => {
+        const perf = db.performance(a);
+        // Attach the verdict to the numbers it qualifies, rather than offering
+        // it separately: a win rate shown without its sample size is the exact
+        // thing that gets over-read.
+        const decided = perf.wins + perf.losses;
+        const breakeven =
+          perf.avgWinPoints + perf.avgLossPoints > 0
+            ? (perf.avgLossPoints / (perf.avgWinPoints + perf.avgLossPoints)) *
+              100
+            : 50;
+        return {
+          ...perf,
+          significance: assessSignificance(perf.wins, decided, breakeven),
+        };
+      }),
+    });
   }
 
   // ─── Candles ───

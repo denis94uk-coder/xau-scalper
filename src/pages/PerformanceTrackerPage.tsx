@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { useLive } from "@/hooks/useLive";
-import { api } from "@/lib/api";
+import { api, type Significance } from "@/lib/api";
 
 type SourceFilter = "all" | "engine" | "dashboard" | "experimental";
 
@@ -144,6 +144,10 @@ export function PerformanceTrackerPage() {
             </button>
           ))}
       </div>
+
+      {/* What the numbers below are worth. Placed above them deliberately —
+          a win rate read before its sample size is the error this prevents. */}
+      <SignificanceBanner sig={stats.significance} />
 
       {/* Main Stats Grid */}
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
@@ -453,6 +457,64 @@ export function PerformanceTrackerPage() {
                 </span>
               </div>
             ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The verdict on whether this record beats chance.
+ *
+ * Deliberately plain-spoken. "p = 0.14" means nothing to most people looking at
+ * a trading dashboard at 2am; "this could easily be luck" means the right thing.
+ */
+function SignificanceBanner({ sig }: { sig: Significance }) {
+  const style = {
+    significant: {
+      box: "bg-emerald-500/10 border-emerald-500/25",
+      dot: "bg-emerald-400",
+      title: "text-emerald-400",
+      label: "Real edge, so far",
+    },
+    indistinguishable_from_chance: {
+      box: "bg-yellow-500/10 border-yellow-500/25",
+      dot: "bg-yellow-400",
+      title: "text-yellow-400",
+      label: "Could be luck",
+    },
+    insufficient_data: {
+      box: "bg-white/5 border-white/10",
+      dot: "bg-muted-foreground",
+      title: "text-muted-foreground",
+      label: "Not enough trades",
+    },
+  }[sig.verdict];
+
+  return (
+    <div className={`rounded-lg border p-3 ${style.box}`}>
+      <div className="flex items-start gap-2">
+        <span className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${style.dot}`} />
+        <div className="min-w-0">
+          <div className={`text-sm font-medium ${style.title}`}>
+            {style.label}
+          </div>
+          <p className="text-xs text-muted-foreground mt-0.5">{sig.summary}</p>
+          {sig.trades > 0 && (
+            <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-[10px] font-mono text-muted-foreground">
+              <span>
+                true rate {sig.interval.low.toFixed(0)}–
+                {sig.interval.high.toFixed(0)}%
+              </span>
+              <span>breakeven {sig.breakevenRate.toFixed(1)}%</span>
+              <span>p = {sig.pValue.toFixed(3)}</span>
+              {sig.tradesNeeded !== null && (
+                <span>
+                  {sig.tradesNeeded} trades to confirm ({sig.trades} so far)
+                </span>
+              )}
+            </div>
           )}
         </div>
       </div>

@@ -96,6 +96,33 @@ export interface JournalEntry {
   timestamp: number;
 }
 
+export type SignificanceVerdict =
+  | "insufficient_data"
+  | "indistinguishable_from_chance"
+  | "significant";
+
+/**
+ * How much of a win rate is real, and how much could be luck.
+ *
+ * Served alongside the performance numbers rather than on its own endpoint, so
+ * a win rate is never rendered without the sample size that qualifies it.
+ */
+export interface Significance {
+  trades: number;
+  wins: number;
+  winRate: number;
+  /** The rate that must be beaten to break even after costs. */
+  breakevenRate: number;
+  /** Probability of a result this good if the true edge were zero. */
+  pValue: number;
+  /** 95% Wilson interval on the true win rate. */
+  interval: { low: number; high: number };
+  verdict: SignificanceVerdict;
+  /** Trades needed to resolve an edge of the observed size. null if none. */
+  tradesNeeded: number | null;
+  summary: string;
+}
+
 export interface AssetPerformance {
   asset: string;
   closed: number;
@@ -116,6 +143,7 @@ export interface AssetPerformance {
   currentStreak: number;
   /** null when there were no losing trades — the ratio is undefined, not zero. */
   profitFactor: number | null;
+  significance: Significance;
 }
 
 export interface ManualTrade {

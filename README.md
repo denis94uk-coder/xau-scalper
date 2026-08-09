@@ -48,9 +48,15 @@ change completely:
 before drawing any conclusion about viability** — see [MetaTrader 5](#metatrader-5).
 The estimates are the pessimistic case, not the truth about your account.
 
+And beating breakeven is not the same as having an edge. A 58% win rate over 30
+trades looks convincing and is well inside what a coin flip produces. The app
+now refuses to let that pass: every win rate it reports is served with a verdict
+on whether it is distinguishable from chance — see
+[Is the edge real?](#is-the-edge-real).
+
 What has not changed: nothing here has been validated against live results.
-There is no forward-test record, and the strategy has never been shown to beat a
-null hypothesis.
+There is no forward-test record. The machinery to reach a verdict exists and is
+tested; the trades to feed it do not exist yet.
 
 ---
 
@@ -93,13 +99,13 @@ a price that never existed.
 
 | Path | What lives there |
 |---|---|
-| `core/` | Strategy, indicators, asset registry, backtest replay, cost model, regime tagging, parameter sweep, self-heal decision. No framework imports — shared by the server, the CLI tools and the tests. |
+| `core/` | Strategy, indicators, asset registry, backtest replay, cost model, regime tagging, parameter sweep, self-heal decision, statistical significance. No framework imports — shared by the server, the CLI tools and the tests. |
 | `server/` | HTTP + SSE, SQLite layer, signal engine, scheduler. |
 | `server/intel/` | Regime, macro correlation, news calendar, liquidity sweeps. |
 | `src/` | React UI (Vite, Tailwind, shadcn/ui). |
 | `scripts/` | Backtest, batch scorer, edge audit. |
 | `teo/` | Python sidecar: Kronos forecasting, parameter sweeps, self-heal. |
-| `tests/`, `core/__tests__/`, `server/__tests__/` | 102 TypeScript + 89 Python tests. |
+| `tests/`, `core/__tests__/`, `server/__tests__/` | 186 TypeScript + 89 Python tests. |
 
 ---
 
@@ -192,7 +198,7 @@ Served on the same origin as the UI. No authentication: the server binds to
 | `GET` | `/api/ideas/:id` | One signal with its events. |
 | `GET` | `/api/journal?asset&limit` | Audit trail. |
 | `GET` | `/api/journal/counts` | Row counts by event type (a SQL aggregate, not a table read). |
-| `GET` | `/api/performance?asset` | Per-asset stats: win rate, expectancy, streaks, profit factor. |
+| `GET` | `/api/performance?asset` | Per-asset stats: win rate, expectancy, streaks, profit factor — each with a `significance` block stating whether the record beats chance. |
 | `GET` | `/api/candles?asset&interval&limit` | Stored OHLCV from the database. |
 | `GET` | `/api/klines?symbol&interval&limit` | Live OHLCV proxied from the venue. Serves intervals the engine does not persist (1m, 3m); the browser cannot call the venue directly because of CORS. |
 | `GET` | `/api/prices?symbols` | Batched 24h ticker. One upstream request for all symbols. |
@@ -266,6 +272,55 @@ So costs shrink every win and enlarge every loss. On gold a stop-out costs
 **2.6× what the chart shows**. Rates are per asset — gold quotes wider than BTC,
 and TAO wider still; a blended rate flatters exactly the illiquid assets where
 costs decide the outcome.
+
+---
+
+## Is the edge real?
+
+`core/significance.ts`. Every other number in the system describes what
+happened; these describe **how much of it you are entitled to believe**.
+
+The failure this exists to prevent is specific and common: a strategy runs for a
+few weeks, shows a 58% win rate against a 48% breakeven, and the operator scales
+up. With 30 trades that gap is comfortably inside what a coin flip produces.
+
+`GET /api/performance` returns a `significance` block on every asset, and the
+Performance page renders its verdict **above** the win rate — a rate read before
+its sample size is the whole error.
+
+| Field | Meaning |
+|---|---|
+| `verdict` | `insufficient_data` (under 30 trades — no verdict offered at all), `indistinguishable_from_chance`, or `significant`. |
+| `pValue` | One-sided binomial: probability of a record this good if the true edge were zero. |
+| `interval` | 95% Wilson score interval on the true win rate. Wilson rather than the textbook normal approximation, which at 20 trades can return bounds below 0% or above 100%. |
+| `breakevenRate` | The rate that must be beaten after costs, derived from the realised average win and loss. |
+| `tradesNeeded` | Trades required to settle an edge of the observed size, at 95% confidence and 80% power. `null` when the observed rate is at or below breakeven — there is no positive edge to size for. |
+
+What that looks like across sample sizes, against a 48% breakeven:
+
+```
+  trades  wins   rate   p-value   verdict
+      12     8   66.7%   0.1575   too few to judge
+      30    18   60.0%   0.1286   could be luck
+     120    66   55.0%   0.0745   could be luck
+     400   212   53.0%   0.0255   real edge
+    1000   530   53.0%   0.0009   real edge
+```
+
+Note the third row: 55% over 120 trades is a result most people would act on,
+and it does not clear the bar.
+
+**Correlated positions are not independent evidence.** Six of the seven
+registered assets are crypto that move together, so seven simultaneous longs are
+close to one bet repeated — but every statistic above counts them as seven,
+which overstates confidence exactly when a correlated drawdown is most likely.
+`effectiveSampleSize(trades, avgConcurrent, correlation)` applies the
+equicorrelation discount: 600 trades across 6 assets at ρ = 0.8 are worth **120**.
+
+The maths is exact rather than approximated — log-factorials are summed and
+cached, not estimated with Stirling, because being wrong about a four-trade
+probability is precisely the case this module exists to get right. 27 tests
+check it against hand-computable values.
 
 ---
 

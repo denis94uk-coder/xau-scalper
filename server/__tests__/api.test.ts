@@ -161,6 +161,38 @@ describe("performance", () => {
     // No aggregate field exists to accidentally render.
     expect(b).not.toHaveProperty("total");
   });
+
+  test("every asset carries a significance verdict, not just a win rate", async () => {
+    // Two wins out of two looks like a 100% win rate. The endpoint must not let
+    // that be served without saying it means nothing.
+    for (const _ of [0, 1]) {
+      db.updateIdea(idea({ asset: "PAXGUSDT" }), {
+        status: "TP2_HIT",
+        pnl_points: 50,
+      });
+    }
+
+    const b = await body<{
+      byAsset: Array<{
+        asset: string;
+        winRate: number;
+        significance: { verdict: string; trades: number; summary: string };
+      }>;
+    }>(call("/api/performance?asset=PAXGUSDT"));
+
+    const row = b.byAsset[0];
+    expect(row.winRate).toBe(100);
+    expect(row.significance.trades).toBe(2);
+    expect(row.significance.verdict).toBe("insufficient_data");
+    expect(row.significance.summary).toContain("too few");
+  });
+
+  test("an asset with no trades still reports a verdict rather than omitting it", async () => {
+    const b = await body<{
+      byAsset: Array<{ significance: { verdict: string } }>;
+    }>(call("/api/performance?asset=BTCUSDT"));
+    expect(b.byAsset[0].significance.verdict).toBe("insufficient_data");
+  });
 });
 
 describe("candles", () => {
