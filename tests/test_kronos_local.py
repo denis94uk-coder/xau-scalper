@@ -29,8 +29,13 @@ from teo.forecasting.kronos import (
     reset_kronos,
 )
 
-HAS_TORCH = importlib.util.find_spec("torch") is not None
-requires_torch = pytest.mark.skipif(not HAS_TORCH, reason="torch not installed")
+# The vendored source imports all of these at module load, so checking only
+# torch would make the tests ERROR rather than skip on a partial install.
+_KRONOS_DEPS = ("torch", "pandas", "einops", "tqdm", "huggingface_hub")
+_MISSING = [m for m in _KRONOS_DEPS if importlib.util.find_spec(m) is None]
+requires_torch = pytest.mark.skipif(
+    bool(_MISSING), reason=f"Kronos deps not installed: {', '.join(_MISSING)}"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -182,7 +187,8 @@ def test_vendored_model_builds_and_runs_a_forward_pass():
     batch, seq = 1, 16
     s1 = torch.randint(0, 2**6, (batch, seq))
     s2 = torch.randint(0, 2**6, (batch, seq))
-    stamp = torch.zeros(batch, seq, 4)
+    # Temporal stamp is 5 features: minute, hour, weekday, day, month.
+    stamp = torch.zeros(batch, seq, 5)
 
     with torch.no_grad():
         out = model(s1, s2, stamp)
