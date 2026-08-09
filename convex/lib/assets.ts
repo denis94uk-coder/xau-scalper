@@ -11,6 +11,7 @@
  * a customised `config`. Nothing else needs to change — the crons and backtest
  * iterate the registry automatically.
  */
+import type { CostModel } from "./costs";
 import { DEFAULT_STRATEGY_CONFIG, type StrategyConfig } from "./strategy";
 
 export type DataSource = "binance";
@@ -31,6 +32,14 @@ export interface AssetDefinition {
   pricePrecision: number;
   /** Strategy knobs for this asset. */
   config: StrategyConfig;
+  /**
+   * What it costs to trade this instrument.
+   *
+   * Not uniform: a thin altcoin has a wider spread and slips further on a stop
+   * than BTC does. Using one blended number across the registry flatters the
+   * illiquid assets, which are exactly the ones where costs decide the outcome.
+   */
+  costs: CostModel;
   /** Whether the crons should generate/monitor signals for this asset. */
   enabled: boolean;
 }
@@ -50,6 +59,13 @@ export const ASSETS: AssetDefinition[] = [
     sessionType: "24_7",
     pricePrecision: 2,
     config: DEFAULT_STRATEGY_CONFIG,
+    // Gold on Binance is thinner than the majors and quotes wider.
+    costs: {
+      halfSpreadBps: 4,
+      takerFeeBps: 4,
+      makerFeeBps: 2,
+      stopSlippageBps: 8,
+    },
     enabled: true,
   },
   {
@@ -60,6 +76,13 @@ export const ASSETS: AssetDefinition[] = [
     sessionType: "24_7",
     pricePrecision: 2,
     config: DEFAULT_STRATEGY_CONFIG,
+    // Deepest book in the registry.
+    costs: {
+      halfSpreadBps: 0.5,
+      takerFeeBps: 4,
+      makerFeeBps: 2,
+      stopSlippageBps: 2,
+    },
     enabled: true,
   },
   {
@@ -70,6 +93,12 @@ export const ASSETS: AssetDefinition[] = [
     sessionType: "24_7",
     pricePrecision: 2,
     config: DEFAULT_STRATEGY_CONFIG,
+    costs: {
+      halfSpreadBps: 0.7,
+      takerFeeBps: 4,
+      makerFeeBps: 2,
+      stopSlippageBps: 2.5,
+    },
     enabled: true,
   },
   {
@@ -80,6 +109,12 @@ export const ASSETS: AssetDefinition[] = [
     sessionType: "24_7",
     pricePrecision: 2,
     config: DEFAULT_STRATEGY_CONFIG,
+    costs: {
+      halfSpreadBps: 1,
+      takerFeeBps: 4,
+      makerFeeBps: 2,
+      stopSlippageBps: 3,
+    },
     enabled: true,
   },
   {
@@ -90,6 +125,12 @@ export const ASSETS: AssetDefinition[] = [
     sessionType: "24_7",
     pricePrecision: 3,
     config: DEFAULT_STRATEGY_CONFIG,
+    costs: {
+      halfSpreadBps: 2,
+      takerFeeBps: 4,
+      makerFeeBps: 2,
+      stopSlippageBps: 5,
+    },
     enabled: true,
   },
   {
@@ -100,6 +141,12 @@ export const ASSETS: AssetDefinition[] = [
     sessionType: "24_7",
     pricePrecision: 2,
     config: DEFAULT_STRATEGY_CONFIG,
+    costs: {
+      halfSpreadBps: 2.5,
+      takerFeeBps: 4,
+      makerFeeBps: 2,
+      stopSlippageBps: 6,
+    },
     enabled: true,
   },
   {
@@ -110,6 +157,13 @@ export const ASSETS: AssetDefinition[] = [
     sessionType: "24_7",
     pricePrecision: 2,
     config: DEFAULT_STRATEGY_CONFIG,
+    // Thinnest book here — costs dominate any short-horizon edge.
+    costs: {
+      halfSpreadBps: 5,
+      takerFeeBps: 4,
+      makerFeeBps: 2,
+      stopSlippageBps: 12,
+    },
     enabled: true,
   },
 ];

@@ -19,6 +19,13 @@
  */
 
 import {
+  breakevenWinRate,
+  type CostModel,
+  DEFAULT_COST_MODEL,
+  expectancy,
+  netPoints as netOf,
+} from "./costs";
+import {
   analyzeCandles,
   type Candle,
   calcATR,
@@ -30,6 +37,9 @@ export interface ClosedTrade {
   direction: "LONG" | "SHORT";
   entryPrice: number;
   exitPrice: number;
+  /** Level difference the strategy aimed at, before any cost. */
+  grossPoints: number;
+  /** What would actually have landed in the account. This is the real result. */
   pnlPoints: number;
   outcome: "TP1_TP2" | "SL" | "TRAIL_SL";
 }
@@ -45,6 +55,14 @@ export interface BacktestMetrics {
   maxDrawdown: number;
   /** null when there were no losing trades — the ratio is undefined, not zero. */
   profitFactor: number | null;
+  /** Sum of gross results, so the cost drag is visible rather than hidden. */
+  grossPoints: number;
+  /** Total paid away in spread, fees and slippage. */
+  costPoints: number;
+  /** Average points won or lost per trade, net. Edge is expectancy > 0. */
+  expectancyPerTrade: number;
+  /** Win rate this strategy must beat to break even after costs. */
+  breakevenWinRate: number | null;
 }
 
 interface OpenTrade {
@@ -66,11 +84,14 @@ interface OpenTrade {
  * degraded. Null forces callers to handle "undefined ratio" explicitly.
  */
 export function computeMetrics(trades: ClosedTrade[]): BacktestMetrics {
+  // Classification is on NET result. A trade that reached its target but did
+  // not cover its costs is a loss, however the chart looked.
   const wins = trades.filter(t => t.pnlPoints > 0);
   const losses = trades.filter(t => t.pnlPoints <= 0);
   const grossWin = wins.reduce((s, t) => s + t.pnlPoints, 0);
   const grossLoss = losses.reduce((s, t) => s + Math.abs(t.pnlPoints), 0);
   const netPoints = trades.reduce((s, t) => s + t.pnlPoints, 0);
+  const grossTotal = trades.reduce((s, t) => s + t.grossPoints, 0);
 
   // Max drawdown on the cumulative equity curve (in points).
   let peak = 0;
@@ -83,16 +104,26 @@ export function computeMetrics(trades: ClosedTrade[]): BacktestMetrics {
     if (dd > maxDrawdown) maxDrawdown = dd;
   }
 
+  const winRate = trades.length ? (wins.length / trades.length) * 100 : 0;
+  const avgWin = wins.length ? grossWin / wins.length : 0;
+  const avgLoss = losses.length ? grossLoss / losses.length : 0;
+
   return {
     trades: trades.length,
     wins: wins.length,
     losses: losses.length,
-    winRate: trades.length ? (wins.length / trades.length) * 100 : 0,
+    winRate,
     netPoints,
-    avgWin: wins.length ? grossWin / wins.length : 0,
-    avgLoss: losses.length ? grossLoss / losses.length : 0,
+    avgWin,
+    avgLoss,
     maxDrawdown,
     profitFactor: grossLoss === 0 ? null : grossWin / grossLoss,
+    grossPoints: grossTotal,
+    costPoints: grossTotal - netPoints,
+    expectancyPerTrade: trades.length
+      ? expectancy(winRate, avgWin, avgLoss)
+      : 0,
+    breakevenWinRate: breakevenWinRate(avgWin, avgLoss),
   };
 }
 
@@ -110,8 +141,30 @@ export function runBacktest(
   config: StrategyConfig,
   pricePrecision = 2,
   startIndex = 60,
+  costs: CostModel = DEFAULT_COST_MODEL,
 ): ClosedTrade[] {
   const r = (n: number) => roundTo(n, pricePrecision);
+
+  /** Build a closed trade with costs applied for the given exit type. */
+  const close = (
+    o: OpenTrade,
+    exitPrice: number,
+    outcome: ClosedTrade["outcome"],
+  ): ClosedTrade => {
+    const gross =
+      o.direction === "LONG"
+        ? exitPrice - o.entryPrice
+        : o.entryPrice - exitPrice;
+    const kind = outcome === "TP1_TP2" ? "TP" : outcome;
+    return {
+      direction: o.direction,
+      entryPrice: o.entryPrice,
+      exitPrice,
+      grossPoints: r(gross),
+      pnlPoints: r(netOf(gross, o.entryPrice, exitPrice, kind, costs)),
+      outcome,
+    };
+  };
   const closed: ClosedTrade[] = [];
   let open: OpenTrade | null = null;
   const lastEntryMs: Record<"LONG" | "SHORT", number> = {
@@ -138,30 +191,14 @@ export function runBacktest(
       // SL first, using bar extremes for the touch (conservative).
       const slHit = isLong ? bar.low <= effectiveSL : bar.high >= effectiveSL;
       if (slHit) {
-        closed.push({
-          direction: open.direction,
-          entryPrice: open.entryPrice,
-          exitPrice: effectiveSL,
-          pnlPoints: r(
-            isLong
-              ? effectiveSL - open.entryPrice
-              : open.entryPrice - effectiveSL,
-          ),
-          outcome: open.trailingSL ? "TRAIL_SL" : "SL",
-        });
+        closed.push(
+          close(open, effectiveSL, open.trailingSL ? "TRAIL_SL" : "SL"),
+        );
         open = null;
       } else if (open.status === "TP1_HIT") {
         const tp2Hit = isLong ? bar.high >= open.tp2 : bar.low <= open.tp2;
         if (tp2Hit) {
-          closed.push({
-            direction: open.direction,
-            entryPrice: open.entryPrice,
-            exitPrice: open.tp2,
-            pnlPoints: r(
-              isLong ? open.tp2 - open.entryPrice : open.entryPrice - open.tp2,
-            ),
-            outcome: "TP1_TP2",
-          });
+          closed.push(close(open, open.tp2, "TP1_TP2"));
           open = null;
         } else if (currentATR > 0) {
           // ATR trailing stop, only after TP1.
@@ -185,17 +222,7 @@ export function runBacktest(
           // to resolve a move it already completed.
           const tp2Hit = isLong ? bar.high >= open.tp2 : bar.low <= open.tp2;
           if (tp2Hit) {
-            closed.push({
-              direction: open.direction,
-              entryPrice: open.entryPrice,
-              exitPrice: open.tp2,
-              pnlPoints: r(
-                isLong
-                  ? open.tp2 - open.entryPrice
-                  : open.entryPrice - open.tp2,
-              ),
-              outcome: "TP1_TP2",
-            });
+            closed.push(close(open, open.tp2, "TP1_TP2"));
             open = null;
           } else {
             open.status = "TP1_HIT";

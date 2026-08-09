@@ -220,12 +220,19 @@ async function main() {
         config,
         asset.pricePrecision,
         60,
+        asset.costs,
       ),
     );
     const scored: ScoredConfig = { config: override, metrics };
     if (splitIndex !== null) {
       scored.outOfSample = computeMetrics(
-        runBacktest(candles, config, asset.pricePrecision, splitIndex),
+        runBacktest(
+          candles,
+          config,
+          asset.pricePrecision,
+          splitIndex,
+          asset.costs,
+        ),
       );
     }
     return scored;

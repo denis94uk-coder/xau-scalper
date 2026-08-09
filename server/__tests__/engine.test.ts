@@ -7,6 +7,7 @@
  */
 import { beforeEach, describe, expect, test } from "bun:test";
 import type { AssetDefinition } from "../../convex/lib/assets";
+import { ZERO_COST_MODEL } from "../../convex/lib/costs";
 import {
   type Candle,
   DEFAULT_STRATEGY_CONFIG,
@@ -27,6 +28,9 @@ const ASSET: AssetDefinition = {
   sessionType: "24_7",
   pricePrecision: 2,
   config: DEFAULT_STRATEGY_CONFIG,
+  // Zero costs here so the exit-logic assertions test levels, not arithmetic.
+  // Cost behaviour has its own tests in convex/lib/__tests__/costs.test.ts.
+  costs: ZERO_COST_MODEL,
   enabled: true,
 };
 

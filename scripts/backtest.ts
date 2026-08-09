@@ -126,10 +126,16 @@ async function main() {
     process.exit(1);
   }
 
-  const trades = runBacktest(candles, asset.config, asset.pricePrecision);
+  const trades = runBacktest(
+    candles,
+    asset.config,
+    asset.pricePrecision,
+    60,
+    asset.costs,
+  );
   const m = computeMetrics(trades);
 
-  console.log("─── Results ───");
+  console.log("─── Results (net of spread, fees and slippage) ───");
   console.log(`Total trades:   ${m.trades}`);
   console.log(
     `Win rate:       ${fmt(m.winRate)}%  (${m.wins}W / ${m.losses}L)`,
@@ -140,6 +146,20 @@ async function main() {
   console.log(`Max drawdown:   ${fmt(m.maxDrawdown)} pts`);
   console.log(
     `Profit factor:  ${m.profitFactor === null ? "n/a (no losing trades)" : fmt(m.profitFactor)}`,
+  );
+  console.log("");
+  console.log("─── Edge ───");
+  console.log(`Gross points:   ${fmt(m.grossPoints)}`);
+  console.log(`Cost paid:      ${fmt(m.costPoints)} pts`);
+  console.log(`Expectancy:     ${fmt(m.expectancyPerTrade)} pts/trade`);
+  console.log(
+    `Breakeven WR:   ${m.breakevenWinRate === null ? "n/a" : `${fmt(m.breakevenWinRate)}%`}` +
+      `   (actual ${fmt(m.winRate)}%)`,
+  );
+  console.log(
+    m.expectancyPerTrade > 0
+      ? "  → positive expectancy after costs on this window"
+      : "  → NO edge after costs on this window",
   );
   console.log("");
 }

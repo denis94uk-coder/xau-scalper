@@ -15,6 +15,7 @@ function trade(pnlPoints: number): ClosedTrade {
     direction: "LONG",
     entryPrice: 100,
     exitPrice: 100 + pnlPoints,
+    grossPoints: pnlPoints,
     pnlPoints,
     outcome: pnlPoints > 0 ? "TP1_TP2" : "SL",
   };
