@@ -123,6 +123,55 @@ export interface Significance {
   summary: string;
 }
 
+export interface PortfolioPosition {
+  asset: string;
+  direction: "LONG" | "SHORT";
+  weight?: number;
+}
+
+export interface PairCorrelation {
+  a: string;
+  b: string;
+  value: number;
+  /** Overlapping bars behind the estimate. null when it was assumed. */
+  samples: number | null;
+  assumed: boolean;
+}
+
+/**
+ * What the open positions are worth together.
+ *
+ * The per-asset view cannot see that five crypto longs are one bet at five
+ * times the size; this is the view that can.
+ */
+export interface Portfolio {
+  positions: PortfolioPosition[];
+  /** Net signed exposure. Large magnitude = a directional bet, not a book. */
+  netExposure: number;
+  /** Sum of position sizes, blind to how they interact. */
+  grossRisk: number;
+  /** Risk in units of one independent position. */
+  portfolioRisk: number;
+  /** portfolioRisk / grossRisk. Near 1 = one bet in several costumes. */
+  concentration: number;
+  maxRisk: number;
+  headroom: number;
+  averageCorrelation: number;
+  /** False when any pair fell back to an assumed correlation. */
+  correlationsMeasured: boolean;
+  summary: string;
+  correlations: PairCorrelation[];
+  evidence: {
+    trades: number;
+    wins: number;
+    averageConcurrency: number;
+    averageCorrelation: number;
+    /** Trades discounted for having been held at the same time. */
+    effectiveTrades: number;
+    significance: Significance;
+  };
+}
+
 export interface AssetPerformance {
   asset: string;
   closed: number;
@@ -223,6 +272,8 @@ export const api = {
 
   performance: (opts: { asset?: string } = {}) =>
     get<{ byAsset: AssetPerformance[] }>(`/api/performance${q(opts)}`),
+
+  portfolio: () => get<Portfolio>("/api/portfolio"),
 
   candles: (asset: string, interval = "5m", limit = 200) =>
     get<{ asset: string; interval: string; candles: Candle[] }>(

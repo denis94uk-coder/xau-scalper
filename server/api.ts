@@ -17,8 +17,10 @@ import {
   getAsset,
   getEnabledAssets,
 } from "../core/assets";
-import { assessSignificance } from "../core/significance";
+import { averageConcurrency, summarise } from "../core/portfolio";
+import { assessSignificance, effectiveSampleSize } from "../core/significance";
 import type { Db } from "./db";
+import { correlationsFrom, openExposures } from "./engine";
 import { type AppEvent, publish, subscribe } from "./events";
 import { fetchCandles, fetchTickers } from "./market";
 
@@ -193,6 +195,62 @@ export async function handleApi(
           significance: assessSignificance(perf.wins, decided, breakeven),
         };
       }),
+    });
+  }
+
+  // ─── Portfolio ───
+  if (path === "/api/portfolio") {
+    const assets = getEnabledAssets();
+    const matrix = correlationsFrom(db, assets);
+    const open = openExposures(db);
+    const book = summarise(open, matrix);
+
+    // Every distinct pair, so a refusal in the journal can be traced to the
+    // correlation that caused it.
+    const ids = assets.map(a => a.id);
+    const correlations = [];
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        const e = matrix.get(ids[i], ids[j]);
+        correlations.push({
+          a: ids[i],
+          b: ids[j],
+          value: e.value,
+          samples: Number.isFinite(e.samples) ? e.samples : null,
+          assumed: e.assumed,
+        });
+      }
+    }
+
+    // How much independent evidence the whole record actually carries. The
+    // per-asset verdicts on /api/performance count every trade as its own
+    // result; across a correlated book, many of them are the same result.
+    const periods = db.holdingPeriods();
+    const wins = periods.filter(p => p.won).length;
+    const concurrency = averageConcurrency(periods);
+    const rho = Math.max(0, matrix.average());
+    const effective = effectiveSampleSize(periods.length, concurrency, rho);
+    // Hold the win rate fixed and shrink the sample — the rate is what was
+    // observed; only the confidence it supports is being discounted.
+    const effectiveWins =
+      periods.length > 0
+        ? Math.round((wins / periods.length) * effective)
+        : 0;
+
+    return json({
+      ...book,
+      correlations,
+      evidence: {
+        trades: periods.length,
+        wins,
+        averageConcurrency: concurrency,
+        averageCorrelation: rho,
+        effectiveTrades: effective,
+        // Breakeven is unknown at portfolio level (points are not comparable
+        // across instruments), so this asks the weaker but answerable
+        // question: is the win rate itself distinguishable from a coin flip?
+        significance: assessSignificance(effectiveWins, effective, 50),
+      },
     });
   }
 

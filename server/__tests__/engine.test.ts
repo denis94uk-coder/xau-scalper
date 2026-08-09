@@ -247,6 +247,122 @@ describe("generateForAsset", () => {
   });
 });
 
+describe("the portfolio gate", () => {
+  /**
+   * A slow grind up into a three-bar flush: oversold RSI and stochastic
+   * against an intact uptrend, which is a grade-A long under the default
+   * config. Confirmed at 94% confidence.
+   */
+  const capitulation: Candle[] = (() => {
+    const p = [100];
+    for (let i = 1; i < 77; i++) p.push(p[i - 1] * 1.0005);
+    for (let i = 0; i < 3; i++) p.push(p[p.length - 1] * 0.995);
+    return p.map((price, i) => ({
+      time: 1_000_000 + i * 300_000,
+      open: price,
+      high: price * 1.002,
+      low: price * 0.998,
+      close: price,
+      volume: 1,
+    }));
+  })();
+
+  const feed = () => ({ db, fetcher: klineFetcher(capitulation) });
+
+  test("the setup does fire when nothing else is open", async () => {
+    // Establishes the baseline: everything below blocks THIS signal, so if it
+    // never fired in the first place the gate tests would pass vacuously.
+    const id = await generateForAsset(feed(), ASSET);
+    expect(id).not.toBeNull();
+  });
+
+  test("refuses a signal that would push the book past its risk cap", async () => {
+    db.createIdea({
+      asset: "OTHERUSDT",
+      direction: "LONG",
+      entryPrice: 100,
+      stopLoss: 95,
+      tp1: 106,
+      tp2: 112,
+      spotPrice: 100,
+    });
+
+    // One open position at an assumed ρ of 0.8 already sits near a cap of 1.
+    const id = await generateForAsset(
+      { ...feed(), limits: { maxRisk: 1 } },
+      ASSET,
+    );
+    expect(id).toBeNull();
+    expect(db.listIdeas()).toHaveLength(1); // only the pre-existing one
+  });
+
+  test("a refusal is recorded with the reason, not swallowed", async () => {
+    db.createIdea({
+      asset: "OTHERUSDT",
+      direction: "LONG",
+      entryPrice: 100,
+      stopLoss: 95,
+      tp1: 106,
+      tp2: 112,
+      spotPrice: 100,
+    });
+    await generateForAsset({ ...feed(), limits: { maxRisk: 1 } }, ASSET);
+
+    const blocked = db
+      .listJournal()
+      .filter(r => r.event_type === "SIGNAL_BLOCKED");
+    expect(blocked).toHaveLength(1);
+    expect(blocked[0].asset).toBe(ASSET.id);
+    expect(blocked[0].details).toContain("over the");
+    // The correlation that caused it must be inspectable after the fact.
+    expect(blocked[0].details).toContain("OTHERUSDT");
+  });
+
+  test("the same book passes under a cap that has room for it", async () => {
+    db.createIdea({
+      asset: "OTHERUSDT",
+      direction: "LONG",
+      entryPrice: 100,
+      stopLoss: 95,
+      tp1: 106,
+      tp2: 112,
+      spotPrice: 100,
+    });
+    const id = await generateForAsset(
+      { ...feed(), limits: { maxRisk: 10 } },
+      ASSET,
+    );
+    expect(id).not.toBeNull();
+  });
+
+  test("a closed position no longer occupies risk budget", async () => {
+    const stale = db.createIdea({
+      asset: "OTHERUSDT",
+      direction: "LONG",
+      entryPrice: 100,
+      stopLoss: 95,
+      tp1: 106,
+      tp2: 112,
+      spotPrice: 100,
+    });
+    db.updateIdea(stale, { status: "TP2_HIT", pnl_points: 12 });
+
+    const id = await generateForAsset(
+      { ...feed(), limits: { maxRisk: 1 } },
+      ASSET,
+    );
+    expect(id).not.toBeNull();
+  });
+
+  test("an admitted signal records what it did to portfolio risk", async () => {
+    const id = await generateForAsset(feed(), ASSET);
+    const row = db
+      .listJournal()
+      .find(r => r.event_type === "SIGNAL_GENERATED" && r.idea_id === id);
+    expect(row?.details).toContain("portfolio risk");
+  });
+});
+
 describe("gap recovery", () => {
   /** Bars that dip to 90 — through a long's stop at 95 — then recover to 101. */
   function dipThenRecover(startTime: number): Candle[] {

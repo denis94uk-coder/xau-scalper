@@ -195,6 +195,203 @@ describe("performance", () => {
   });
 });
 
+describe("portfolio", () => {
+  type Portfolio = {
+    positions: unknown[];
+    grossRisk: number;
+    portfolioRisk: number;
+    concentration: number;
+    netExposure: number;
+    headroom: number;
+    maxRisk: number;
+    correlationsMeasured: boolean;
+    summary: string;
+    correlations: Array<{
+      a: string;
+      b: string;
+      value: number;
+      samples: number | null;
+      assumed: boolean;
+    }>;
+    evidence: {
+      trades: number;
+      wins: number;
+      effectiveTrades: number;
+      averageConcurrency: number;
+      significance: { verdict: string };
+    };
+  };
+
+  test("an empty book reports no risk rather than dividing by zero", async () => {
+    const b = await body<Portfolio>(call("/api/portfolio"));
+    expect(b.portfolioRisk).toBe(0);
+    expect(b.concentration).toBe(0);
+    expect(b.summary).toBe("No open positions.");
+    expect(b.headroom).toBe(b.maxRisk);
+  });
+
+  test("several same-direction positions read as more risk than one", async () => {
+    idea({ asset: "PAXGUSDT" });
+    const before = await body<Portfolio>(call("/api/portfolio"));
+    idea({ asset: "BTCUSDT" });
+    idea({ asset: "ETHUSDT" });
+    const after = await body<Portfolio>(call("/api/portfolio"));
+
+    expect(after.portfolioRisk).toBeGreaterThan(before.portfolioRisk);
+    // But by less than gross size, which is the whole point of measuring it.
+    expect(after.portfolioRisk).toBeLessThan(after.grossRisk);
+    expect(after.netExposure).toBe(3);
+  });
+
+  test("an opposing position lowers risk instead of raising it", async () => {
+    idea({ asset: "PAXGUSDT" });
+    idea({ asset: "BTCUSDT" });
+    const longOnly = await body<Portfolio>(call("/api/portfolio"));
+
+    idea({ asset: "ETHUSDT", direction: "SHORT" });
+    const hedged = await body<Portfolio>(call("/api/portfolio"));
+
+    expect(hedged.portfolioRisk).toBeLessThan(longOnly.portfolioRisk);
+    // Gross size went up while risk went down — a distinction a position count
+    // cannot make.
+    expect(hedged.grossRisk).toBeGreaterThan(longOnly.grossRisk);
+  });
+
+  test("closed positions do not occupy the book", async () => {
+    const id = idea();
+    db.updateIdea(id, { status: "TP2_HIT", pnl_points: 30 });
+    expect((await body<Portfolio>(call("/api/portfolio"))).positions).toEqual(
+      [],
+    );
+  });
+
+  test("every pair is listed, and flagged when it is a guess", async () => {
+    const b = await body<Portfolio>(call("/api/portfolio"));
+    // No stored candles in this database, so nothing can be measured — and the
+    // response must admit that rather than serving 0 as if it were a finding.
+    expect(b.correlations.length).toBeGreaterThan(0);
+    expect(b.correlations.every(c => c.assumed)).toBe(true);
+    expect(b.correlations.every(c => c.samples === null || c.samples === 0)).toBe(
+      true,
+    );
+    expect(b.correlationsMeasured).toBe(false);
+  });
+
+  test("measures correlation from stored candles when there is history", async () => {
+    // BTC and ETH move together; gold moves against them. 60 aligned bars is
+    // past the 30 an estimate needs.
+    const bars = 60;
+    for (let i = 0; i < bars; i++) {
+      const wave = Math.sin(i / 3);
+      const at = 1_000_000 + i * 300_000;
+      const bar = (close: number) => ({
+        time: at,
+        open: close,
+        high: close * 1.001,
+        low: close * 0.999,
+        close,
+        volume: 1,
+      });
+      db.saveCandles("BTCUSDT", "5m", [bar(50_000 * (1 + wave * 0.01))]);
+      db.saveCandles("ETHUSDT", "5m", [bar(3_000 * (1 + wave * 0.01))]);
+      db.saveCandles("PAXGUSDT", "5m", [bar(3_400 / (1 + wave * 0.01))]);
+    }
+
+    const b = await body<Portfolio>(call("/api/portfolio"));
+    const find = (x: string, y: string) =>
+      b.correlations.find(
+        c => (c.a === x && c.b === y) || (c.a === y && c.b === x),
+      )!;
+
+    const together = find("BTCUSDT", "ETHUSDT");
+    expect(together.assumed).toBe(false);
+    expect(together.samples).toBeGreaterThan(30);
+    expect(together.value).toBeCloseTo(1, 3);
+
+    const opposed = find("BTCUSDT", "PAXGUSDT");
+    expect(opposed.assumed).toBe(false);
+    expect(opposed.value).toBeCloseTo(-1, 3);
+
+    // Assets with no stored candles still fall back rather than erroring.
+    expect(find("BTCUSDT", "TAOUSDT").assumed).toBe(true);
+    expect(b.correlationsMeasured).toBe(false);
+  });
+
+  test("a measured hedge beats an assumed one", async () => {
+    // Same two positions, opposite directions. Without history the pair is
+    // assumed to move together; with history showing they move apart, the
+    // short is worth more as a hedge.
+    const assumedBook = await (async () => {
+      idea({ asset: "BTCUSDT" });
+      idea({ asset: "PAXGUSDT", direction: "SHORT" });
+      return body<Portfolio>(call("/api/portfolio"));
+    })();
+
+    for (let i = 0; i < 60; i++) {
+      const wave = Math.sin(i / 3);
+      const at = 1_000_000 + i * 300_000;
+      const bar = (close: number) => ({
+        time: at,
+        open: close,
+        high: close,
+        low: close,
+        close,
+        volume: 1,
+      });
+      db.saveCandles("BTCUSDT", "5m", [bar(50_000 * (1 + wave * 0.01))]);
+      db.saveCandles("PAXGUSDT", "5m", [bar(3_400 / (1 + wave * 0.01))]);
+    }
+    const measuredBook = await body<Portfolio>(call("/api/portfolio"));
+
+    // Anti-correlated + opposite direction = additive, not offsetting. The
+    // measured book is therefore riskier than the assumption suggested — the
+    // point being that the number changes when it stops being a guess.
+    expect(measuredBook.portfolioRisk).not.toBeCloseTo(
+      assumedBook.portfolioRisk,
+      3,
+    );
+    expect(measuredBook.portfolioRisk).toBeGreaterThan(
+      assumedBook.portfolioRisk,
+    );
+  });
+
+  test("evidence is discounted for positions that were held together", async () => {
+    // Ten wins, all open over the same window: one result, not ten.
+    for (let i = 0; i < 10; i++) {
+      const id = idea({ asset: "BTCUSDT" });
+      db.updateIdea(id, { status: "TP2_HIT", pnl_points: 10 });
+      db.raw
+        .prepare(
+          "UPDATE trading_ideas SET created_at = 1000, resolved_at = 9000 WHERE id = ?",
+        )
+        .run(id);
+    }
+
+    const b = await body<Portfolio>(call("/api/portfolio"));
+    expect(b.evidence.trades).toBe(10);
+    expect(b.evidence.wins).toBe(10);
+    expect(b.evidence.averageConcurrency).toBeCloseTo(10, 6);
+    expect(b.evidence.effectiveTrades).toBeLessThan(10);
+    // A 100% win rate that survives no scrutiny must not read as an edge.
+    expect(b.evidence.significance.verdict).toBe("insufficient_data");
+  });
+
+  test("sequential trades are not discounted", async () => {
+    for (let i = 0; i < 6; i++) {
+      const id = idea({ asset: "BTCUSDT" });
+      db.updateIdea(id, { status: "TP2_HIT", pnl_points: 10 });
+      db.raw
+        .prepare(
+          "UPDATE trading_ideas SET created_at = ?, resolved_at = ? WHERE id = ?",
+        )
+        .run(i * 1000, i * 1000 + 500, id);
+    }
+    const b = await body<Portfolio>(call("/api/portfolio"));
+    expect(b.evidence.averageConcurrency).toBeCloseTo(1, 6);
+    expect(b.evidence.effectiveTrades).toBe(6);
+  });
+});
+
 describe("candles", () => {
   test("requires an asset", async () => {
     expect(await status(call("/api/candles"))).toBe(400);

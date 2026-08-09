@@ -1,6 +1,7 @@
 import { Plus, Shield, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { PortfolioRisk } from "@/components/PortfolioRisk";
 import { useLive, useMutation } from "@/hooks/useLive";
 import { api } from "@/lib/api";
 
@@ -113,6 +114,10 @@ export function RiskManagerPage() {
           {showForm ? "Cancel" : "Log Trade"}
         </button>
       </div>
+
+      {/* Concentration across the engine's open book. Above the manual-trade
+          stats because it is the risk a per-trade view cannot show. */}
+      <PortfolioRisk />
 
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">

@@ -99,13 +99,13 @@ a price that never existed.
 
 | Path | What lives there |
 |---|---|
-| `core/` | Strategy, indicators, asset registry, backtest replay, cost model, regime tagging, parameter sweep, self-heal decision, statistical significance. No framework imports — shared by the server, the CLI tools and the tests. |
+| `core/` | Strategy, indicators, asset registry, backtest replay, cost model, regime tagging, parameter sweep, self-heal decision, statistical significance, portfolio risk. No framework imports — shared by the server, the CLI tools and the tests. |
 | `server/` | HTTP + SSE, SQLite layer, signal engine, scheduler. |
 | `server/intel/` | Regime, macro correlation, news calendar, liquidity sweeps. |
 | `src/` | React UI (Vite, Tailwind, shadcn/ui). |
 | `scripts/` | Backtest, batch scorer, edge audit. |
 | `teo/` | Python sidecar: Kronos forecasting, parameter sweeps, self-heal. |
-| `tests/`, `core/__tests__/`, `server/__tests__/` | 186 TypeScript + 89 Python tests. |
+| `tests/`, `core/__tests__/`, `server/__tests__/` | 249 TypeScript + 89 Python tests. |
 
 ---
 
@@ -199,6 +199,7 @@ Served on the same origin as the UI. No authentication: the server binds to
 | `GET` | `/api/journal?asset&limit` | Audit trail. |
 | `GET` | `/api/journal/counts` | Row counts by event type (a SQL aggregate, not a table read). |
 | `GET` | `/api/performance?asset` | Per-asset stats: win rate, expectancy, streaks, profit factor — each with a `significance` block stating whether the record beats chance. |
+| `GET` | `/api/portfolio` | Open book as one number: effective risk, concentration, net exposure, every pairwise correlation with its sample count, and the record discounted for correlated positions. |
 | `GET` | `/api/candles?asset&interval&limit` | Stored OHLCV from the database. |
 | `GET` | `/api/klines?symbol&interval&limit` | Live OHLCV proxied from the venue. Serves intervals the engine does not persist (1m, 3m); the browser cannot call the venue directly because of CORS. |
 | `GET` | `/api/prices?symbols` | Batched 24h ticker. One upstream request for all symbols. |
@@ -275,6 +276,61 @@ costs decide the outcome.
 
 ---
 
+## The hedge
+
+`core/portfolio.ts`. The engine decides one asset at a time, and nothing in a
+per-asset view can see the problem that creates: six of the seven registered
+assets are crypto that move as a block, so "one signal per asset, each risking
+1R" routinely opens **five simultaneous longs that are one bet at five times the
+size**. The first correlated drawdown is where that becomes visible.
+
+Portfolio risk is `sqrt(wᵀΣw)` with **signed** weights, in units of one
+independent position:
+
+| Book | Risk | Reading |
+|---|---|---|
+| 4 uncorrelated longs | 2.00 | Four bets' worth of diversification. |
+| 4 longs at ρ = 0.85 | 3.77 | Barely better than four times one bet. |
+| 4 longs at ρ = 1.00 | 4.00 | One position at 4× size. |
+| 2 longs + 2 shorts at ρ = 0.85 | 0.77 | The shorts hedge the longs. |
+
+The sign is what makes the last row a **real hedge** rather than a label: a
+short on a correlated asset subtracts from portfolio risk. That falls out of the
+arithmetic; there is no special case for it.
+
+**The cap is on risk, not on position count.** `maxRisk` defaults to 3, which
+admits nine genuinely uncorrelated positions or three that move together. Feed
+six correlated signals in one at a time and three are refused; feed six
+uncorrelated ones and all six are taken. That asymmetry is the entire reason the
+limit is expressed this way.
+
+A trade that *lowers* portfolio risk is admitted unconditionally, including when
+the book is already over its cap — refusing the one trade that reduces exposure
+because exposure is too high would be exactly backwards.
+
+Refusals are not silent. Each writes a `SIGNAL_BLOCKED` journal row naming the
+correlation that caused it:
+
+```
+[BTC/USD] A LONG not taken. Refused: would take portfolio risk to 3.41,
+over the 3.00 cap, on 3 open position(s). Closest open position is
+ETHUSDT at ρ = 0.91.
+```
+
+**Correlations are measured, not assumed.** Pearson on log returns from the 5m
+candles the engine already stores, aligned **by bar timestamp** — correlating
+index-for-index across series that start on different days produces a confident
+number that means nothing. Where fewer than 30 bars overlap, the estimate falls
+back to a prior of **0.8 and flags itself as assumed**. Not 0: defaulting an
+unmeasured correlation to "independent" would wave through exactly the cluster
+the cap exists to catch, and erring toward refusing a trade is the cheap
+direction to be wrong in.
+
+`GET /api/portfolio` serves the book, every pairwise correlation with its sample
+count, and the discounted evidence below. The Risk Manager page renders it.
+
+---
+
 ## Is the edge real?
 
 `core/significance.ts`. Every other number in the system describes what
@@ -316,6 +372,12 @@ close to one bet repeated — but every statistic above counts them as seven,
 which overstates confidence exactly when a correlated drawdown is most likely.
 `effectiveSampleSize(trades, avgConcurrent, correlation)` applies the
 equicorrelation discount: 600 trades across 6 assets at ρ = 0.8 are worth **120**.
+
+`GET /api/portfolio` reports that discount against the real record, with both
+inputs measured rather than supplied: `averageConcurrency` integrates open
+position count over time (so a one-second brush does not score the same as a
+week held side by side), and the correlation is the measured average from
+stored candles.
 
 The maths is exact rather than approximated — log-factorials are summed and
 cached, not estimated with Stirling, because being wrong about a four-trade

@@ -647,6 +647,46 @@ export class Db {
       profitFactor: grossLoss === 0 ? null : grossWin / grossLoss,
     };
   }
+
+  /**
+   * Every resolved position across all assets, with the window it was held for.
+   *
+   * Cross-asset on purpose: this feeds the portfolio view, where the question
+   * is how many of these results were independent of each other rather than how
+   * one instrument did. `performance()` answers the per-asset question and this
+   * one deliberately does not duplicate it.
+   */
+  holdingPeriods(): Array<{
+    asset: string;
+    start: number;
+    end: number;
+    won: boolean;
+  }> {
+    return this.raw
+      .query<
+        {
+          asset: string;
+          created_at: number;
+          resolved_at: number | null;
+          pnl_points: number;
+        },
+        []
+      >(
+        `SELECT asset, created_at, resolved_at, pnl_points FROM trading_ideas
+         WHERE pnl_points IS NOT NULL
+         ORDER BY created_at`,
+      )
+      .all()
+      .map(r => ({
+        asset: r.asset,
+        start: r.created_at,
+        // A resolved row with no timestamp predates that column being written.
+        // Treating it as instantaneous understates concurrency; the alternative
+        // is dropping the trade, which understates the sample. Keep the trade.
+        end: r.resolved_at ?? r.created_at,
+        won: r.pnl_points > 0,
+      }));
+  }
 }
 
 /** Process-wide handle, opened lazily so importing this module is side-effect free. */

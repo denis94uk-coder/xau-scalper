@@ -23,6 +23,13 @@ import {
   getEnabledAssets,
 } from "../core/assets";
 import {
+  admit,
+  buildCorrelationMatrix,
+  type CorrelationMatrix,
+  type Exposure,
+  type PortfolioLimits,
+} from "../core/portfolio";
+import {
   analyzeCandles,
   type Candle,
   calcATR,
@@ -44,6 +51,14 @@ export interface EngineDeps {
   assets?: AssetDefinition[];
   /** Overridable for tests. */
   now?: () => number;
+  /** Portfolio risk cap. Omit for the default. */
+  limits?: PortfolioLimits;
+  /**
+   * Correlations between assets. Supplied by `generateSignals`; measured from
+   * stored candles when absent, so a direct `generateForAsset` call is still
+   * gated rather than silently unguarded.
+   */
+  correlations?: CorrelationMatrix;
 }
 
 const SIGNAL_INTERVAL = "5m";
@@ -77,6 +92,33 @@ export async function syncCandles(
   db.saveCandles(asset.id, interval, fresh);
 
   return db.getCandles(asset.id, interval, HISTORY_BARS);
+}
+
+// ─── Portfolio risk ───
+
+/**
+ * Correlations between assets, measured from the 5m candles already stored.
+ *
+ * No extra fetching: the engine keeps 200 bars per asset for the indicators,
+ * which is well past the 30 overlapping bars an estimate needs. Assets without
+ * enough shared history fall back to a pessimistic prior inside the matrix.
+ */
+export function correlationsFrom(
+  db: Db,
+  assets: AssetDefinition[],
+): CorrelationMatrix {
+  const series: Record<string, Candle[]> = {};
+  for (const a of assets) {
+    series[a.id] = db.getCandles(a.id, SIGNAL_INTERVAL, HISTORY_BARS);
+  }
+  return buildCorrelationMatrix(series);
+}
+
+/** Open positions, as the portfolio model sees them. */
+export function openExposures(db: Db): Exposure[] {
+  return db
+    .openIdeas()
+    .map(i => ({ asset: i.asset, direction: i.direction }) as Exposure);
 }
 
 // ─── Signal generation ───
@@ -130,6 +172,31 @@ export async function generateForAsset(
   const last = db.lastIdeaAt(asset.id, a5.direction);
   if (last !== null && now - last < asset.config.cooldownMs) return null;
 
+  // Portfolio gate. Every check above this line looks at one asset in
+  // isolation, and none of them can see that a fifth crypto long is the same
+  // bet as the four already open. This one can, and a short that offsets the
+  // book is admitted even when the book is full.
+  const matrix =
+    deps.correlations ??
+    correlationsFrom(db, deps.assets ?? getEnabledAssets());
+  const decision = admit(
+    openExposures(db),
+    { asset: asset.id, direction: a5.direction },
+    matrix,
+    deps.limits,
+  );
+  if (!decision.allowed) {
+    db.logJournal({
+      eventType: "SIGNAL_BLOCKED",
+      asset: asset.id,
+      direction: a5.direction,
+      price: a5.entryPrice,
+      details: `[${asset.displaySymbol}] ${a5.grade} ${a5.direction} not taken. ${decision.reason}`,
+      metadata: decision,
+    });
+    return null;
+  }
+
   const confidence = a15 ? Math.min(95, a5.confidence + 10) : a5.confidence;
   const grade = a15 && a5.grade === "B" && a15.grade === "A" ? "A" : a5.grade;
 
@@ -143,7 +210,9 @@ export async function generateForAsset(
     tp2: a5.tp2,
     confidence,
     grade,
-    reason: `[ENGINE] ${a5.reason}${a15 ? " · 15m confirms" : ""}`,
+    reason:
+      `[ENGINE] ${a5.reason}${a15 ? " · 15m confirms" : ""}` +
+      (decision.hedge ? " · hedges the open book" : ""),
     timeframe: a15 ? "5m+15m" : "5m",
     bias: a5.bias,
     biasStrength: a5.biasStrength,
@@ -158,7 +227,9 @@ export async function generateForAsset(
     price: a5.entryPrice,
     details:
       `[${asset.displaySymbol}] ${grade} ${a5.direction} @ ${a5.entryPrice} | ` +
-      `SL ${a5.stopLoss} | TP1 ${a5.tp1} | TP2 ${a5.tp2} | ${confidence}%`,
+      `SL ${a5.stopLoss} | TP1 ${a5.tp1} | TP2 ${a5.tp2} | ${confidence}% | ` +
+      `portfolio risk ${decision.riskBefore.toFixed(2)} → ${decision.riskAfter.toFixed(2)}`,
+    metadata: { portfolio: decision },
   });
 
   return id;
@@ -168,7 +239,12 @@ export async function generateSignals(deps: EngineDeps): Promise<void> {
   const assets = deps.assets ?? getEnabledAssets();
   for (const asset of assets) {
     try {
-      const id = await generateForAsset(deps, asset);
+      // Rebuilt each iteration: the previous asset may have just synced fresh
+      // candles, and may have opened a position that changes what comes next.
+      const id = await generateForAsset(
+        { ...deps, correlations: correlationsFrom(deps.db, assets) },
+        asset,
+      );
       if (id !== null) publish("ideas");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
