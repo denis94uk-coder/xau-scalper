@@ -12,17 +12,9 @@
  *   bun run backtest -- --asset BTCUSDT --from 2024-01-01 --to 2024-06-01 --interval 5m
  */
 
-import {
-  type AssetDefinition,
-  DEFAULT_ASSET_ID,
-  getAsset,
-} from "../convex/lib/assets";
-import {
-  analyzeCandles,
-  type Candle,
-  calcATR,
-  roundTo,
-} from "../convex/lib/strategy";
+import { DEFAULT_ASSET_ID, getAsset } from "../convex/lib/assets";
+import { computeMetrics, runBacktest } from "../convex/lib/backtest";
+import type { Candle } from "../convex/lib/strategy";
 
 const BINANCE_API = "https://data-api.binance.vision/api/v3";
 
@@ -93,200 +85,6 @@ async function fetchKlines(
   return candles;
 }
 
-// ─── Simulated open position (mirrors a live tradingIdeas record) ───
-interface OpenTrade {
-  direction: "LONG" | "SHORT";
-  entryPrice: number;
-  stopLoss: number;
-  tp1: number;
-  tp2: number;
-  status: "ACTIVE" | "TP1_HIT";
-  trailingSL?: number;
-  createdAtMs: number;
-}
-
-interface ClosedTrade {
-  direction: "LONG" | "SHORT";
-  entryPrice: number;
-  exitPrice: number;
-  pnlPoints: number;
-  outcome: "TP1_TP2" | "SL" | "TRAIL_SL";
-}
-
-// ─── Metrics ───
-interface Metrics {
-  totalTrades: number;
-  wins: number;
-  losses: number;
-  winRate: number;
-  netPoints: number;
-  avgWin: number;
-  avgLoss: number;
-  maxDrawdown: number;
-  profitFactor: number;
-}
-
-function computeMetrics(trades: ClosedTrade[]): Metrics {
-  const wins = trades.filter(t => t.pnlPoints > 0);
-  const losses = trades.filter(t => t.pnlPoints <= 0);
-  const grossWin = wins.reduce((s, t) => s + t.pnlPoints, 0);
-  const grossLoss = losses.reduce((s, t) => s + Math.abs(t.pnlPoints), 0);
-  const netPoints = trades.reduce((s, t) => s + t.pnlPoints, 0);
-
-  // Max drawdown on cumulative equity curve (in points).
-  let peak = 0;
-  let equity = 0;
-  let maxDrawdown = 0;
-  for (const t of trades) {
-    equity += t.pnlPoints;
-    if (equity > peak) peak = equity;
-    const dd = peak - equity;
-    if (dd > maxDrawdown) maxDrawdown = dd;
-  }
-
-  return {
-    totalTrades: trades.length,
-    wins: wins.length,
-    losses: losses.length,
-    winRate: trades.length ? (wins.length / trades.length) * 100 : 0,
-    netPoints,
-    avgWin: wins.length ? grossWin / wins.length : 0,
-    avgLoss: losses.length ? grossLoss / losses.length : 0,
-    maxDrawdown,
-    profitFactor:
-      grossLoss === 0
-        ? grossWin > 0
-          ? Number.POSITIVE_INFINITY
-          : 0
-        : grossWin / grossLoss,
-  };
-}
-
-// ─── Replay ───
-function runBacktest(candles: Candle[], asset: AssetDefinition): ClosedTrade[] {
-  const { config, pricePrecision } = asset;
-  const r = (n: number) => roundTo(n, pricePrecision);
-  const closed: ClosedTrade[] = [];
-  let open: OpenTrade | null = null;
-  // Track the last entry time per direction to enforce the per-asset cooldown,
-  // matching the live _createSignal cooldown guard.
-  const lastEntryMs: Record<"LONG" | "SHORT", number> = {
-    LONG: Number.NEGATIVE_INFINITY,
-    SHORT: Number.NEGATIVE_INFINITY,
-  };
-
-  // Precompute ATR over the full series so trailing uses the same values the
-  // live monitorIdeas cron would see at each bar.
-  const atrSeries = calcATR(candles, config.atrPeriod);
-
-  // Warm-up: analyzeCandles needs >= 60 candles of history.
-  for (let i = 60; i < candles.length; i++) {
-    const window = candles.slice(0, i + 1);
-    const bar = candles[i];
-    const currentATR = atrSeries[i] ?? 0;
-
-    // ── Manage the open trade against this bar (mirror monitorIdeas) ──
-    if (open) {
-      const isLong = open.direction === "LONG";
-      const effectiveSL = open.trailingSL ?? open.stopLoss;
-
-      // SL first (use trailing SL if set). Use bar extremes for the touch.
-      const slHit = isLong ? bar.low <= effectiveSL : bar.high >= effectiveSL;
-      if (slHit) {
-        const pnl = r(
-          isLong
-            ? effectiveSL - open.entryPrice
-            : open.entryPrice - effectiveSL,
-        );
-        closed.push({
-          direction: open.direction,
-          entryPrice: open.entryPrice,
-          exitPrice: effectiveSL,
-          pnlPoints: pnl,
-          outcome: open.trailingSL ? "TRAIL_SL" : "SL",
-        });
-        open = null;
-      } else if (open.status === "TP1_HIT") {
-        // TP2 full close.
-        const tp2Hit = isLong ? bar.high >= open.tp2 : bar.low <= open.tp2;
-        if (tp2Hit) {
-          const pnl = r(
-            isLong ? open.tp2 - open.entryPrice : open.entryPrice - open.tp2,
-          );
-          closed.push({
-            direction: open.direction,
-            entryPrice: open.entryPrice,
-            exitPrice: open.tp2,
-            pnlPoints: pnl,
-            outcome: "TP1_TP2",
-          });
-          open = null;
-        } else if (currentATR > 0) {
-          // ATR trailing stop (only after TP1).
-          const trailDistance = currentATR * config.atrTrailMultiplier;
-          const newTrailSL = isLong
-            ? r(bar.close - trailDistance)
-            : r(bar.close + trailDistance);
-          const currentTrailSL = open.trailingSL ?? open.entryPrice;
-          const shouldUpdate = isLong
-            ? newTrailSL > currentTrailSL
-            : newTrailSL < currentTrailSL;
-          if (shouldUpdate) open.trailingSL = newTrailSL;
-        }
-      } else if (open.status === "ACTIVE") {
-        // TP1 partial → move SL to breakeven.
-        const tp1Hit = isLong ? bar.high >= open.tp1 : bar.low <= open.tp1;
-        if (tp1Hit) {
-          open.status = "TP1_HIT";
-          open.trailingSL = open.entryPrice; // move to breakeven
-        } else {
-          // TP2 directly on a gap (rare but possible).
-          const tp2Hit = isLong ? bar.high >= open.tp2 : bar.low <= open.tp2;
-          if (tp2Hit) {
-            const pnl = r(
-              isLong ? open.tp2 - open.entryPrice : open.entryPrice - open.tp2,
-            );
-            closed.push({
-              direction: open.direction,
-              entryPrice: open.entryPrice,
-              exitPrice: open.tp2,
-              pnlPoints: pnl,
-              outcome: "TP1_TP2",
-            });
-            open = null;
-          }
-        }
-      }
-    }
-
-    // ── Look for a new entry when flat (mirror generateSignals) ──
-    if (!open) {
-      const analysis = analyzeCandles(window, config, pricePrecision);
-      if (analysis && (analysis.grade === "A" || analysis.grade === "B")) {
-        const barMs = bar.time * 1000;
-        // Respect the per-asset same-direction cooldown, matching the live
-        // _createSignal guard.
-        const cooled =
-          barMs - lastEntryMs[analysis.direction] >= config.cooldownMs;
-        if (cooled) {
-          lastEntryMs[analysis.direction] = barMs;
-          open = {
-            direction: analysis.direction,
-            entryPrice: analysis.entryPrice,
-            stopLoss: analysis.stopLoss,
-            tp1: analysis.tp1,
-            tp2: analysis.tp2,
-            status: "ACTIVE",
-            createdAtMs: barMs,
-          };
-        }
-      }
-    }
-  }
-
-  return closed;
-}
-
 function fmt(n: number): string {
   if (!Number.isFinite(n)) return "∞";
   return n.toFixed(2);
@@ -328,11 +126,11 @@ async function main() {
     process.exit(1);
   }
 
-  const trades = runBacktest(candles, asset);
+  const trades = runBacktest(candles, asset.config, asset.pricePrecision);
   const m = computeMetrics(trades);
 
   console.log("─── Results ───");
-  console.log(`Total trades:   ${m.totalTrades}`);
+  console.log(`Total trades:   ${m.trades}`);
   console.log(
     `Win rate:       ${fmt(m.winRate)}%  (${m.wins}W / ${m.losses}L)`,
   );
@@ -340,7 +138,9 @@ async function main() {
   console.log(`Avg win:        ${fmt(m.avgWin)} pts`);
   console.log(`Avg loss:       ${fmt(m.avgLoss)} pts`);
   console.log(`Max drawdown:   ${fmt(m.maxDrawdown)} pts`);
-  console.log(`Profit factor:  ${fmt(m.profitFactor)}`);
+  console.log(
+    `Profit factor:  ${m.profitFactor === null ? "n/a (no losing trades)" : fmt(m.profitFactor)}`,
+  );
   console.log("");
 }
 

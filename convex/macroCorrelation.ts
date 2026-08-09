@@ -5,7 +5,8 @@ import { internalAction } from "./_generated/server";
 
 // ═══════════════════════════════════════════════════
 // MACRO CORRELATION DASHBOARD
-// Fetches DXY (Dollar Index), US10Y yield, S&P 500
+// Fetches DXY (Dollar Index), US10Y yield, S&P 500 from Yahoo Finance.
+// PAXG gold spot remains on Binance's keyless market-data endpoint.
 // Calculates correlation with gold and divergence alerts
 // ═══════════════════════════════════════════════════
 
@@ -28,28 +29,59 @@ async function fetchBinancePrice(
   }
 }
 
-async function fetchMacroViaBinance() {
-  const [eurUsdt, paxg] = await Promise.all([
-    fetchBinancePrice("EURUSDT"),
-    fetchBinancePrice("PAXGUSDT"),
-  ]);
-  const dxyProxy = eurUsdt ? (1 / eurUsdt.price) * 100 : 104.5;
-  const dxyChange = eurUsdt ? -eurUsdt.changePct : 0;
-  return {
-    dxyProxy,
-    dxyChange,
-    goldPrice: paxg?.price ?? 0,
-    goldChange: paxg?.changePct ?? 0,
-  };
+type MarketQuote = {
+  price: number;
+  changePct: number;
+  timestamp: number;
+};
+
+async function fetchYahooQuote(symbol: string): Promise<MarketQuote | null> {
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=5d&interval=1d`;
+    const response = await fetch(url, {
+      headers: { "User-Agent": "teo-dashboard/1.0" },
+    });
+    if (!response.ok) return null;
+    const payload = await response.json();
+    const result = payload?.chart?.result?.[0];
+    const metaPrice = Number(result?.meta?.regularMarketPrice);
+    const timestamps: number[] = result?.timestamp ?? [];
+    const closes: Array<number | null> = result?.indicators?.quote?.[0]?.close ?? [];
+    const valid = closes.filter((value): value is number => Number.isFinite(value));
+    const last = valid.length > 0 ? valid[valid.length - 1] : undefined;
+    const price = Number.isFinite(metaPrice) && metaPrice > 0 ? metaPrice : last;
+    if (!price || !Number.isFinite(price)) return null;
+    const previous = valid.length > 1 ? valid[valid.length - 2] : undefined;
+    const changePct = previous && previous !== 0 ? ((price - previous) / previous) * 100 : 0;
+    const lastTimestamp = timestamps.length > 0 ? timestamps[timestamps.length - 1] : undefined;
+    return {
+      price,
+      changePct,
+      timestamp: lastTimestamp ? lastTimestamp * 1000 : Date.now(),
+    };
+  } catch {
+    return null;
+  }
 }
 
-async function fetchSPXProxy(): Promise<{
-  price: number;
-  change: number;
-} | null> {
-  const btc = await fetchBinancePrice("BTCUSDT");
-  if (!btc) return null;
-  return { price: btc.price / 12, change: btc.changePct };
+async function fetchYahooMacroData() {
+  const [dxy, spx, us10y, paxg] = await Promise.all([
+    fetchYahooQuote("DX-Y.NYB"),
+    fetchYahooQuote("^GSPC"),
+    fetchYahooQuote("^TNX"),
+    fetchBinancePrice("PAXGUSDT"),
+  ]);
+  if (!dxy || !spx || !us10y || !paxg) {
+    throw new Error("Yahoo macro data incomplete; preserving the previous state");
+  }
+  return {
+    dxy,
+    spx,
+    us10y,
+    goldPrice: paxg.price,
+    goldChange: paxg.changePct,
+    timestamp: Math.min(dxy.timestamp, spx.timestamp, us10y.timestamp),
+  };
 }
 
 function calcCorrelation(
@@ -93,30 +125,26 @@ export const fetchMacroData = internalAction({
   args: {},
   handler: async ctx => {
     try {
-      const macroData = await fetchMacroViaBinance();
-      const spxData = await fetchSPXProxy();
+      const macroData = await fetchYahooMacroData();
       const goldChange = macroData.goldChange;
+      const dxyChange = macroData.dxy.changePct;
+      const us10yChange = macroData.us10y.changePct;
+      const spxChange = macroData.spx.changePct;
 
-      const dxyDiv = detectDivergence(
-        goldChange,
-        macroData.dxyChange,
-        "INVERSE",
-      );
-      const dxyCorr = calcCorrelation(goldChange, macroData.dxyChange, -1);
+      const dxyDiv = detectDivergence(goldChange, dxyChange, "INVERSE");
+      const dxyCorr = calcCorrelation(goldChange, dxyChange, -1);
 
-      const us10yChange = macroData.dxyChange * 0.6;
-      const us10yPrice = 4.25 + us10yChange * 0.1;
+      const us10yPrice = macroData.us10y.price;
       const us10yDiv = detectDivergence(goldChange, us10yChange, "INVERSE");
       const us10yCorr = calcCorrelation(goldChange, us10yChange, -1);
 
-      const spxChange = spxData?.change ?? 0;
       const spxDiv = detectDivergence(goldChange, spxChange, "DIRECT");
       const spxCorr = calcCorrelation(goldChange, spxChange, 1);
 
       let bull = 0,
         bear = 0;
-      if (macroData.dxyChange < -0.2) bull++;
-      if (macroData.dxyChange > 0.2) bear++;
+      if (dxyChange < -0.2) bull++;
+      if (dxyChange > 0.2) bear++;
       if (us10yChange < -0.1) bull++;
       if (us10yChange > 0.1) bear++;
       if (spxChange < -0.3) bull++;
@@ -131,13 +159,13 @@ export const fetchMacroData = internalAction({
       let description = "";
       if (overallMacroBias === "BULLISH") {
         description = "Macro environment favors gold — ";
-        if (macroData.dxyChange < -0.2) description += "DXY weakening, ";
+        if (dxyChange < -0.2) description += "DXY weakening, ";
         if (us10yChange < -0.1) description += "yields declining, ";
         if (spxChange < -0.3) description += "risk-off sentiment, ";
         description = description.replace(/, $/, ".");
       } else if (overallMacroBias === "BEARISH") {
         description = "Macro headwinds for gold — ";
-        if (macroData.dxyChange > 0.2) description += "DXY strengthening, ";
+        if (dxyChange > 0.2) description += "DXY strengthening, ";
         if (us10yChange > 0.1) description += "yields rising, ";
         if (spxChange > 0.3) description += "risk-on sentiment, ";
         description = description.replace(/, $/, ".");
@@ -147,8 +175,8 @@ export const fetchMacroData = internalAction({
       }
 
       await ctx.runMutation(internal.macroQueries.saveMacroState, {
-        dxyPrice: Math.round(macroData.dxyProxy * 100) / 100,
-        dxyChange: Math.round(macroData.dxyChange * 100) / 100,
+        dxyPrice: Math.round(macroData.dxy.price * 100) / 100,
+        dxyChange: Math.round(dxyChange * 100) / 100,
         dxyCorrelation: Math.round(dxyCorr * 100) / 100,
         dxyDivergence: dxyDiv.alert,
         dxyDivType: dxyDiv.type,
@@ -157,7 +185,7 @@ export const fetchMacroData = internalAction({
         us10yCorrelation: Math.round(us10yCorr * 100) / 100,
         us10yDivergence: us10yDiv.alert,
         us10yDivType: us10yDiv.type,
-        spxPrice: Math.round((spxData?.price ?? 5400) * 100) / 100,
+        spxPrice: Math.round((macroData.spx.price) * 100) / 100,
         spxChange: Math.round(spxChange * 100) / 100,
         spxCorrelation: Math.round(spxCorr * 100) / 100,
         spxDivergence: spxDiv.alert,
@@ -167,10 +195,12 @@ export const fetchMacroData = internalAction({
         overallMacroBias,
         macroBiasStrength: biasStrength,
         description,
+        source: "Yahoo Finance + Binance PAXG",
+        dataTimestamp: macroData.timestamp,
       });
 
       console.log(
-        `[Macro] Bias: ${overallMacroBias} (${biasStrength}%) | DXY: ${macroData.dxyChange > 0 ? "+" : ""}${macroData.dxyChange.toFixed(2)}%`,
+        `[Macro] Bias: ${overallMacroBias} (${biasStrength}%) | DXY: ${dxyChange > 0 ? "+" : ""}${dxyChange.toFixed(2)}%`,
       );
     } catch (e: any) {
       console.error("[Macro] Error:", e.message);
