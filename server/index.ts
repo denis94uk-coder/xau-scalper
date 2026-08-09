@@ -19,6 +19,7 @@ import { getEnabledAssets } from "../core/assets";
 import { handleApi, handleEvents } from "./api";
 import { Db } from "./db";
 import { generateSignals, monitorIdeas, recoverGap } from "./engine";
+import { runSelfHeal } from "./selfheal";
 import { publish } from "./events";
 import { scanLiquiditySweeps } from "./intel/liquiditySweep";
 import { fetchMacroData } from "./intel/macroCorrelation";
@@ -50,6 +51,14 @@ const PRUNE_MS = 6 * 60 * 60_000;
 // recompute values that had not changed.
 const INTEL_MS = 15 * 60_000;
 const JOURNAL_RETENTION_DAYS = Number(process.env.TEO_JOURNAL_DAYS ?? 90);
+/**
+ * Self-heal cadence. Six hours, not minutes: a sweep re-reads the same market
+ * a faster loop would, so running it often produces more chances to be fooled
+ * by noise rather than more information. Set TEO_SELFHEAL_MS to change it, or
+ * TEO_SELFHEAL=off to disable the loop entirely.
+ */
+const SELFHEAL_MS = Number(process.env.TEO_SELFHEAL_MS ?? 6 * 60 * 60_000);
+const SELFHEAL_ON = process.env.TEO_SELFHEAL !== "off";
 
 const db = new Db();
 
@@ -159,6 +168,16 @@ await safely("signals", () => generateSignals({ db }));
 await safely("monitor", () => monitorIdeas({ db }));
 await runIntel();
 
+// Catch up if the loop is overdue. A bare interval means a machine that
+// restarts more often than the cadence never self-heals at all, and this one
+// is expected to sleep — that is why gap recovery exists two lines above.
+if (SELFHEAL_ON) {
+  const last = db.lastRun("selfheal");
+  if (last === null || Date.now() - last >= SELFHEAL_MS) {
+    void safely("selfheal", async () => { await runSelfHeal({ db }); });
+  }
+}
+
 const timers = [
   setInterval(
     () => void safely("monitor", () => monitorIdeas({ db })),
@@ -169,6 +188,14 @@ const timers = [
     SIGNAL_MS,
   ),
   setInterval(() => void runIntel(), INTEL_MS),
+  ...(SELFHEAL_ON
+    ? [
+        setInterval(
+          () => void safely("selfheal", async () => { await runSelfHeal({ db }); }),
+          SELFHEAL_MS,
+        ),
+      ]
+    : []),
   setInterval(() => {
     const removed = db.pruneJournal(JOURNAL_RETENTION_DAYS);
     if (removed > 0) {

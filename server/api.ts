@@ -17,6 +17,7 @@ import {
   getAsset,
   getEnabledAssets,
 } from "../core/assets";
+import { summariseByRegime } from "../core/memory";
 import { averageConcurrency, summarise } from "../core/portfolio";
 import { assessSignificance, effectiveSampleSize } from "../core/significance";
 import type { Db } from "./db";
@@ -195,6 +196,37 @@ export async function handleApi(
           significance: assessSignificance(perf.wins, decided, breakeven),
         };
       }),
+    });
+  }
+
+  // ─── Self-heal ───
+  if (path === "/api/selfheal") {
+    const asset = assetParam(url);
+    if (asset instanceof Response) return asset;
+    const limit = intParam(url, "limit", 50, 500);
+    const rows = db.outcomes({ asset: asset ?? undefined, limit });
+
+    // Regime summaries per asset, so the page can show what the loop has
+    // learned rather than only what it last did.
+    const assets = asset ? [asset] : [...new Set(rows.map(r => r.asset))];
+    const memory = db.outcomes({ asset: asset ?? undefined, limit: 1000 });
+    const records = memory.map(r => ({
+      asset: r.asset,
+      regime: r.regime,
+      score: r.score,
+      config: r.config,
+      action: r.action,
+      at: r.at,
+    }));
+
+    return json({
+      outcomes: rows,
+      byAsset: assets.map(a => ({
+        asset: a,
+        regimes: summariseByRegime(records, a),
+        latest: rows.find(r => r.asset === a) ?? null,
+      })),
+      lastRunAt: db.lastRun("selfheal"),
     });
   }
 
