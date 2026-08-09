@@ -12,7 +12,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { Candle } from "../core/strategy";
+import type { Candle, StrategyConfig } from "../core/strategy";
 import { SCHEMA_SQL } from "./schema";
 
 export type Direction = "LONG" | "SHORT";
@@ -686,6 +686,84 @@ export class Db {
         end: r.resolved_at ?? r.created_at,
         won: r.pnl_points > 0,
       }));
+  }
+
+  // ─── Self-heal outcome memory ───
+
+  /**
+   * Append one self-heal outcome. Never updates: this is a record of what was
+   * decided at a moment, and a record that can be edited is not evidence.
+   */
+  recordOutcome(o: {
+    asset: string;
+    regime: string;
+    action: string;
+    status: string;
+    score: number;
+    config: unknown;
+    reason: string;
+    metadata?: unknown;
+    at?: number;
+  }): number {
+    const r = this.raw
+      .prepare(
+        `INSERT INTO strategy_outcomes
+           (asset, regime, action, status, score, config, reason, metadata, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        o.asset,
+        o.regime,
+        o.action,
+        o.status,
+        o.score,
+        JSON.stringify(o.config),
+        o.reason,
+        o.metadata === undefined ? null : JSON.stringify(o.metadata),
+        o.at ?? Date.now(),
+      );
+    return Number(r.lastInsertRowid);
+  }
+
+  /** Recorded outcomes, newest first. */
+  outcomes(opts: { asset?: string; limit?: number } = {}): Array<{
+    id: number;
+    asset: string;
+    regime: string;
+    action: string;
+    status: string;
+    score: number;
+    config: StrategyConfig;
+    reason: string;
+    metadata: unknown;
+    at: number;
+  }> {
+    const limit = opts.limit ?? 100;
+    const rows = opts.asset
+      ? this.raw
+          .query<Record<string, string | number | null>, [string, number]>(
+            `SELECT * FROM strategy_outcomes WHERE asset = ?
+             ORDER BY created_at DESC LIMIT ?`,
+          )
+          .all(opts.asset, limit)
+      : this.raw
+          .query<Record<string, string | number | null>, [number]>(
+            `SELECT * FROM strategy_outcomes ORDER BY created_at DESC LIMIT ?`,
+          )
+          .all(limit);
+
+    return rows.map(r => ({
+      id: Number(r.id),
+      asset: String(r.asset),
+      regime: String(r.regime),
+      action: String(r.action),
+      status: String(r.status),
+      score: Number(r.score),
+      config: JSON.parse(String(r.config)) as StrategyConfig,
+      reason: String(r.reason),
+      metadata: r.metadata === null ? null : JSON.parse(String(r.metadata)),
+      at: Number(r.created_at),
+    }));
   }
 }
 

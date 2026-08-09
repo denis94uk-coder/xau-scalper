@@ -73,6 +73,7 @@ tested; the trades to feed it do not exist yet.
 │  timers   ──┬── monitor  60s   open positions        │
 │             ├── signals   5m   generate signals      │
 │             ├── intel    15m   regime/macro/news     │
+│             ├── selfheal  6h   sweep + propose       │
 │             └── prune     6h   journal retention     │
 │                                                      │
 │  bun:sqlite ──── data/teo.db                         │
@@ -99,13 +100,13 @@ a price that never existed.
 
 | Path | What lives there |
 |---|---|
-| `core/` | Strategy, indicators, asset registry, backtest replay, cost model, regime tagging, parameter sweep, self-heal decision, statistical significance, portfolio risk. No framework imports — shared by the server, the CLI tools and the tests. |
-| `server/` | HTTP + SSE, SQLite layer, signal engine, scheduler. |
+| `core/` | Strategy, indicators, asset registry, backtest replay, cost model, regime tagging, parameter sweep, self-heal decision, regime-tagged memory, statistical significance, portfolio risk. No framework imports — shared by the server, the CLI tools and the tests. |
+| `server/` | HTTP + SSE, SQLite layer, signal engine, self-heal loop, scheduler. |
 | `server/intel/` | Regime, macro correlation, news calendar, liquidity sweeps. |
 | `src/` | React UI (Vite, Tailwind, shadcn/ui). |
 | `scripts/` | Backtest, batch scorer, edge audit. |
 | `teo/` | Python sidecar: Kronos forecasting, parameter sweeps, self-heal. |
-| `tests/`, `core/__tests__/`, `server/__tests__/` | 249 TypeScript + 89 Python tests. |
+| `tests/`, `core/__tests__/`, `server/__tests__/` | 294 TypeScript + 89 Python tests. |
 
 ---
 
@@ -200,6 +201,7 @@ Served on the same origin as the UI. No authentication: the server binds to
 | `GET` | `/api/journal/counts` | Row counts by event type (a SQL aggregate, not a table read). |
 | `GET` | `/api/performance?asset` | Per-asset stats: win rate, expectancy, streaks, profit factor — each with a `significance` block stating whether the record beats chance. |
 | `GET` | `/api/portfolio` | Open book as one number: effective risk, concentration, net exposure, every pairwise correlation with its sample count, and the record discounted for correlated positions. |
+| `GET` | `/api/selfheal?asset&limit` | Self-heal decision history, including the holds, plus what has been learned per regime. |
 | `GET` | `/api/candles?asset&interval&limit` | Stored OHLCV from the database. |
 | `GET` | `/api/klines?symbol&interval&limit` | Live OHLCV proxied from the venue. Serves intervals the engine does not persist (1m, 3m); the browser cannot call the venue directly because of CORS. |
 | `GET` | `/api/prices?symbols` | Batched 24h ticker. One upstream request for all symbols. |
@@ -273,6 +275,62 @@ So costs shrink every win and enlarge every loss. On gold a stop-out costs
 **2.6× what the chart shows**. Rates are per asset — gold quotes wider than BTC,
 and TAO wider still; a blended rate flatters exactly the illiquid assets where
 costs decide the outcome.
+
+---
+
+## Self-healing
+
+`server/selfheal.ts`, on a 6-hour cycle. Per asset: pull 1,000 bars, tag the
+regime, sweep the parameter grid with a 70/30 out-of-sample split, and ask
+whether the running config is degraded and whether anything demonstrably beats
+it.
+
+**It proposes; it never applies.** Nothing in this loop writes a config. A
+system that silently rewrites its own trading parameters cannot be reasoned
+about after the fact.
+
+Three gates stand between "a candidate scored higher" and a proposal:
+
+1. **Out-of-sample** — the candidate must hold up on bars it was not selected on.
+2. **Improvement margin** — a hair's-width gain is not a reason to change anything.
+3. **The live veto** — a config whose *real* record beats its breakeven by more
+   than chance explains is not replaced on the strength of a backtest. The first
+   two gates are computed from history, and history is what a sweep overfits;
+   the live record is the only evidence that was not selected on.
+
+The veto uses the same significance test as everything else, so a merely
+*positive* live record does not block a swap — 8 wins from 12 looks convincing
+and is not evidence.
+
+**Every cycle is recorded, including the holds.** A loop that logs only the
+times it wanted to change something reads, afterwards, as though it were
+changing things constantly. Records are regime-tagged, because a config that
+worked in a quiet uptrend says nothing about a choppy, volatile one, and
+`core/memory.ts` recalls per regime rather than globally.
+
+```
+  PAXGUSDT   chop/normal_vol   hold   insufficient_data
+             only 4 trades (< 10); not enough to judge
+```
+
+### What actually stops a bad swap
+
+Worth being precise, because it is not the gate you would guess. On a pure
+random walk the loop holds — but it holds because **the real strategy fires 4–5
+trades per 1,000 noise bars**, so every swept score lands under `minTrades` and
+the verdict is `insufficient_data`. Nothing reaches the out-of-sample gate to be
+gated.
+
+That is a stronger defence than the gate, not a weaker one. It is also a
+correction: the "14× improvement on noise" result that motivated the gate was
+measured against Teo's Python EMA-crossover proxy, which fired 34 trades on a
+window where the real strategy fires none. The gate is unit-tested against
+fixtures; it is not exercised end-to-end by the random-walk test, and no fixture
+was bent until it produced the desired verdict.
+
+`GET /api/selfheal?asset&limit` serves the decision history and what has been
+learned per regime. `TEO_SELFHEAL=off` disables the loop; `TEO_SELFHEAL_MS`
+changes the cadence.
 
 ---
 

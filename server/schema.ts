@@ -156,4 +156,29 @@ CREATE TABLE IF NOT EXISTS job_runs (
   last_ok_at   INTEGER,
   last_error   TEXT
 ) WITHOUT ROWID;
+
+-- ─── Self-heal outcome memory ───
+-- Append-only, like the journal. Every cycle writes what it decided and why,
+-- INCLUDING the holds: a loop that only records the times it wanted to change
+-- something reads, after the fact, as though it were changing things constantly.
+-- Regime-tagged because a config that worked in a quiet uptrend says nothing
+-- about a choppy, volatile one.
+CREATE TABLE IF NOT EXISTS strategy_outcomes (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  asset      TEXT    NOT NULL,
+  regime     TEXT    NOT NULL,
+  action     TEXT    NOT NULL,           -- hold | propose_swap
+  status     TEXT    NOT NULL,           -- healthy | degraded | insufficient_data
+  score      REAL    NOT NULL,
+  config     TEXT    NOT NULL,           -- JSON StrategyConfig
+  reason     TEXT    NOT NULL,
+  metadata   TEXT,                       -- JSON: sweep, live record, veto
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_outcomes_asset_regime
+  ON strategy_outcomes (asset, regime, score DESC);
+
+CREATE INDEX IF NOT EXISTS idx_outcomes_recent
+  ON strategy_outcomes (created_at DESC);
 `;

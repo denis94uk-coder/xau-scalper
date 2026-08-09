@@ -47,6 +47,22 @@ export interface SweepOptions {
 }
 
 /**
+ * Sentinel base for configs that did not trade enough to be judged.
+ *
+ * It exists to keep `sort` total — untradeable configs must rank below every
+ * real one — and it is a ranking device, not a measurement. Anything showing a
+ * score to a human, or averaging one, must filter with `isScored` first;
+ * reporting a regime's best score as -1000000000 is worse than reporting
+ * nothing, because it looks like a finding.
+ */
+export const UNSCORED = -1e9;
+
+/** Is this a real score, or the untradeable sentinel? */
+export function isScored(score: number): boolean {
+  return score > UNSCORED / 2;
+}
+
+/**
  * Risk-adjusted score. Higher is better; negative for losing configs.
  *
  * Rewards return per unit of drawdown, nudged by profit factor and win rate.
@@ -62,7 +78,7 @@ export interface SweepOptions {
  * stable rather than arbitrary.
  */
 export function scoreMetrics(m: BacktestMetrics, minTrades = 10): number {
-  if (m.trades < minTrades) return -1e9 + m.trades;
+  if (m.trades < minTrades) return UNSCORED + m.trades;
 
   const floor = Math.max(Math.abs(m.avgWin), Math.abs(m.avgLoss), 1e-6);
   const calmar = m.netPoints / Math.max(m.maxDrawdown, floor);
