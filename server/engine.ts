@@ -126,12 +126,6 @@ export function openExposures(db: Db): Exposure[] {
 // ─── Signal generation ───
 
 /**
- * Analyse one asset and record a signal if the setup qualifies.
- *
- * Mirrors the live rules: 5m primary, 15m must agree if it has an opinion,
- * A/B grades only, per-asset same-direction cooldown.
- */
-/**
  * Score a window with whichever model the asset names.
  *
  * The combined model scores trend-following and mean-reversion evidence into
@@ -150,6 +144,12 @@ function analyzeFor(
     : analyzeFamilyCandles(candles, model, asset.config, asset.pricePrecision);
 }
 
+/**
+ * Analyse one asset and record a signal if the setup qualifies.
+ *
+ * Mirrors the live rules: 5m primary, 15m must agree if it has an opinion,
+ * A/B grades only, per-asset same-direction cooldown.
+ */
 export async function generateForAsset(
   deps: EngineDeps,
   asset: AssetDefinition,
