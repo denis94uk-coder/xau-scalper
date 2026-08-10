@@ -12,7 +12,7 @@
  */
 
 import { mt5Asset } from "../core/assets";
-import { scanEdges, survives } from "../core/edgescan";
+import { MIN_OCCURRENCES, scanEdges, survives } from "../core/edgescan";
 import { HYPOTHESES } from "../core/hypotheses";
 import { db as openDb } from "../server/db";
 
@@ -84,15 +84,30 @@ function main() {
 
   for (const r of report.results) {
     const flag = survives(r, report) ? "  ← survives" : "";
+    // A t and a p computed from four occurrences are arithmetic, not a
+    // measurement, and printing them in the same columns as the rest is how a
+    // reader ends up trading the noisiest row on the screen.
+    const stats = r.measured
+      ? `${r.tStat.toFixed(2).padStart(6)}  ${r.pValue.toFixed(4).padStart(7)}`
+      : `${"—".padStart(6)}  ${"too few".padStart(7)}`;
     console.log(
       `${r.name.padEnd(22)} ` +
         `${String(r.n).padStart(5)}  ` +
         `${r.meanNet.toFixed(3).padStart(10)}  ` +
         `${r.hitRate.toFixed(1).padStart(5)}  ` +
-        `${r.tStat.toFixed(2).padStart(6)}  ` +
-        `${r.pValue.toFixed(4).padStart(7)}  ` +
+        `${stats}  ` +
         `${`${r.windowsPositive}/${r.windowsJudged}`.padStart(7)}` +
         flag,
+    );
+  }
+
+  const unmeasured = report.results.filter(r => !r.measured);
+  if (unmeasured.length > 0) {
+    console.log("");
+    console.log(
+      `${unmeasured.length} of ${report.results.length} hypotheses fired fewer than ` +
+        `${MIN_OCCURRENCES} times and are not judged either way. That is a\n` +
+        "statement about how much history you synced, not about gold.",
     );
   }
 

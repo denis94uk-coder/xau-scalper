@@ -64,6 +64,15 @@ export interface EdgeResult {
   /** Sign of meanNet per window, when windows were requested. */
   windowsPositive: number;
   windowsJudged: number;
+  /**
+   * Did this fire enough times for the statistic to describe anything?
+   *
+   * Below MIN_OCCURRENCES the t and p columns are arithmetic performed on too
+   * little to mean anything, and printing them next to measured rows invites
+   * exactly the misreading this module exists to prevent — a hypothesis that
+   * fired four times for +6.13 points reads as the best line on the screen.
+   */
+  measured: boolean;
 }
 
 export interface ScanReport {
@@ -188,10 +197,11 @@ export interface ScanOptions {
  * Run every hypothesis over the same bars, at the same costs, and report the
  * set together with the threshold its size demands.
  *
- * Results are ordered by |t|, largest first — deliberately NOT by mean points.
- * A hypothesis that fired eleven times for a huge average is the thing this
- * module exists to stop someone trading, and sorting by return puts it at the
- * top of the screen.
+ * Ordered by |t|, largest first — deliberately NOT by mean points. A hypothesis
+ * that fired eleven times for a huge average is the thing this module exists to
+ * stop someone trading, and sorting by return puts it at the top of the screen.
+ * Hypotheses that did not fire enough to be measured sort below every one that
+ * did, whatever their arithmetic says, for the same reason.
  */
 export function scanEdges(
   candles: Candle[],
@@ -237,10 +247,14 @@ export function scanEdges(
       ...s,
       windowsPositive,
       windowsJudged,
+      measured: nets.length >= MIN_OCCURRENCES,
     };
   });
 
-  results.sort((a, b) => Math.abs(b.tStat) - Math.abs(a.tStat));
+  results.sort((a, b) => {
+    if (a.measured !== b.measured) return a.measured ? -1 : 1;
+    return Math.abs(b.tStat) - Math.abs(a.tStat);
+  });
 
   const m = Math.max(1, hypotheses.length);
   return {
@@ -261,7 +275,7 @@ export function scanEdges(
  * two on its own and is the most common way a scan of this kind lies.
  */
 export function survives(r: EdgeResult, report: ScanReport): boolean {
-  if (r.n < MIN_OCCURRENCES) return false;
+  if (!r.measured) return false;
   if (r.pValue > report.adjustedAlpha) return false;
   if (r.windowsJudged >= 3 && r.windowsPositive * 2 <= r.windowsJudged) {
     return false;
