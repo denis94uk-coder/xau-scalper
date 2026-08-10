@@ -16,7 +16,7 @@
  */
 
 import type { Hypothesis } from "./edgescan";
-import type { Candle, Direction } from "./strategy";
+import type { Candle } from "./strategy";
 
 /** UTC hour of a candle. Broker server time is not UTC; the sync stores UTC. */
 function hourOf(c: Candle): number {
