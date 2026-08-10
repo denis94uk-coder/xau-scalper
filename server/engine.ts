@@ -39,6 +39,7 @@ import {
 } from "../core/strategy";
 import type { Db, TradingIdea } from "./db";
 import { publish } from "./events";
+import type { RiskManager } from "./risk-manager";
 import {
   type Fetcher,
   fetchCandles,
@@ -61,6 +62,8 @@ export interface EngineDeps {
    * gated rather than silently unguarded.
    */
   correlations?: CorrelationMatrix;
+  /** Kill-switch / circuit-breaker. When provided, checked before every new idea. */
+  riskManager?: RiskManager;
 }
 
 const SIGNAL_INTERVAL = "5m";
@@ -192,6 +195,24 @@ export async function generateForAsset(
   // Per-asset, per-direction cooldown.
   const last = db.lastIdeaAt(asset.id, a5.direction);
   if (last !== null && now - last < asset.config.cooldownMs) return null;
+
+  // Kill-switch / circuit-breaker — checked before the portfolio gate so that
+  // a halt from a daily loss limit blocks the signal without touching the
+  // correlation matrix at all.
+  if (deps.riskManager) {
+    const risk = deps.riskManager.canTrade(now);
+    if (!risk.allowed) {
+      db.logJournal({
+        eventType: "SIGNAL_BLOCKED",
+        asset: asset.id,
+        direction: a5.direction,
+        price: a5.entryPrice,
+        details: `[${asset.displaySymbol}] ${a5.grade} ${a5.direction} not taken. ${risk.reason}`,
+        metadata: { killSwitch: true, reason: risk.reason },
+      });
+      return null;
+    }
+  }
 
   // Portfolio gate. Every check above this line looks at one asset in
   // isolation, and none of them can see that a fifth crypto long is the same

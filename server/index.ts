@@ -19,6 +19,8 @@ import { getEnabledAssets } from "../core/assets";
 import { handleApi, handleEvents } from "./api";
 import { Db } from "./db";
 import { generateSignals, monitorIdeas, recoverGap } from "./engine";
+import { reconcileState } from "./reconciliation";
+import { RiskManager, riskConfigFromEnv } from "./risk-manager";
 import { publish } from "./events";
 import { scanLiquiditySweeps } from "./intel/liquiditySweep";
 import { fetchMacroData } from "./intel/macroCorrelation";
@@ -61,6 +63,7 @@ const SELFHEAL_MS = Number(process.env.TEO_SELFHEAL_MS ?? 6 * 60 * 60_000);
 const SELFHEAL_ON = process.env.TEO_SELFHEAL !== "off";
 
 const db = new Db();
+const risk = new RiskManager(db, riskConfigFromEnv());
 
 /**
  * Run a job, never letting a failure kill the timer.
@@ -126,7 +129,7 @@ const server = Bun.serve({
 
     if (url.pathname === "/api/events") return handleEvents();
 
-    const api = await handleApi(db, req, url);
+    const api = await handleApi(db, req, url, risk);
     if (api) return api;
 
     return serveStatic(url.pathname);
@@ -154,6 +157,14 @@ await safely("recover", async () => {
   if (changed > 0) console.log(`[recover] resolved ${changed} state change(s)`);
 });
 
+// Safety net for positions that candle-replay could not reach (downtime longer
+// than the stored candle window). Compares open ideas against the current live
+// price; anything definitively past its SL or TP2 is force-closed here.
+await safely("reconcile", async () => {
+  const ghosts = await reconcileState({ db });
+  if (ghosts > 0) console.log(`[reconcile] closed ${ghosts} ghost trade(s)`);
+});
+
 /** The four intel engines, run together. One failing must not stop the rest. */
 async function runIntel(): Promise<void> {
   await safely("regime", () => detectMarketRegime(db));
@@ -164,7 +175,7 @@ async function runIntel(): Promise<void> {
 }
 
 // Prime candles and evaluate immediately rather than idling for a full cycle.
-await safely("signals", () => generateSignals({ db }));
+await safely("signals", () => generateSignals({ db, riskManager: risk }));
 await safely("monitor", () => monitorIdeas({ db }));
 await runIntel();
 
@@ -180,13 +191,22 @@ if (SELFHEAL_ON) {
   }
 }
 
+/** Milliseconds until the next UTC midnight. */
+function msUntilMidnight(): number {
+  const now = Date.now();
+  const next = new Date(now);
+  next.setUTCHours(24, 0, 0, 0);
+  return next.getTime() - now;
+}
+
 const timers = [
   setInterval(
     () => void safely("monitor", () => monitorIdeas({ db })),
     MONITOR_MS,
   ),
   setInterval(
-    () => void safely("signals", () => generateSignals({ db })),
+    () =>
+      void safely("signals", () => generateSignals({ db, riskManager: risk })),
     SIGNAL_MS,
   ),
   setInterval(() => void runIntel(), INTEL_MS),
@@ -209,6 +229,13 @@ const timers = [
     }
   }, PRUNE_MS),
 ];
+
+// Fire once at the next UTC midnight, then every 24 h, to reset the kill switch
+// daily loss accounting for the new trading day.
+setTimeout(() => {
+  risk.dailyReset();
+  timers.push(setInterval(() => risk.dailyReset(), 24 * 60 * 60_000));
+}, msUntilMidnight());
 
 function shutdown(signal: string) {
   console.log(`\n${signal} — shutting down`);
