@@ -12,7 +12,7 @@
  */
 
 import type { AssetDefinition } from "./assets";
-import { type BacktestMetrics, computeMetrics, runBacktest } from "./backtest";
+import { type BacktestMetrics, computeMetrics, runBacktest, toBacktestModel } from "./backtest";
 import type { Candle, StrategyConfig } from "./strategy";
 
 /** Knobs worth sweeping, and the values to try. Small, because a sweep is O(product). */
@@ -156,7 +156,7 @@ export function runSweep(
         asset.pricePrecision,
         60,
         asset.costs,
-        asset.model ?? "combined",
+        toBacktestModel(asset.model),
       ),
     );
     const result: SweepResult = {
@@ -173,7 +173,7 @@ export function runSweep(
           asset.pricePrecision,
           splitIndex,
           asset.costs,
-          asset.model ?? "combined",
+          toBacktestModel(asset.model),
         ),
       );
       result.outOfSample = oos;

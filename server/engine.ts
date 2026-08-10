@@ -37,6 +37,7 @@ import {
   calcATR,
   roundTo,
 } from "../core/strategy";
+import { analyzeQuietTrend, htfRegime } from "../core/quiet-trend";
 import type { Db, TradingIdea } from "./db";
 import { publish } from "./events";
 import type { RiskManager } from "./risk-manager";
@@ -68,8 +69,12 @@ export interface EngineDeps {
 
 const SIGNAL_INTERVAL = "5m";
 const CONFIRM_INTERVAL = "15m";
+/** H1 bars used for the structural regime filter in quiet-trend mode. */
+const REGIME_INTERVAL = "1h";
 /** Bars of history kept per asset/interval. 200 covers every indicator warm-up. */
 const HISTORY_BARS = 200;
+/** H1 bars kept for the regime filter — needs EMA(50) + buffer + some extra. */
+const REGIME_BARS = 120;
 
 // ─── Candle upkeep ───
 
@@ -142,6 +147,9 @@ function analyzeFor(
   candles: Candle[],
 ): AnalysisResult | FamilyAnalysis | null {
   const model = asset.model ?? "combined";
+  if (model === "quiet-trend") {
+    return analyzeQuietTrend(candles, asset.pricePrecision);
+  }
   return model === "combined"
     ? analyzeCandles(candles, asset.config, asset.pricePrecision)
     : analyzeFamilyCandles(candles, model, asset.config, asset.pricePrecision);
@@ -162,6 +170,17 @@ export async function generateForAsset(
 
   const candles5m = await syncCandles(deps, asset, SIGNAL_INTERVAL);
   const candles15m = await syncCandles(deps, asset, CONFIRM_INTERVAL);
+
+  // Quiet-trend uses H1 for the structural regime filter. Fetch separately so
+  // other models don't pay for the extra request.
+  let candlesH1: Candle[] | null = null;
+  if (asset.model === "quiet-trend") {
+    candlesH1 = await syncCandles(deps, asset, REGIME_INTERVAL);
+    // Trim to the window the regime filter needs — avoid growing without bound.
+    if (candlesH1.length > REGIME_BARS) {
+      candlesH1 = candlesH1.slice(-REGIME_BARS);
+    }
+  }
 
   const price = candles5m.at(-1)?.close;
   if (price === undefined) return null;
@@ -190,6 +209,26 @@ export async function generateForAsset(
   if (!a5) return null;
   // 15m disagreement vetoes; 15m silence does not.
   if (a15 && a15.direction !== a5.direction) return null;
+
+  // H1 structural regime filter (quiet-trend model only).
+  // If the 1H is in a structural trend, only signals aligned with it pass.
+  // NEUTRAL (price inside EMA buffer) → no veto, both directions allowed.
+  if (asset.model === "quiet-trend" && candlesH1 !== null) {
+    const regime = htfRegime(candlesH1);
+    if (regime !== null && regime !== a5.direction) {
+      db.logJournal({
+        eventType: "SIGNAL_BLOCKED",
+        asset: asset.id,
+        direction: a5.direction,
+        price,
+        details:
+          `[${asset.displaySymbol}] Vetoed ${a5.direction} — ` +
+          `1H regime is ${regime} (counter-trend signal)`,
+      });
+      return null;
+    }
+  }
+
   if (a5.grade !== "A" && a5.grade !== "B") return null;
 
   // Per-asset, per-direction cooldown.
