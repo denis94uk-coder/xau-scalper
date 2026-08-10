@@ -521,6 +521,30 @@ bun run backtest -- --source db --asset MT5:XAUUSD --model reversion --sweep
 trend-following model on a series that happens to trend will produce one. The
 number that matters is whether it survives out-of-sample and forward.
 
+### Does it hold up across time?
+
+```bash
+bun run compare -- --asset MT5:XAUUSD --interval 15m --walk-forward 6 --model trend
+```
+
+Splits the history into consecutive non-overlapping windows and reports the edge
+in each. Windows are replayed with the full preceding history, so indicators are
+warm and each window still measures only its own bars.
+
+One backtest over one window cannot tell a persistent edge from a single
+profitable stretch — and once you have compared several models on several
+timeframes, the best-looking combination is the one most likely to *be* that
+stretch. Read the "windows with a positive edge" line first: a real edge shows
+up in most of them.
+
+Validated against series with known answers. On a pure random walk it reports
+0 of 6 windows positive; on a momentum-autocorrelated series with a genuine
+trend edge, 6 of 6. It does not manufacture edges and does not miss them.
+
+Significance is the exact binomial from `core/significance.ts`, not a normal
+approximation — the latter is unreliable at the low win rates this exit geometry
+produces.
+
 ### Why did the strategy not fire?
 
 ```bash
