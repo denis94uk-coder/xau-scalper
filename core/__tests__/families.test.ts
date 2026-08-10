@@ -318,7 +318,7 @@ describe("live wiring", () => {
       assetId: "MT5:XAUUSD",
       spreadBps: 0.51,
     };
-    expect(mt5Asset(meta).model).toBe("trend");
+    expect(mt5Asset(meta).model).toBe("quiet-trend");
     expect(mt5Asset(meta, undefined, "reversion").model).toBe("reversion");
   });
 });

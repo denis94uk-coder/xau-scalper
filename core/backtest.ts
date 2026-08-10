@@ -148,6 +148,16 @@ export function computeMetrics(trades: ClosedTrade[]): BacktestMetrics {
  */
 export type BacktestModel = "combined" | StrategyFamily;
 
+/** Coerce a ScoringModel (which may include "quiet-trend") to a BacktestModel. */
+export function toBacktestModel(model: string | undefined): BacktestModel {
+  if (model === "combined" || model === "trend" || model === "reversion") {
+    return model;
+  }
+  // "quiet-trend" and undefined both fall back to "combined" so existing
+  // Binance assets keep the same sweep and selfheal behaviour they were tuned on.
+  return "combined";
+}
+
 export function runBacktest(
   candles: Candle[],
   config: StrategyConfig,

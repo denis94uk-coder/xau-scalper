@@ -28,7 +28,7 @@
  */
 
 import { type AssetDefinition, getEnabledAssets } from "../core/assets";
-import { computeMetrics, runBacktest } from "../core/backtest";
+import { computeMetrics, runBacktest, toBacktestModel } from "../core/backtest";
 import { detectRegime, type Regime } from "../core/regime";
 import {
   assess,
@@ -163,7 +163,7 @@ export async function healAsset(
       asset.pricePrecision,
       60,
       asset.costs,
-      asset.model ?? "combined",
+      toBacktestModel(asset.model),
     ),
   );
 

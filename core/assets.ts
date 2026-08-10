@@ -16,7 +16,7 @@ import type { StrategyFamily } from "./families";
 import { DEFAULT_STRATEGY_CONFIG, type StrategyConfig } from "./strategy";
 
 /** Which half of the evidence a signal is scored on. See core/families.ts. */
-export type ScoringModel = "combined" | StrategyFamily;
+export type ScoringModel = "combined" | StrategyFamily | "quiet-trend";
 
 export type DataSource = "binance" | "mt5";
 export type SessionType = "24_7";
@@ -209,7 +209,7 @@ export function mt5Asset(
     spreadBps: number;
   },
   configOverride?: StrategyConfig,
-  model: ScoringModel = "trend",
+  model: ScoringModel = "quiet-trend",
 ): AssetDefinition {
   return {
     model,
