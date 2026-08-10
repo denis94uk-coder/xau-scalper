@@ -206,3 +206,20 @@ describe("hypotheses", () => {
     }
   });
 });
+
+describe("unmeasured hypotheses", () => {
+  test("sort below every measured one, whatever their arithmetic says", () => {
+    const candles = series(4000, r => (r - 0.5) * 4);
+    // Fires twice, both times into a large favourable move. Sorted by |t| alone
+    // this would lead the table.
+    const luckyPair: Hypothesis = {
+      name: "lucky-pair",
+      claim: "test fixture",
+      signal: (_c, i) => (i === 200 || i === 1000 ? "LONG" : null),
+    };
+    const report = scanEdges(candles, [luckyPair, alwaysLong], ZERO_COST_MODEL);
+    expect(report.results[0].name).toBe("always-long");
+    expect(report.results[0].measured).toBe(true);
+    expect(report.results[1].measured).toBe(false);
+  });
+});

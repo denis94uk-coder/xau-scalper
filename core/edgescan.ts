@@ -61,9 +61,28 @@ export interface EdgeResult {
   pValue: number;
   /** Fraction of occurrences that were net positive. */
   hitRate: number;
+  /**
+   * Mean of the worst decile of occurrences.
+   *
+   * Two hypotheses can share a mean and be nothing alike to trade. The common
+   * claim that counter-trend scalping "kills" a system is usually not a claim
+   * about expectancy at all — it is that the losses arrive in a shape a stop
+   * cannot survive, which a mean hides completely. This is the crudest honest
+   * summary of that shape: what the bad tail actually costs.
+   */
+  worstDecile: number;
   /** Sign of meanNet per window, when windows were requested. */
   windowsPositive: number;
   windowsJudged: number;
+  /**
+   * Did this fire enough times for the statistic to describe anything?
+   *
+   * Below MIN_OCCURRENCES the t and p columns are arithmetic performed on too
+   * little to mean anything, and printing them next to measured rows invites
+   * exactly the misreading this module exists to prevent — a hypothesis that
+   * fired four times for +6.13 points reads as the best line on the screen.
+   */
+  measured: boolean;
 }
 
 export interface ScanReport {
@@ -153,10 +172,18 @@ function summarise(nets: number[]): {
   tStat: number;
   pValue: number;
   hitRate: number;
+  worstDecile: number;
 } {
   const n = nets.length;
   if (n === 0) {
-    return { meanNet: 0, stdev: 0, tStat: 0, pValue: 1, hitRate: 0 };
+    return {
+      meanNet: 0,
+      stdev: 0,
+      tStat: 0,
+      pValue: 1,
+      hitRate: 0,
+      worstDecile: 0,
+    };
   }
   const mean = nets.reduce((a, b) => a + b, 0) / n;
   const variance =
@@ -170,7 +197,15 @@ function summarise(nets: number[]): {
     tStat,
     pValue: se > 0 ? normalTwoSided(tStat) : 1,
     hitRate: (nets.filter(v => v > 0).length / n) * 100,
+    worstDecile: worstDecileOf(nets),
   };
+}
+
+/** Mean of the worst 10% of results, or of the single worst when n is tiny. */
+function worstDecileOf(nets: number[]): number {
+  const sorted = [...nets].sort((a, b) => a - b);
+  const take = Math.max(1, Math.floor(sorted.length / 10));
+  return sorted.slice(0, take).reduce((a, b) => a + b, 0) / take;
 }
 
 export interface ScanOptions {
@@ -188,10 +223,11 @@ export interface ScanOptions {
  * Run every hypothesis over the same bars, at the same costs, and report the
  * set together with the threshold its size demands.
  *
- * Results are ordered by |t|, largest first — deliberately NOT by mean points.
- * A hypothesis that fired eleven times for a huge average is the thing this
- * module exists to stop someone trading, and sorting by return puts it at the
- * top of the screen.
+ * Ordered by |t|, largest first — deliberately NOT by mean points. A hypothesis
+ * that fired eleven times for a huge average is the thing this module exists to
+ * stop someone trading, and sorting by return puts it at the top of the screen.
+ * Hypotheses that did not fire enough to be measured sort below every one that
+ * did, whatever their arithmetic says, for the same reason.
  */
 export function scanEdges(
   candles: Candle[],
@@ -237,10 +273,14 @@ export function scanEdges(
       ...s,
       windowsPositive,
       windowsJudged,
+      measured: nets.length >= MIN_OCCURRENCES,
     };
   });
 
-  results.sort((a, b) => Math.abs(b.tStat) - Math.abs(a.tStat));
+  results.sort((a, b) => {
+    if (a.measured !== b.measured) return a.measured ? -1 : 1;
+    return Math.abs(b.tStat) - Math.abs(a.tStat);
+  });
 
   const m = Math.max(1, hypotheses.length);
   return {
@@ -261,7 +301,7 @@ export function scanEdges(
  * two on its own and is the most common way a scan of this kind lies.
  */
 export function survives(r: EdgeResult, report: ScanReport): boolean {
-  if (r.n < MIN_OCCURRENCES) return false;
+  if (!r.measured) return false;
   if (r.pValue > report.adjustedAlpha) return false;
   if (r.windowsJudged >= 3 && r.windowsPositive * 2 <= r.windowsJudged) {
     return false;
