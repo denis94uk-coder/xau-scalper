@@ -25,6 +25,7 @@ import {
   expectancy,
   netPoints as netOf,
 } from "./costs";
+import { analyzeFamilyAt, type StrategyFamily } from "./families";
 import {
   analyzeAt,
   type Candle,
@@ -137,12 +138,23 @@ export function computeMetrics(trades: ClosedTrade[]): BacktestMetrics {
  * held-out slice is scored with the same indicator state the live engine would
  * have had at that moment.
  */
+/**
+ * Which scoring model generates entries.
+ *
+ * "combined" is strategy.ts — the original, still what the live engine runs.
+ * "trend" and "reversion" score only their own half (core/families.ts), because
+ * summed together they cancel: over a clean uptrend the reversion half scores
+ * 43 points BEAR while the trend half scores 40 BULL.
+ */
+export type BacktestModel = "combined" | StrategyFamily;
+
 export function runBacktest(
   candles: Candle[],
   config: StrategyConfig,
   pricePrecision = 2,
   startIndex = 60,
   costs: CostModel = DEFAULT_COST_MODEL,
+  model: BacktestModel = "combined",
 ): ClosedTrade[] {
   const r = (n: number) => roundTo(n, pricePrecision);
 
@@ -238,13 +250,17 @@ export function runBacktest(
 
     // ── Look for a new entry when flat (mirrors generateSignals) ──
     if (!open) {
-      const analysis = analyzeAt(
-        candles,
-        indicators,
-        i,
-        config,
-        pricePrecision,
-      );
+      const analysis =
+        model === "combined"
+          ? analyzeAt(candles, indicators, i, config, pricePrecision)
+          : analyzeFamilyAt(
+              candles,
+              indicators,
+              i,
+              model,
+              config,
+              pricePrecision,
+            );
       if (analysis && (analysis.grade === "A" || analysis.grade === "B")) {
         const barMs = bar.time * 1000;
         // Same-direction cooldown, matching the live _createSignal guard.
