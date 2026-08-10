@@ -12,7 +12,11 @@
  * iterate the registry automatically.
  */
 import type { CostModel } from "./costs";
+import type { StrategyFamily } from "./families";
 import { DEFAULT_STRATEGY_CONFIG, type StrategyConfig } from "./strategy";
+
+/** Which half of the evidence a signal is scored on. See core/families.ts. */
+export type ScoringModel = "combined" | StrategyFamily;
 
 export type DataSource = "binance" | "mt5";
 export type SessionType = "24_7";
@@ -40,6 +44,16 @@ export interface AssetDefinition {
    * illiquid assets, which are exactly the ones where costs decide the outcome.
    */
   costs: CostModel;
+  /**
+   * Which scoring model the live engine and the self-heal sweep use.
+   *
+   * "combined" sums trend-following and mean-reversion evidence into one
+   * bull/bear pair; they fire in opposite conditions and cancel. It remains the
+   * default only so the pre-refactor parity fixtures on the Binance assets keep
+   * asserting the behaviour they were recorded against. New assets should name
+   * a family.
+   */
+  model?: ScoringModel;
   /** Whether the crons should generate/monitor signals for this asset. */
   enabled: boolean;
 }
@@ -195,8 +209,10 @@ export function mt5Asset(
     spreadBps: number;
   },
   configOverride?: StrategyConfig,
+  model: ScoringModel = "trend",
 ): AssetDefinition {
   return {
+    model,
     id: meta.assetId,
     displaySymbol: meta.symbol,
     dataSourceSymbol: meta.symbol,

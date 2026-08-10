@@ -37,7 +37,12 @@ describe("forRegime", () => {
   const rows = [
     record({ regime: "trend_up/normal_vol", score: 1, at: 100 }),
     record({ regime: "chop/high_vol", score: 5, at: 200 }),
-    record({ asset: "ETHUSDT", regime: "trend_up/normal_vol", score: 9, at: 300 }),
+    record({
+      asset: "ETHUSDT",
+      regime: "trend_up/normal_vol",
+      score: 9,
+      at: 300,
+    }),
   ];
 
   test("filters by both asset and regime", () => {
@@ -58,9 +63,9 @@ describe("forRegime", () => {
       record({ at: 300, score: 2 }),
       record({ at: 200, score: 3 }),
     ];
-    expect(forRegime(many, "BTCUSDT", "trend_up/normal_vol").map(r => r.at)).toEqual(
-      [300, 200, 100],
-    );
+    expect(
+      forRegime(many, "BTCUSDT", "trend_up/normal_vol").map(r => r.at),
+    ).toEqual([300, 200, 100]);
   });
 
   test("stale records can be excluded", () => {
@@ -83,11 +88,10 @@ describe("forRegime", () => {
 
 describe("bestForRegime", () => {
   test("picks the highest score, not the newest", () => {
-    const rows = [
-      record({ score: 9, at: 100 }),
-      record({ score: 2, at: 900 }),
-    ];
-    expect(bestForRegime(rows, "BTCUSDT", "trend_up/normal_vol")!.score).toBe(9);
+    const rows = [record({ score: 9, at: 100 }), record({ score: 2, at: 900 })];
+    expect(bestForRegime(rows, "BTCUSDT", "trend_up/normal_vol")!.score).toBe(
+      9,
+    );
   });
 
   test("a tie breaks toward the more recent record", () => {
@@ -204,17 +208,23 @@ describe("the untradeable sentinel", () => {
   test("an unscored config is never recalled as the best one", () => {
     // It is the config we know least about; ranking it first would be exactly
     // backwards.
-    expect(bestForRegime([unscored()], "BTCUSDT", "trend_up/normal_vol")).toBeNull();
-    expect(recallConfig([unscored()], "BTCUSDT", "trend_up/normal_vol")).toBeNull();
+    expect(
+      bestForRegime([unscored()], "BTCUSDT", "trend_up/normal_vol"),
+    ).toBeNull();
+    expect(
+      recallConfig([unscored()], "BTCUSDT", "trend_up/normal_vol"),
+    ).toBeNull();
   });
 
   test("a real score wins over a sentinel regardless of order", () => {
     const real = record({ score: -5, config: cfg({ tp2R: 3.5 }) });
     expect(
-      bestForRegime([unscored(), real], "BTCUSDT", "trend_up/normal_vol")!.score,
+      bestForRegime([unscored(), real], "BTCUSDT", "trend_up/normal_vol")!
+        .score,
     ).toBe(-5);
     expect(
-      bestForRegime([real, unscored()], "BTCUSDT", "trend_up/normal_vol")!.score,
+      bestForRegime([real, unscored()], "BTCUSDT", "trend_up/normal_vol")!
+        .score,
     ).toBe(-5);
   });
 

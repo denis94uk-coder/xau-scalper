@@ -150,7 +150,14 @@ export function runSweep(
 
   const results: SweepResult[] = expandGrid(base, grid).map(config => {
     const metrics = computeMetrics(
-      runBacktest(inSample, config, asset.pricePrecision, 60, asset.costs),
+      runBacktest(
+        inSample,
+        config,
+        asset.pricePrecision,
+        60,
+        asset.costs,
+        asset.model ?? "combined",
+      ),
     );
     const result: SweepResult = {
       config,
@@ -166,6 +173,7 @@ export function runSweep(
           asset.pricePrecision,
           splitIndex,
           asset.costs,
+          asset.model ?? "combined",
         ),
       );
       result.outOfSample = oos;

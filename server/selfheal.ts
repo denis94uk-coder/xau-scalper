@@ -29,19 +29,19 @@
 
 import { type AssetDefinition, getEnabledAssets } from "../core/assets";
 import { computeMetrics, runBacktest } from "../core/backtest";
-import { type Regime, detectRegime } from "../core/regime";
+import { detectRegime, type Regime } from "../core/regime";
 import {
+  assess,
   DEFAULT_THRESHOLDS,
   type HealthDecision,
   type HealthThresholds,
-  assess,
 } from "../core/selfheal";
 import {
-  type SignificanceReport,
   assessSignificance,
+  type SignificanceReport,
 } from "../core/significance";
-import { type SweepResult, runSweep } from "../core/sweep";
 import type { Candle } from "../core/strategy";
+import { runSweep, type SweepResult } from "../core/sweep";
 import type { Db } from "./db";
 import { publish } from "./events";
 import { type Fetcher, fetchCandles } from "./market";
@@ -157,7 +157,14 @@ export async function healAsset(
   // The running config, measured on the same window the candidates are.
   // Scoring them on different data would compare the windows, not the configs.
   const current = computeMetrics(
-    runBacktest(candles, asset.config, asset.pricePrecision, 60, asset.costs),
+    runBacktest(
+      candles,
+      asset.config,
+      asset.pricePrecision,
+      60,
+      asset.costs,
+      asset.model ?? "combined",
+    ),
   );
 
   const ranked = runSweep(candles, asset, {
@@ -217,7 +224,15 @@ export async function healAsset(
     metadata: { regime: regime.label, score: final.currentScore },
   });
 
-  return { asset: asset.id, regime, decision: final, live, veto, candidate, recorded };
+  return {
+    asset: asset.id,
+    regime,
+    decision: final,
+    live,
+    veto,
+    candidate,
+    recorded,
+  };
 }
 
 /**
@@ -226,9 +241,7 @@ export async function healAsset(
  * One asset failing does not stop the rest: a sweep is per-instrument and a
  * fetch failure on TAO says nothing about gold.
  */
-export async function runSelfHeal(
-  deps: SelfHealDeps,
-): Promise<HealOutcome[]> {
+export async function runSelfHeal(deps: SelfHealDeps): Promise<HealOutcome[]> {
   const assets = deps.assets ?? getEnabledAssets();
   const results: HealOutcome[] = [];
 

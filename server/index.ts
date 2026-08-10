@@ -19,12 +19,12 @@ import { getEnabledAssets } from "../core/assets";
 import { handleApi, handleEvents } from "./api";
 import { Db } from "./db";
 import { generateSignals, monitorIdeas, recoverGap } from "./engine";
-import { runSelfHeal } from "./selfheal";
 import { publish } from "./events";
 import { scanLiquiditySweeps } from "./intel/liquiditySweep";
 import { fetchMacroData } from "./intel/macroCorrelation";
 import { updateCalendar } from "./intel/newsCalendar";
 import { detectMarketRegime } from "./intel/regime";
+import { runSelfHeal } from "./selfheal";
 
 const HOST = process.env.TEO_HOST ?? "127.0.0.1";
 const PORT = Number(process.env.TEO_PORT ?? 4000);
@@ -174,7 +174,9 @@ await runIntel();
 if (SELFHEAL_ON) {
   const last = db.lastRun("selfheal");
   if (last === null || Date.now() - last >= SELFHEAL_MS) {
-    void safely("selfheal", async () => { await runSelfHeal({ db }); });
+    void safely("selfheal", async () => {
+      await runSelfHeal({ db });
+    });
   }
 }
 
@@ -191,7 +193,10 @@ const timers = [
   ...(SELFHEAL_ON
     ? [
         setInterval(
-          () => void safely("selfheal", async () => { await runSelfHeal({ db }); }),
+          () =>
+            void safely("selfheal", async () => {
+              await runSelfHeal({ db });
+            }),
           SELFHEAL_MS,
         ),
       ]

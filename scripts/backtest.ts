@@ -34,9 +34,15 @@ interface CliArgs {
   model: BacktestModel;
 }
 
+/**
+ * Defaults to `trend`, not `combined`. The combined model scores trend and
+ * mean-reversion evidence into one pair and they cancel — it is reachable with
+ * `--model combined` for comparison, but it is not a sensible default to
+ * measure a broker's data with.
+ */
 function parseModel(v: string | undefined): BacktestModel {
-  if (v === "trend" || v === "reversion") return v;
-  return "combined";
+  if (v === "trend" || v === "reversion" || v === "combined") return v;
+  return "trend";
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -141,7 +147,9 @@ async function main() {
       process.exit(1);
     }
 
-    const asset = mt5Asset(meta);
+    // The sweep scores candidates with the asset's own model, so --model has to
+    // reach it here as well as the single backtest below.
+    const asset = mt5Asset(meta, undefined, cli.model);
     const candles = database.getCandles(meta.assetId, cli.interval, 10_000);
 
     if (candles.length < 61) {

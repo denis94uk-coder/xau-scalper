@@ -148,7 +148,8 @@ export function buildCorrelationMatrix(
   const key = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
   const get = (a: string, b: string): CorrelationEstimate => {
-    if (a === b) return { value: 1, samples: Number.POSITIVE_INFINITY, assumed: false };
+    if (a === b)
+      return { value: 1, samples: Number.POSITIVE_INFINITY, assumed: false };
     const k = key(a, b);
     const hit = cache.get(k);
     if (hit) return hit;
