@@ -19,6 +19,7 @@ import { getEnabledAssets } from "../core/assets";
 import { handleApi, handleEvents } from "./api";
 import { Db } from "./db";
 import { generateSignals, monitorIdeas, recoverGap } from "./engine";
+import { reconcileState } from "./reconciliation";
 import { publish } from "./events";
 import { scanLiquiditySweeps } from "./intel/liquiditySweep";
 import { fetchMacroData } from "./intel/macroCorrelation";
@@ -152,6 +153,14 @@ console.log(`
 await safely("recover", async () => {
   const changed = await recoverGap({ db });
   if (changed > 0) console.log(`[recover] resolved ${changed} state change(s)`);
+});
+
+// Safety net for positions that candle-replay could not reach (downtime longer
+// than the stored candle window). Compares open ideas against the current live
+// price; anything definitively past its SL or TP2 is force-closed here.
+await safely("reconcile", async () => {
+  const ghosts = await reconcileState({ db });
+  if (ghosts > 0) console.log(`[reconcile] closed ${ghosts} ghost trade(s)`);
 });
 
 /** The four intel engines, run together. One failing must not stop the rest. */
