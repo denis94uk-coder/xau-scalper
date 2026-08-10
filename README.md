@@ -487,6 +487,80 @@ brokers do not publish real volume.
 Only the spread is measured. Fees and stop slippage cannot be read from a quote,
 so they remain assumptions and are labelled as such in the output.
 
+### Trend and mean-reversion are scored separately
+
+The original model sums trend-following and mean-reversion evidence into one
+bull/bear pair. They fire in opposite conditions, so they cancel. Through a
+clean synthetic uptrend the combined model signals **SHORT on 300 of 300 bars**:
+the bullish EMA structure is worth 40 points, and the upper-band touch, RSI > 70
+and Stoch > 80 that necessarily accompany an uptrend are worth 43 to the other
+side.
+
+That caps how high `max(bullScore, bearScore)` can ever climb. On 4,940 bars of
+XAUUSD M5 the highest strength observed was **63**, against a grade A threshold
+of 70 — grade A did not occur once, and could not have.
+
+`core/families.ts` scores each half on its own evidence, with its own grade
+thresholds, normalised to 0-100 against what that family can actually reach.
+`core/strategy.ts` is untouched; its behaviour is pinned by a parity fixture and
+the live engine still runs it.
+
+```bash
+bun run compare -- --asset MT5:XAUUSD --interval 5m
+```
+
+Runs all three models on the same bars and costs, and reports whether each
+result is distinguishable from chance. Individual models:
+
+```bash
+bun run backtest -- --source db --asset MT5:XAUUSD --model trend
+bun run backtest -- --source db --asset MT5:XAUUSD --model reversion --sweep
+```
+
+**A high win rate here is a warning, not a result.** Backtesting a
+trend-following model on a series that happens to trend will produce one. The
+number that matters is whether it survives out-of-sample and forward.
+
+### Does it hold up across time?
+
+```bash
+bun run compare -- --asset MT5:XAUUSD --interval 15m --walk-forward 6 --model trend
+```
+
+Splits the history into consecutive non-overlapping windows and reports the edge
+in each. Windows are replayed with the full preceding history, so indicators are
+warm and each window still measures only its own bars.
+
+One backtest over one window cannot tell a persistent edge from a single
+profitable stretch — and once you have compared several models on several
+timeframes, the best-looking combination is the one most likely to *be* that
+stretch. Read the "windows with a positive edge" line first: a real edge shows
+up in most of them.
+
+Validated against series with known answers. On a pure random walk it reports
+0 of 6 windows positive; on a momentum-autocorrelated series with a genuine
+trend edge, 6 of 6. It does not manufacture edges and does not miss them.
+
+Significance is the exact binomial from `core/significance.ts`, not a normal
+approximation — the latter is unreliable at the low win rates this exit geometry
+produces.
+
+### Why did the strategy not fire?
+
+```bash
+bun run diagnose -- --asset MT5:XAUUSD --interval 5m
+```
+
+Reports where every bar went: session gaps, how many bars failed to score at
+all, how many were killed by the neutral-bias filter, how many were graded
+NO_TRADE, and the strength distribution against the thresholds in force.
+
+Read the strength distribution before touching a threshold. If bars clear the
+strength bar but few are graded, the extreme-indicator count is binding and
+lowering strength changes nothing. If the 95th percentile sits below it, the
+model is not finding the instrument's setups — and lowering the bar to force
+trades selects noise rather than discovering an edge.
+
 ### Backtesting on broker data
 
 Once synced, the bars are stored under `MT5:<SYMBOL>` and the backtester can

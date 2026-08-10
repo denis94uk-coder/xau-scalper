@@ -12,7 +12,11 @@
  */
 
 import { DEFAULT_ASSET_ID, getAsset, mt5Asset } from "../core/assets";
-import { computeMetrics, runBacktest } from "../core/backtest";
+import {
+  type BacktestModel,
+  computeMetrics,
+  runBacktest,
+} from "../core/backtest";
 import type { Candle } from "../core/strategy";
 import { isScored, runSweep } from "../core/sweep";
 import { db as openDb } from "../server/db";
@@ -27,6 +31,12 @@ interface CliArgs {
   interval: string;
   source: "binance" | "db";
   sweep: boolean;
+  model: BacktestModel;
+}
+
+function parseModel(v: string | undefined): BacktestModel {
+  if (v === "trend" || v === "reversion") return v;
+  return "combined";
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -51,6 +61,7 @@ function parseArgs(argv: string[]): CliArgs {
     interval: args.interval ?? "5m",
     source: args.source === "db" ? "db" : "binance",
     sweep: args.sweep === "true",
+    model: parseModel(args.model),
   };
 }
 
@@ -141,7 +152,7 @@ async function main() {
     }
 
     console.log(
-      `\nBacktest ${asset.displaySymbol} (MT5 broker data) ` +
+      `\nBacktest ${asset.displaySymbol} (MT5 broker data) [${cli.model}] ` +
         `${cli.interval} | ${candles.length} bars\n`,
     );
     console.log(
@@ -170,7 +181,14 @@ async function main() {
       for (let i = 0; i < ranked.length; i++) {
         const r = ranked[i];
         const m = computeMetrics(
-          runBacktest(candles, r.config, asset.pricePrecision, 60, asset.costs),
+          runBacktest(
+            candles,
+            r.config,
+            asset.pricePrecision,
+            60,
+            asset.costs,
+            cli.model,
+          ),
         );
         console.log(
           `  ${String(i + 1).padStart(2)}   ` +
@@ -202,6 +220,7 @@ async function main() {
       asset.pricePrecision,
       60,
       asset.costs,
+      cli.model,
     );
     const m = computeMetrics(trades);
 
