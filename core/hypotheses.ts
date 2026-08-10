@@ -16,7 +16,7 @@
  */
 
 import type { Hypothesis } from "./edgescan";
-import type { Candle } from "./strategy";
+import type { Candle, Direction } from "./strategy";
 
 /** UTC hour of a candle. Broker server time is not UTC; the sync stores UTC. */
 function hourOf(c: Candle): number {
@@ -197,6 +197,79 @@ function quietTrend(atrPercentile: number): Hypothesis {
 }
 
 /**
+ * Direction of the higher timeframe, as a sign, or null if `i` is too early.
+ *
+ * `bars` counted in M5 bars: 48 is four hours, 288 is a day. Measured as the
+ * slope of the window rather than an EMA cross so that "the H4 is up" means the
+ * price is higher than it was four hours ago, which is what someone looking at
+ * an H4 chart means by it.
+ */
+function higherTimeframe(
+  candles: Candle[],
+  i: number,
+  bars: number,
+): Direction | null {
+  if (i < bars) return null;
+  const change = candles[i].close - candles[i - bars].close;
+  if (change === 0) return null;
+  return change > 0 ? "LONG" : "SHORT";
+}
+
+/**
+ * A short-term entry taken only when it agrees — or only when it disagrees —
+ * with the higher timeframe.
+ *
+ * The claim under test is the most repeated one in retail gold trading: that
+ * scalping against the H4 or daily trend is what kills these systems. It is a
+ * real claim and it deserves a real test rather than a nod.
+ *
+ * `aligned` and its opposite are NOT the same test negated — the mirror check
+ * in the tests would catch that. They fire on disjoint sets of bars and take
+ * the same short-term direction on each. That is what makes the pair
+ * informative: if the folklore is right, the aligned version should be
+ * markedly better than the counter-trend one, and the difference between them
+ * is the size of the effect being claimed.
+ *
+ * One consequence worth stating, because it surprised the author and the mirror
+ * test in the suite is what surfaced it: "enter with the trend after a pullback
+ * against it" — the standard formulation of trading with the higher timeframe —
+ * fires on the IDENTICAL set of bars as `aligned: false`, in the opposite
+ * direction. Buying the dip in an uptrend and scalping against the trend are
+ * the same moments described by two schools. So the counter-trend row already
+ * answers the pullback question with its sign flipped, and a separate pullback
+ * hypothesis would have spent a test slot re-asking it.
+ *
+ * A caveat this measurement cannot remove: the folklore is usually a claim
+ * about the STOP, not the entry — a counter-trend scalp dies because a tight
+ * stop is run over in a strong move, which can happen with identical mean
+ * returns and a worse loss distribution. A fixed-bar hold has no stop and is
+ * blind to that. Equal results here would not refute the claim; they would
+ * relocate it to the exit, where `runBacktest` can see it.
+ */
+function trendFiltered(
+  entryLookback: number,
+  htfBars: number,
+  htfLabel: string,
+  aligned: boolean,
+): Hypothesis {
+  return {
+    name: `mom${entryLookback}-${aligned ? "with" : "against"}-${htfLabel}`,
+    claim:
+      `A ${entryLookback}-bar momentum entry taken only when it ` +
+      `${aligned ? "agrees" : "disagrees"} with the ${htfLabel} direction.`,
+    signal(candles, i) {
+      if (i < Math.max(entryLookback, htfBars)) return null;
+      const htf = higherTimeframe(candles, i, htfBars);
+      if (htf === null) return null;
+      const change = candles[i].close - candles[i - entryLookback].close;
+      if (change === 0) return null;
+      const entry: Direction = change > 0 ? "LONG" : "SHORT";
+      return (entry === htf) === aligned ? entry : null;
+    },
+  };
+}
+
+/**
  * The catalogue, fixed and named.
  *
  * The list is a constant rather than something a caller assembles, because the
@@ -217,4 +290,12 @@ export const HYPOTHESES: Hypothesis[] = [
   sessionDrift(13, 21, "ny-session"),
   quietTrend(30),
   quietTrend(50),
+  // The higher-timeframe-alignment folklore, tested rather than assumed. Both
+  // sides of each pair, because "with the trend beats against it" is only
+  // shown by measuring both — and the six extra tests tighten the threshold
+  // every other hypothesis has to clear, which is the honest price of asking.
+  trendFiltered(3, 48, "h4", true),
+  trendFiltered(3, 48, "h4", false),
+  trendFiltered(3, 288, "d1", true),
+  trendFiltered(3, 288, "d1", false),
 ];

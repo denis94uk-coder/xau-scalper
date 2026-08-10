@@ -78,9 +78,9 @@ function main() {
   );
 
   console.log(
-    "hypothesis              n      mean net   hit%       t       p        windows",
+    "hypothesis              n      mean net   worst10%   hit%       t       p        windows",
   );
-  console.log("─".repeat(82));
+  console.log("─".repeat(92));
 
   for (const r of report.results) {
     const flag = survives(r, report) ? "  ← survives" : "";
@@ -94,6 +94,7 @@ function main() {
       `${r.name.padEnd(22)} ` +
         `${String(r.n).padStart(5)}  ` +
         `${r.meanNet.toFixed(3).padStart(10)}  ` +
+        `${r.worstDecile.toFixed(2).padStart(8)}  ` +
         `${r.hitRate.toFixed(1).padStart(5)}  ` +
         `${stats}  ` +
         `${`${r.windowsPositive}/${r.windowsJudged}`.padStart(7)}` +
@@ -109,6 +110,51 @@ function main() {
         `${MIN_OCCURRENCES} times and are not judged either way. That is a\n` +
         "statement about how much history you synced, not about gold.",
     );
+  }
+
+  // The higher-timeframe folklore gets an explicit verdict rather than two rows
+  // to eyeball, because "with the trend beats against it" is a comparison and
+  // reading it off a table sorted by |t| is how it never gets checked.
+  for (const htf of ["h4", "d1"]) {
+    const withT = report.results.find(r => r.name === `mom3-with-${htf}`);
+    const against = report.results.find(r => r.name === `mom3-against-${htf}`);
+    if (!withT || !against) continue;
+    console.log("");
+    console.log(
+      `─── Scalping with vs against the ${htf.toUpperCase()} trend ───`,
+    );
+    if (!withT.measured || !against.measured) {
+      console.log("  Not enough occurrences on this history to compare.");
+      continue;
+    }
+    console.log(
+      `  with:    ${withT.meanNet.toFixed(3).padStart(8)} pts/hold   ` +
+        `worst decile ${withT.worstDecile.toFixed(2).padStart(8)}   n=${withT.n}`,
+    );
+    console.log(
+      `  against: ${against.meanNet.toFixed(3).padStart(8)} pts/hold   ` +
+        `worst decile ${against.worstDecile.toFixed(2).padStart(8)}   n=${against.n}`,
+    );
+    const meanGap = withT.meanNet - against.meanNet;
+    const tailGap = withT.worstDecile - against.worstDecile;
+    console.log(
+      `  Trading with the trend is worth ${meanGap >= 0 ? "+" : ""}${meanGap.toFixed(3)} pts per hold ` +
+        `and a ${tailGap >= 0 ? "shallower" : "deeper"} bad tail ` +
+        `by ${Math.abs(tailGap).toFixed(2)} pts.`,
+    );
+    console.log(
+      "  The 'against' row is also the pullback strategy with its sign flipped:\n" +
+        "  buying the dip in an uptrend and scalping against the trend fire on the\n" +
+        "  same bars, opposite ways.",
+    );
+    if (Math.abs(meanGap) < 0.5 && Math.abs(tailGap) < 2) {
+      console.log(
+        "  Neither gap is large. On this history the higher timeframe does not\n" +
+          "  separate a good scalp from a bad one — but a fixed-bar hold has no\n" +
+          "  stop, and the usual version of this claim is about the stop being run\n" +
+          "  over. That part is only visible in a backtest with a real exit.",
+      );
+    }
   }
 
   const found = report.results.filter(r => survives(r, report));

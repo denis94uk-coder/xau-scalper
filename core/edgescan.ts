@@ -61,6 +61,16 @@ export interface EdgeResult {
   pValue: number;
   /** Fraction of occurrences that were net positive. */
   hitRate: number;
+  /**
+   * Mean of the worst decile of occurrences.
+   *
+   * Two hypotheses can share a mean and be nothing alike to trade. The common
+   * claim that counter-trend scalping "kills" a system is usually not a claim
+   * about expectancy at all — it is that the losses arrive in a shape a stop
+   * cannot survive, which a mean hides completely. This is the crudest honest
+   * summary of that shape: what the bad tail actually costs.
+   */
+  worstDecile: number;
   /** Sign of meanNet per window, when windows were requested. */
   windowsPositive: number;
   windowsJudged: number;
@@ -162,10 +172,18 @@ function summarise(nets: number[]): {
   tStat: number;
   pValue: number;
   hitRate: number;
+  worstDecile: number;
 } {
   const n = nets.length;
   if (n === 0) {
-    return { meanNet: 0, stdev: 0, tStat: 0, pValue: 1, hitRate: 0 };
+    return {
+      meanNet: 0,
+      stdev: 0,
+      tStat: 0,
+      pValue: 1,
+      hitRate: 0,
+      worstDecile: 0,
+    };
   }
   const mean = nets.reduce((a, b) => a + b, 0) / n;
   const variance =
@@ -179,7 +197,15 @@ function summarise(nets: number[]): {
     tStat,
     pValue: se > 0 ? normalTwoSided(tStat) : 1,
     hitRate: (nets.filter(v => v > 0).length / n) * 100,
+    worstDecile: worstDecileOf(nets),
   };
+}
+
+/** Mean of the worst 10% of results, or of the single worst when n is tiny. */
+function worstDecileOf(nets: number[]): number {
+  const sorted = [...nets].sort((a, b) => a - b);
+  const take = Math.max(1, Math.floor(sorted.length / 10));
+  return sorted.slice(0, take).reduce((a, b) => a + b, 0) / take;
 }
 
 export interface ScanOptions {
