@@ -20,7 +20,9 @@
     "kronos:fetch": "python -m teo.forecasting.fetch_weights",
     "test": "bun test core server",
     "package": "bun run --bun scripts/package-app.ts",
-    "mt5:sync": "bun run --bun scripts/mt5-sync.ts"
+    "mt5:sync": "bun run --bun scripts/mt5-sync.ts",
+    "mt5:backtest": "bun run --bun scripts/backtest.ts --source db --asset MT5:XAUUSD --interval 5m",
+    "mt5:sweep": "bun run --bun scripts/backtest.ts --source db --asset MT5:XAUUSD --interval 5m --sweep"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

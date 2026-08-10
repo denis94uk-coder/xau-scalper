@@ -14,7 +14,7 @@
 import type { CostModel } from "./costs";
 import { DEFAULT_STRATEGY_CONFIG, type StrategyConfig } from "./strategy";
 
-export type DataSource = "binance";
+export type DataSource = "binance" | "mt5";
 export type SessionType = "24_7";
 
 export interface AssetDefinition {
@@ -178,4 +178,38 @@ export function getAsset(id: string): AssetDefinition | undefined {
 
 export function getEnabledAssets(): AssetDefinition[] {
   return ASSETS.filter(a => a.enabled);
+}
+
+/**
+ * Build an AssetDefinition from stored MT5 export metadata.
+ *
+ * mt5:sync stores the broker's symbol specs under `mt5:<symbol>` in the
+ * settings table. This turns that into something the backtest and sweep can
+ * consume — with the broker's measured costs, not the registry estimates.
+ */
+export function mt5Asset(
+  meta: {
+    symbol: string;
+    digits: number;
+    assetId: string;
+    spreadBps: number;
+  },
+  configOverride?: StrategyConfig,
+): AssetDefinition {
+  return {
+    id: meta.assetId,
+    displaySymbol: meta.symbol,
+    dataSourceSymbol: meta.symbol,
+    dataSource: "mt5",
+    sessionType: "24_7",
+    pricePrecision: meta.digits,
+    config: configOverride ?? DEFAULT_STRATEGY_CONFIG,
+    costs: {
+      halfSpreadBps: meta.spreadBps / 2,
+      takerFeeBps: 0,
+      makerFeeBps: 0,
+      stopSlippageBps: meta.spreadBps,
+    },
+    enabled: true,
+  };
 }
