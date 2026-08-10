@@ -265,9 +265,7 @@ export async function handleApi(
     // Hold the win rate fixed and shrink the sample — the rate is what was
     // observed; only the confidence it supports is being discounted.
     const effectiveWins =
-      periods.length > 0
-        ? Math.round((wins / periods.length) * effective)
-        : 0;
+      periods.length > 0 ? Math.round((wins / periods.length) * effective) : 0;
 
     return json({
       ...book,

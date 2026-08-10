@@ -22,6 +22,7 @@ import {
   DEFAULT_ASSET_ID,
   getEnabledAssets,
 } from "../core/assets";
+import { analyzeFamilyCandles, type FamilyAnalysis } from "../core/families";
 import {
   admit,
   buildCorrelationMatrix,
@@ -30,6 +31,7 @@ import {
   type PortfolioLimits,
 } from "../core/portfolio";
 import {
+  type AnalysisResult,
   analyzeCandles,
   type Candle,
   calcATR,
@@ -129,6 +131,25 @@ export function openExposures(db: Db): Exposure[] {
  * Mirrors the live rules: 5m primary, 15m must agree if it has an opinion,
  * A/B grades only, per-asset same-direction cooldown.
  */
+/**
+ * Score a window with whichever model the asset names.
+ *
+ * The combined model scores trend-following and mean-reversion evidence into
+ * one bull/bear pair; because they fire in opposite conditions they cancel, and
+ * the backtest that validates a config runs whichever model the asset declares.
+ * Routing here keeps the live engine on the same model it was measured with —
+ * before this, an asset could be tuned as `trend` and traded as `combined`.
+ */
+function analyzeFor(
+  asset: AssetDefinition,
+  candles: Candle[],
+): AnalysisResult | FamilyAnalysis | null {
+  const model = asset.model ?? "combined";
+  return model === "combined"
+    ? analyzeCandles(candles, asset.config, asset.pricePrecision)
+    : analyzeFamilyCandles(candles, model, asset.config, asset.pricePrecision);
+}
+
 export async function generateForAsset(
   deps: EngineDeps,
   asset: AssetDefinition,
@@ -142,8 +163,8 @@ export async function generateForAsset(
   const price = candles5m.at(-1)?.close;
   if (price === undefined) return null;
 
-  const a5 = analyzeCandles(candles5m, asset.config, asset.pricePrecision);
-  const a15 = analyzeCandles(candles15m, asset.config, asset.pricePrecision);
+  const a5 = analyzeFor(asset, candles5m);
+  const a15 = analyzeFor(asset, candles15m);
 
   db.logJournal({
     eventType: "ENGINE_RUN",
@@ -157,7 +178,7 @@ export async function generateForAsset(
         bias: a5.bias,
         grade: a5.grade,
         confidence: a5.confidence,
-        indicators: a5.indicators,
+        indicators: "indicators" in a5 ? a5.indicators : undefined,
       },
       fifteenMin: a15 && { bias: a15.bias, grade: a15.grade },
     },

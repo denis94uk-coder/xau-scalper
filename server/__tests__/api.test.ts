@@ -357,9 +357,9 @@ describe("portfolio", () => {
     // response must admit that rather than serving 0 as if it were a finding.
     expect(b.correlations.length).toBeGreaterThan(0);
     expect(b.correlations.every(c => c.assumed)).toBe(true);
-    expect(b.correlations.every(c => c.samples === null || c.samples === 0)).toBe(
-      true,
-    );
+    expect(
+      b.correlations.every(c => c.samples === null || c.samples === 0),
+    ).toBe(true);
     expect(b.correlationsMeasured).toBe(false);
   });
 

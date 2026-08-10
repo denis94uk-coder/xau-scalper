@@ -21,8 +21,8 @@
  */
 import { beforeEach, describe, expect, test } from "bun:test";
 import type { AssetDefinition } from "../../core/assets";
-import { ZERO_COST_MODEL } from "../../core/costs";
 import { computeMetrics, runBacktest } from "../../core/backtest";
+import { ZERO_COST_MODEL } from "../../core/costs";
 import { type Candle, DEFAULT_STRATEGY_CONFIG } from "../../core/strategy";
 import { Db, type NewIdea } from "../db";
 import { healAsset, liveRecord, liveVeto, runSelfHeal } from "../selfheal";
@@ -84,7 +84,10 @@ function resolvedIdea(over: Partial<NewIdea> = {}, pnl = 10) {
     spotPrice: 100,
     ...over,
   });
-  db.updateIdea(id, { status: pnl > 0 ? "TP2_HIT" : "STOPPED", pnl_points: pnl });
+  db.updateIdea(id, {
+    status: pnl > 0 ? "TP2_HIT" : "STOPPED",
+    pnl_points: pnl,
+  });
   return id;
 }
 
@@ -150,7 +153,9 @@ describe("healAsset", () => {
     await healAsset({ db, candles: randomWalk(1000) }, ASSET);
     const rows = db
       .listJournal()
-      .filter(r => r.event_type === "HEAL_HOLD" || r.event_type === "HEAL_PROPOSAL");
+      .filter(
+        r => r.event_type === "HEAL_HOLD" || r.event_type === "HEAL_PROPOSAL",
+      );
     expect(rows).toHaveLength(1);
     expect(rows[0].source).toBe("selfheal");
     expect(rows[0].details).toContain("TEST/USD");

@@ -6,8 +6,10 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { mt5Asset } from "../assets";
 import {
   analyzeFamilyAt,
+  analyzeFamilyCandles,
   DEFAULT_FAMILY_THRESHOLDS,
   type FamilyRejection,
   REVERSION_MAX_POINTS,
@@ -283,5 +285,40 @@ describe("contract parity with analyzeAt", () => {
         }
       }
     }
+  });
+});
+
+describe("live wiring", () => {
+  test("analyzeFamilyCandles matches analyzeFamilyAt on the last bar", () => {
+    const candles = uptrend();
+    const ind = precomputeIndicators(candles, DEFAULT_STRATEGY_CONFIG);
+    for (const family of ["trend", "reversion"] as const) {
+      expect(analyzeFamilyCandles(candles, family)).toEqual(
+        analyzeFamilyAt(
+          candles,
+          ind,
+          candles.length - 1,
+          family,
+          DEFAULT_STRATEGY_CONFIG,
+        ),
+      );
+    }
+  });
+
+  test("analyzeFamilyCandles refuses a window shorter than the warm-up", () => {
+    expect(analyzeFamilyCandles(uptrend().slice(0, 59), "trend")).toBeNull();
+  });
+
+  // The live engine and the self-heal sweep both read asset.model. A broker
+  // asset left on "combined" would be traded with the model whose halves cancel.
+  test("mt5Asset names a family so the engine does not fall back to combined", () => {
+    const meta = {
+      symbol: "XAUUSD",
+      digits: 2,
+      assetId: "MT5:XAUUSD",
+      spreadBps: 0.51,
+    };
+    expect(mt5Asset(meta).model).toBe("trend");
+    expect(mt5Asset(meta, undefined, "reversion").model).toBe("reversion");
   });
 });

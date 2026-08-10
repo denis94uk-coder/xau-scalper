@@ -24,8 +24,10 @@
 import {
   type Bias,
   type Candle,
+  DEFAULT_STRATEGY_CONFIG,
   type Direction,
   type IndicatorSeries,
+  precomputeIndicators,
   roundTo,
   type SignalGrade,
   type StrategyConfig,
@@ -377,4 +379,27 @@ export function analyzeFamilyAt(
     extremeCount,
     atr: r(currentATR),
   };
+}
+
+/**
+ * Analyse the most recent bar for one family.
+ *
+ * The family counterpart of analyzeCandles — same shape (one window, one
+ * answer) so the live engine can swap between them on a per-asset setting.
+ */
+export function analyzeFamilyCandles(
+  candles: Candle[],
+  family: StrategyFamily,
+  config: StrategyConfig = DEFAULT_STRATEGY_CONFIG,
+  pricePrecision = 2,
+): FamilyAnalysis | null {
+  if (candles.length < 60) return null;
+  return analyzeFamilyAt(
+    candles,
+    precomputeIndicators(candles, config),
+    candles.length - 1,
+    family,
+    config,
+    pricePrecision,
+  );
 }

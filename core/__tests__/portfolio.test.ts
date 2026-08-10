@@ -9,8 +9,8 @@ import {
   admit,
   averageConcurrency,
   buildCorrelationMatrix,
-  concentration,
   type CorrelationMatrix,
+  concentration,
   type Exposure,
   grossRisk,
   pearson,
@@ -167,7 +167,10 @@ describe("buildCorrelationMatrix", () => {
   test("the fallback is not independence", () => {
     // Assuming 0 would wave through exactly the correlated cluster the cap
     // exists to catch, so the default must never be 0.
-    const m = buildCorrelationMatrix({ A: candles([1, 2]), B: candles([3, 4]) });
+    const m = buildCorrelationMatrix({
+      A: candles([1, 2]),
+      B: candles([3, 4]),
+    });
     expect(m.get("A", "B").value).toBeGreaterThan(0.5);
   });
 
@@ -257,7 +260,9 @@ describe("portfolioRisk", () => {
 
   test("weights scale risk linearly", () => {
     const m = uniformMatrix(["A"], 0);
-    expect(portfolioRisk([{ asset: "A", direction: "LONG", weight: 3 }], m)).toBeCloseTo(3, 9);
+    expect(
+      portfolioRisk([{ asset: "A", direction: "LONG", weight: 3 }], m),
+    ).toBeCloseTo(3, 9);
   });
 });
 
@@ -329,7 +334,11 @@ describe("admit", () => {
       assets: ids,
       get: (a, b) => {
         if (a === b)
-          return { value: 1, samples: Number.POSITIVE_INFINITY, assumed: false };
+          return {
+            value: 1,
+            samples: Number.POSITIVE_INFINITY,
+            assumed: false,
+          };
         const pair = [a, b].sort().join("");
         return {
           value: pair === "BD" ? 0.95 : 0.1,
@@ -340,7 +349,11 @@ describe("admit", () => {
       average: () => 0.3,
       fullyMeasured: () => true,
     };
-    const d = admit(longs(["A", "B", "C"]), { asset: "D", direction: "LONG" }, m);
+    const d = admit(
+      longs(["A", "B", "C"]),
+      { asset: "D", direction: "LONG" },
+      m,
+    );
     expect(d.closest?.asset).toBe("B");
     expect(d.closest?.correlation).toBeCloseTo(0.95, 6);
     expect(d.reason).toContain("B");
