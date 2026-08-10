@@ -487,6 +487,39 @@ brokers do not publish real volume.
 Only the spread is measured. Fees and stop slippage cannot be read from a quote,
 so they remain assumptions and are labelled as such in the output.
 
+### Backtesting on broker data
+
+Once synced, the bars are stored under `MT5:<SYMBOL>` and the backtester can
+replay them instead of fetching from Binance:
+
+```bash
+bun run mt5:backtest      # one backtest on the default config
+bun run mt5:sweep         # rank configs by risk-adjusted score
+```
+
+Costs come from the sync — your measured spread, not the registry estimate — so
+the result describes your account. Fees default to zero, which is right for a
+commission-free CFD account and wrong for anything else; stop slippage is
+assumed at one spread.
+
+Any symbol and timeframe the exporter wrote works:
+
+```bash
+bun run backtest -- --source db --asset MT5:XAUUSD --interval 15m --sweep
+```
+
+**Reading the sweep.** Configs are selected on the leading 70% of bars and
+scored again on the held-out 30%. The in-sample columns are the ones that
+flatter; the OOS column is the one that discriminates. A config that tops the
+ranking with a negative OOS score was selected by luck on that window. `too few`
+means the config did not trade enough on the held-out slice to be judged at all
+— not a bad score, the absence of one.
+
+The sweep **prints and stops**. Nothing is written to the running config, by
+design: a system that silently rewrites its own trading parameters is one you
+cannot reason about afterwards. To adopt a config, paste it into `core/assets.ts`
+yourself.
+
 ---
 
 ## Teo (Python sidecar)
