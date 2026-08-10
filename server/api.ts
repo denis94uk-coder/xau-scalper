@@ -24,6 +24,7 @@ import type { Db } from "./db";
 import { correlationsFrom, openExposures } from "./engine";
 import { type AppEvent, publish, subscribe } from "./events";
 import { fetchCandles, fetchTickers } from "./market";
+import type { RiskManager } from "./risk-manager";
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -108,6 +109,7 @@ export async function handleApi(
   db: Db,
   req: Request,
   url: URL,
+  risk?: RiskManager,
 ): Promise<Response | null> {
   const path = url.pathname;
 
@@ -540,6 +542,18 @@ export async function handleApi(
     });
     publish("journal");
     return json({ ok: true, timestamp: Date.now() });
+  }
+
+  // ─── Kill switch / risk manager ───
+  if (path === "/api/risk") {
+    if (!risk) return json({ limitsActive: false, message: "Risk manager not configured." });
+    return json(risk.status());
+  }
+
+  if (path === "/api/risk/resume" && req.method === "POST") {
+    if (!risk) return bad("Risk manager not configured.", 503);
+    risk.resume();
+    return json({ ok: true });
   }
 
   // Any other /api/* path is a mistake, not a client-side route. Falling

@@ -16,6 +16,7 @@ export type EventKind =
   | "prices"
   | "regime"
   | "engine"
+  | "risk"
   | "hello";
 
 export interface AppEvent {
