@@ -15,7 +15,7 @@ import {
   survives,
 } from "../edgescan";
 import { HYPOTHESES } from "../hypotheses";
-import type { Candle } from "../strategy";
+import type { Candle, Direction } from "../strategy";
 
 /** Deterministic LCG, so a failure is reproducible. */
 function rng(seed: number): () => number {
@@ -162,6 +162,39 @@ describe("scanEdges", () => {
 });
 
 describe("hypotheses", () => {
+  // Registering a claim and its negation spends two slots of the
+  // multiple-testing budget on one question, and prints one fact twice as
+  // though the second printing were corroboration.
+  test("no two of them are the same claim negated", () => {
+    const candles = series(2000, r => (r - 0.5) * 4);
+    const flip = (d: Direction | null) =>
+      d === null ? null : d === "LONG" ? "SHORT" : "LONG";
+
+    for (let a = 0; a < HYPOTHESES.length; a++) {
+      for (let b = a + 1; b < HYPOTHESES.length; b++) {
+        let compared = 0;
+        let mirrored = 0;
+        for (let i = 200; i < 1000; i++) {
+          const x = HYPOTHESES[a].signal(candles, i);
+          const y = HYPOTHESES[b].signal(candles, i);
+          if (x === null && y === null) continue;
+          compared++;
+          if (y === flip(x)) mirrored++;
+        }
+        if (compared > 0 && mirrored === compared) {
+          throw new Error(
+            `${HYPOTHESES[a].name} and ${HYPOTHESES[b].name} are the same test negated`,
+          );
+        }
+      }
+    }
+  });
+
+  test("every name is distinct, so results cannot be confused", () => {
+    const names = HYPOTHESES.map(h => h.name);
+    expect(new Set(names).size).toBe(names.length);
+  });
+
   test("none of them reads a bar past the one it was given", () => {
     const candles = series(2000, r => (r - 0.5) * 4);
     for (const h of HYPOTHESES) {

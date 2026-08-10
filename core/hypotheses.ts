@@ -128,23 +128,35 @@ function openingRange(hour: number, label: string, bars: number): Hypothesis {
  * options expiry. A directional claim with no price input at all, which makes
  * it the cleanest possible test of whether the day has a shape.
  *
- * Directional: it can only be traded one way, so each block is tested LONG and
- * the result's sign is read. A negative mean is not a short signal — costs are
- * paid on both sides, so a losing long is not a winning short.
+ * Tested LONG only, and the SIGN of the result is read.
+ *
+ * A short version of the same block is not a second hypothesis — it is the
+ * same measurement negated, and registering both spent two slots of the
+ * multiple-testing budget on one question while printing one fact twice as
+ * though it were corroboration. The two-sided p-value already covers both
+ * directions.
+ *
+ * A negative mean is still not a short signal: costs are paid whichever way you
+ * face, so a long losing 6.09 points per hold corresponds to a short losing
+ * 6.92, not to a short winning anything.
  */
-function sessionDrift(fromHour: number, toHour: number, label: string) {
-  return (direction: Direction): Hypothesis => ({
-    name: `${label}-${direction.toLowerCase()}`,
-    claim: `Gold drifts ${direction === "LONG" ? "up" : "down"} between ${fromHour}:00 and ${toHour}:00 UTC.`,
+function sessionDrift(
+  fromHour: number,
+  toHour: number,
+  label: string,
+): Hypothesis {
+  return {
+    name: label,
+    claim: `Gold drifts directionally between ${fromHour}:00 and ${toHour}:00 UTC.`,
     signal(candles, i) {
       const h = hourOf(candles[i]);
       const inBlock =
         fromHour <= toHour
           ? h >= fromHour && h < toHour
           : h >= fromHour || h < toHour;
-      return inBlock ? direction : null;
+      return inBlock ? "LONG" : null;
     },
-  });
+  };
 }
 
 /**
@@ -200,12 +212,9 @@ export const HYPOTHESES: Hypothesis[] = [
   fadeSpike(5),
   openingRange(7, "london", 12),
   openingRange(13, "newyork", 12),
-  sessionDrift(0, 7, "asia-session")("LONG"),
-  sessionDrift(0, 7, "asia-session")("SHORT"),
-  sessionDrift(7, 13, "london-session")("LONG"),
-  sessionDrift(7, 13, "london-session")("SHORT"),
-  sessionDrift(13, 21, "ny-session")("LONG"),
-  sessionDrift(13, 21, "ny-session")("SHORT"),
+  sessionDrift(0, 7, "asia-session"),
+  sessionDrift(7, 13, "london-session"),
+  sessionDrift(13, 21, "ny-session"),
   quietTrend(30),
   quietTrend(50),
 ];
