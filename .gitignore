@@ -56,5 +56,8 @@ data/
 # Kronos weights (fetched once via `python -m teo.forecasting.fetch_weights`)
 models/
 
+# Seed CSV data (imported via import-csv.ts)
+seeds/
+
 # Packaged builds
 release/
