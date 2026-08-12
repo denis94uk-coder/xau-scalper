@@ -61,6 +61,7 @@ import {
 } from "@/components/ui/table";
 import {
   api,
+  ApiError,
   type BacktestMetrics,
   type DiscoveryCandidate,
   type ResearchRun,
@@ -313,8 +314,19 @@ export function ResearchPage() {
 
   const cancel = async () => {
     if (!run) return;
-    await api.cancelResearch(run.id);
-    toast.info("Stopping after the current batch.");
+    try {
+      await api.cancelResearch(run.id);
+      toast.info("Stopping after the current batch.");
+    } catch (e) {
+      // Runs live in memory, so a server restart forgets them. The tab that was
+      // watching one still shows a Stop button; pressing it must explain that
+      // rather than throw into the void.
+      toast.error(
+        e instanceof ApiError && e.status === 404
+          ? "That run is gone — the server restarted while it was going."
+          : "Could not stop the run.",
+      );
+    }
   };
 
   const active =

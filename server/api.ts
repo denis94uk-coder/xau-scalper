@@ -588,6 +588,10 @@ export async function handleApi(
 
     if (id.endsWith("/cancel") && req.method === "POST") {
       const runId = id.slice(0, -"/cancel".length);
+      // A run that never existed is a 404, matching the other run routes.
+      // Answering 200 with cancelled:false made a typo or a stale tab after a
+      // restart look identical to a run that had simply already finished.
+      if (!getRun(runId)) return bad("no such run", 404);
       return json({ cancelled: cancelRun(runId) });
     }
 

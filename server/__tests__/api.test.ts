@@ -4,7 +4,7 @@
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AppConfig } from "../../core/config";
-import { validateConfig } from "../../core/config";
+import { defaultConfig, validateConfig } from "../../core/config";
 import { handleApi } from "../api";
 import { putRun } from "../research";
 import { Db, type NewIdea } from "../db";
@@ -593,6 +593,21 @@ describe("GET/PUT /api/config", () => {
     expect(validateConfig(defaults)).toEqual([]);
   });
 
+  test("the defaults are the SHIPPED ones, not the live document", async () => {
+    // Returning the live config here would make a reset preview show the very
+    // values it is meant to be compared against, so the preview would agree
+    // with whatever is currently saved and always look like a no-op.
+    const cfg = await body<AppConfig>(call("/api/config"));
+    await call("/api/config", "PUT", {
+      ...cfg,
+      engine: { ...cfg.engine, monitorSeconds: 123 },
+    });
+
+    const defaults = await body<AppConfig>(call("/api/config/defaults"));
+    expect(defaults.engine.monitorSeconds).not.toBe(123);
+    expect(defaults).toEqual(defaultConfig());
+  });
+
   test("reset restores the defaults", async () => {
     const cfg = await body<AppConfig>(call("/api/config"));
     await call("/api/config", "PUT", {
@@ -730,6 +745,20 @@ describe("research routes", () => {
   });
 
   test("a started run is accepted and addressable", async () => {
+    // 202, not 200: the work is still going when the response is written, and
+    // the client polls. A success code that claimed completion would be a lie.
+    expect(
+      await status(
+        call("/api/research/runs", "POST", {
+          symbol: "NOSUCHSYMBOL2",
+          interval: "15m",
+          from: 1_700_000_000,
+          to: 1_705_000_000,
+          iterations: 10,
+        }),
+      ),
+    ).toBe(202);
+
     const run = await body<{ id: string; status: string }>(
       call("/api/research/runs", "POST", {
         symbol: "NOSUCHSYMBOL",
@@ -790,6 +819,20 @@ describe("research routes", () => {
     expect(added).toBeDefined();
     expect(added.enabled).toBe(false);
     expect(validateConfig(after)).toEqual([]);
+  });
+
+  test("adopting from a run that does not exist is a 404", async () => {
+    // A separate guard from the GET-run 404, and the one a stale browser tab
+    // hits after a restart drops the in-memory runs.
+    expect(
+      await status(call("/api/research/runs/ghost-run/adopt", "POST")),
+    ).toBe(404);
+  });
+
+  test("cancelling a run that does not exist is a 404", async () => {
+    expect(
+      await status(call("/api/research/runs/ghost-run/cancel", "POST")),
+    ).toBe(404);
   });
 
   test("adopting from a run with no result is refused", async () => {
