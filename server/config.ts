@@ -25,17 +25,22 @@ import {
 import type { Db } from "./db";
 
 export class ConfigError extends Error {
-  constructor(public issues: ValidationIssue[]) {
+  readonly issues: ValidationIssue[];
+
+  constructor(issues: ValidationIssue[]) {
     super(issues.map(i => `${i.path}: ${i.message}`.trim()).join("; "));
     this.name = "ConfigError";
+    this.issues = issues;
   }
 }
 
 export class ConfigStore {
   private current: AppConfig;
   private listeners = new Set<(cfg: AppConfig) => void>();
+  private db: Db;
 
-  constructor(private db: Db) {
+  constructor(db: Db) {
+    this.db = db;
     this.current = this.read();
   }
 
