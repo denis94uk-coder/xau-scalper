@@ -122,6 +122,7 @@ def test_empty_config_list_is_not_an_error():
     assert score_configs([], symbol="BTCUSDT") == []
 
 
+@requires_bun
 def test_unknown_asset_raises_rather_than_returning_junk():
     with pytest.raises(BridgeUnavailable, match="unknown asset"):
         score_configs(
