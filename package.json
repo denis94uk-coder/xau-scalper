@@ -18,7 +18,7 @@
     "serve": "bun run --watch server/index.ts",
     "edge-audit": "bun run --bun scripts/edge-audit.ts",
     "kronos:fetch": "python -m teo.forecasting.fetch_weights",
-    "test": "bun test core server",
+    "test": "bun test core server src",
     "package": "bun run --bun scripts/package-app.ts",
     "mt5:sync": "bun run --bun scripts/mt5-sync.ts"
   },
@@ -73,9 +73,12 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.7",
+    "@happy-dom/global-registrator": "^20.11.2",
     "@playwright/test": "^1.62.1",
     "@tailwindcss/typography": "^0.5.20",
     "@tailwindcss/vite": "^4.3.3",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
     "@types/bun": "^1.3.14",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.18",

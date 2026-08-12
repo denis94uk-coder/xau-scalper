@@ -396,7 +396,15 @@ function ToggleRow({
         <p className="text-sm font-medium">{label}</p>
         <p className="text-xs text-muted-foreground leading-snug">{help}</p>
       </div>
-      <Switch checked={checked} onCheckedChange={onChange} disabled={disabled} />
+      {/* Named for assistive tech. Without this the control announces only
+          "switch", which for a row like "Let the app place orders in MT5" is
+          the difference between arming trading and toggling something unknown. */}
+      <Switch
+        aria-label={label}
+        checked={checked}
+        onCheckedChange={onChange}
+        disabled={disabled}
+      />
     </div>
   );
 }
@@ -1173,7 +1181,7 @@ export function SettingsPage() {
                   error={issueFor(issues, "mt5.maxOpenPositions")}
                 />
               </div>
-              {mt5 && (
+              {mt5?.execution && (
                 <p className="text-xs text-muted-foreground">
                   {mt5.execution.pending} order(s) waiting for the terminal
                   {mt5.execution.lastAck
