@@ -19,6 +19,8 @@ import {
   parseExport,
   toCandles,
 } from "../mt5";
+import { status, syncOnce } from "../mt5bridge";
+import { defaultConfig } from "../../core/config";
 
 let db: Db;
 let dir: string;
@@ -227,5 +229,55 @@ describe("ingestDir", () => {
   test("a missing directory is reported, not thrown", () => {
     const { errors } = ingestDir(db, join(dir, "nope"));
     expect(errors).toHaveLength(1);
+  });
+});
+
+describe("sync diagnostics", () => {
+  // Pointing at the terminal root instead of MQL5/Files/teo is the mistake an
+  // operator is most likely to make, and it used to report zero ingested with
+  // no error at all — nothing to act on.
+  test("an existing directory with no exports explains itself", () => {
+    const cfg = defaultConfig();
+    cfg.mt5.enabled = true;
+    cfg.mt5.directory = dir; // exists, but empty
+
+    const out = syncOnce(db, cfg);
+
+    expect(out.ok).toBe(false);
+    expect(out.ingested).toBe(0);
+    expect(out.errors.length).toBe(1);
+    expect(out.errors[0]).toContain(dir);
+    expect(out.errors[0]).toMatch(/MQL5\/Files\/teo/);
+    expect(out.errors[0]).toMatch(/attached to a chart/);
+
+    // The Settings page reads the stored error, not the sync response.
+    expect(status(db, cfg).lastError).toBe(out.errors[0]);
+  });
+
+  test("a directory that does not exist is named", () => {
+    const cfg = defaultConfig();
+    cfg.mt5.enabled = true;
+    cfg.mt5.directory = join(dir, "nope");
+
+    const out = syncOnce(db, cfg);
+
+    expect(out.ok).toBe(false);
+    expect(out.errors[0]).toContain("directory not found");
+  });
+
+  test("a real export still syncs cleanly", () => {
+    const cfg = defaultConfig();
+    cfg.mt5.enabled = true;
+    cfg.mt5.directory = dir;
+    writeFileSync(
+      join(dir, "XAUUSD_M5.json"),
+      JSON.stringify(exportFixture()),
+    );
+
+    const out = syncOnce(db, cfg);
+
+    expect(out.ok).toBe(true);
+    expect(out.symbols).toEqual(["XAUUSD"]);
+    expect(status(db, cfg).lastError).toBe(null);
   });
 });

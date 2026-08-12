@@ -196,6 +196,25 @@ export function syncOnce(
 
   const { ingested, errors } = ingestDir(db, dir, { now });
 
+  // An existing directory holding no exports is the likeliest misconfiguration:
+  // the operator pointed at the terminal root instead of MQL5/Files/teo, or the
+  // EA is not attached to a chart. Reporting "0 ingested" with no error left
+  // them with nothing to act on, so name the two causes.
+  if (ingested.length === 0 && errors.length === 0) {
+    const message =
+      `no exports found in ${dir} — expected the MQL5/Files/teo directory ` +
+      `written by TeoExporter, and the EA attached to a chart`;
+    db.setSetting(LAST_SYNC_KEY, now);
+    db.setSetting(LAST_ERROR_KEY, message);
+    return {
+      ok: false,
+      directory: dir,
+      ingested: 0,
+      symbols: [],
+      errors: [message],
+    };
+  }
+
   if (ingested.length > 0 && applyCosts) {
     const measured = new Map<string, Mt5Export>();
     for (const exp of readExports(dir)) measured.set(exp.symbol, exp);
