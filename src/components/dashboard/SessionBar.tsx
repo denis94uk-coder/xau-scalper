@@ -64,7 +64,7 @@ function getTimezoneOffsetMinutes(tz: string): number {
   }).formatToParts(now);
 
   const get = (parts: Intl.DateTimeFormatPart[], type: string) =>
-    parseInt(parts.find(p => p.type === type)?.value || "0");
+    parseInt(parts.find(p => p.type === type)?.value || "0", 10);
 
   const utcMinutes =
     get(utcParts, "day") * 24 * 60 +

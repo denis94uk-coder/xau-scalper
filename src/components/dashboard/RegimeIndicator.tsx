@@ -56,7 +56,9 @@ export function RegimeIndicator() {
   }
 
   const cfg = REGIME_CONFIG[regime.regime] || REGIME_CONFIG.RANGING;
-  const ageMinutes = Math.round((Date.now() - regime.timestamp) / 60000);
+  const ageMinutes = regime.timestamp
+    ? Math.round((Date.now() - regime.timestamp) / 60000)
+    : 0;
 
   return (
     <div
@@ -119,7 +121,7 @@ export function RegimeIndicator() {
       <div className="mt-2.5 pt-2 border-t border-white/5">
         <div className="flex items-center gap-1.5 mb-1">
           <span className="text-[9px] font-mono text-muted-foreground/50 uppercase tracking-wider">
-            Adaptive Parameters
+            Adaptive Parameters · enforced
           </span>
         </div>
         <div className="flex flex-wrap gap-1.5">

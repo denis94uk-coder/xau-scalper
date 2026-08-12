@@ -858,58 +858,56 @@ function SMCZonesPanel({
           <span className="text-[10px] text-muted-foreground tracking-wider uppercase">
             VWAP Bands
           </span>
-          {last >= 0 && analysis.vwapBands.vwap[last] !== undefined && (
-            <>
-              {[
-                {
-                  label: "+2σ",
-                  val: analysis.vwapBands.upper2[last],
-                  c: "#FF1744",
-                },
-                {
-                  label: "+1σ",
-                  val: analysis.vwapBands.upper1[last],
-                  c: "#FF1744",
-                },
-                {
-                  label: "VWAP",
-                  val: analysis.vwapBands.vwap[last],
-                  c: "#AB47BC",
-                },
-                {
-                  label: "−1σ",
-                  val: analysis.vwapBands.lower1[last],
-                  c: "#00E676",
-                },
-                {
-                  label: "−2σ",
-                  val: analysis.vwapBands.lower2[last],
-                  c: "#00E676",
-                },
-              ].map(band => {
-                const isNear = Math.abs(price - band.val) / price < 0.0008;
-                return (
-                  <div
-                    key={band.label}
-                    className={`flex items-center justify-between px-2 py-1 rounded ${isNear ? "bg-[#AB47BC]/10" : ""}`}
+          {last >= 0 &&
+            analysis.vwapBands.vwap[last] !== undefined &&
+            [
+              {
+                label: "+2σ",
+                val: analysis.vwapBands.upper2[last],
+                c: "#FF1744",
+              },
+              {
+                label: "+1σ",
+                val: analysis.vwapBands.upper1[last],
+                c: "#FF1744",
+              },
+              {
+                label: "VWAP",
+                val: analysis.vwapBands.vwap[last],
+                c: "#AB47BC",
+              },
+              {
+                label: "−1σ",
+                val: analysis.vwapBands.lower1[last],
+                c: "#00E676",
+              },
+              {
+                label: "−2σ",
+                val: analysis.vwapBands.lower2[last],
+                c: "#00E676",
+              },
+            ].map(band => {
+              const isNear = Math.abs(price - band.val) / price < 0.0008;
+              return (
+                <div
+                  key={band.label}
+                  className={`flex items-center justify-between px-2 py-1 rounded ${isNear ? "bg-[#AB47BC]/10" : ""}`}
+                >
+                  <span
+                    className="text-[10px] font-mono"
+                    style={{ color: band.c }}
                   >
-                    <span
-                      className="text-[10px] font-mono"
-                      style={{ color: band.c }}
-                    >
-                      {band.label}
-                    </span>
-                    <span
-                      className={`text-[10px] font-mono tabular-nums ${isNear ? "text-foreground font-bold" : "text-muted-foreground"}`}
-                    >
-                      {band.val.toFixed(2)}
-                      {isNear && " ◄"}
-                    </span>
-                  </div>
-                );
-              })}
-            </>
-          )}
+                    {band.label}
+                  </span>
+                  <span
+                    className={`text-[10px] font-mono tabular-nums ${isNear ? "text-foreground font-bold" : "text-muted-foreground"}`}
+                  >
+                    {band.val.toFixed(2)}
+                    {isNear && " ◄"}
+                  </span>
+                </div>
+              );
+            })}
         </div>
       </div>
     </div>

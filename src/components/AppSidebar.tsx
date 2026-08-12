@@ -4,6 +4,8 @@ import {
   LayoutDashboard,
   Lightbulb,
   ScrollText,
+  Settings,
+  Sparkles,
   Shield,
 } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
@@ -34,6 +36,11 @@ const signalsNav = [
 const trackingNav = [
   { href: "/performance", label: "Performance", icon: BarChart3 },
   { href: "/risk", label: "Risk Manager", icon: Shield },
+];
+
+const systemNav = [
+  { href: "/research", label: "Find Strategies", icon: Sparkles },
+  { href: "/settings", label: "Settings", icon: Settings },
 ];
 
 function NavLink({
@@ -112,6 +119,25 @@ function SidebarNav() {
         <SidebarGroupContent>
           <SidebarMenu>
             {trackingNav.map(item => (
+              <NavLink
+                key={item.href}
+                href={item.href}
+                label={item.label}
+                icon={item.icon}
+                isActive={isActive(item.href)}
+              />
+            ))}
+          </SidebarMenu>
+        </SidebarGroupContent>
+      </SidebarGroup>
+
+      <SidebarGroup>
+        <SidebarGroupLabel className="text-[10px] text-muted-foreground uppercase tracking-wider">
+          System
+        </SidebarGroupLabel>
+        <SidebarGroupContent>
+          <SidebarMenu>
+            {systemNav.map(item => (
               <NavLink
                 key={item.href}
                 href={item.href}

@@ -92,6 +92,27 @@ export interface JournalEntry {
   metadata?: unknown;
 }
 
+/** Shape written by server/intel/regime.ts, consumed by the signal engine. */
+export interface RegimeSettings {
+  timestamp: number;
+  regime: "TRENDING_UP" | "TRENDING_DOWN" | "RANGING" | "VOLATILE";
+  confidence: number;
+  atrRatio: number;
+  adxProxy: number;
+  trendStrength: number;
+  priceVsEma50: number;
+  priceVsEma200: number;
+  bbWidth: number;
+  rangeHighLow: number;
+  recommendedStrategy: string;
+  description: string;
+  slMultiplier: number;
+  tpMultiplier: number;
+  positionSizeMultiplier: number;
+  minGrade: "A" | "B" | "C";
+  favorDirection: "LONG" | "SHORT" | "BOTH";
+}
+
 const OPEN_STATUSES = ["ACTIVE", "TP1_HIT"] as const;
 
 export class Db {
@@ -167,6 +188,39 @@ export class Db {
         volume: r.volume,
       }))
       .reverse();
+  }
+
+  /**
+   * Every stored candle in a time range, oldest-first.
+   *
+   * Unlimited by design, unlike getCandles: a research window is defined by its
+   * dates, and silently truncating it to the newest N bars would answer a
+   * different question from the one asked while looking like it had worked.
+   */
+  getCandleRange(
+    asset: string,
+    interval: string,
+    from: number,
+    to: number,
+  ): Candle[] {
+    const rows = this.raw
+      .query<
+        { open_time: number } & Record<string, number>,
+        [string, string, number, number]
+      >(
+        `SELECT open_time, open, high, low, close, volume FROM candles
+         WHERE asset = ? AND interval = ? AND open_time >= ? AND open_time <= ?
+         ORDER BY open_time ASC`,
+      )
+      .all(asset, interval, from, to);
+    return rows.map(r => ({
+      time: r.open_time,
+      open: r.open,
+      high: r.high,
+      low: r.low,
+      close: r.close,
+      volume: r.volume,
+    }));
   }
 
   /** Open time of the newest stored candle, or null. Drives incremental fetches. */
@@ -403,6 +457,15 @@ export class Db {
       )
       .get(key);
     return row ? (JSON.parse(row.value) as T) : null;
+  }
+
+  /**
+   * Latest regime intel, if any. The intel engine writes this every 15m; the
+   * signal engine reads it to tighten risk in volatile regimes. Returns null
+   * until the first intel run has completed.
+   */
+  regimeFromDb(): RegimeSettings | null {
+    return this.getSetting<RegimeSettings>("marketRegime");
   }
 
   // ─── Job bookkeeping (gap recovery) ───

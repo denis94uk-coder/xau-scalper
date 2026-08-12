@@ -11,18 +11,24 @@
  * token check here first — see the README.
  */
 
+import { DEFAULT_ASSET_ID } from "../core/assets";
+import type { AssetConfig } from "../core/config";
 import {
-  ASSETS,
-  DEFAULT_ASSET_ID,
-  getAsset,
-  getEnabledAssets,
-} from "../core/assets";
+  defaultConfig,
+  enabledAssets,
+  newAsset,
+  toAssetDefinition,
+} from "../core/config";
 import { averageConcurrency, summarise } from "../core/portfolio";
 import { assessSignificance, effectiveSampleSize } from "../core/significance";
+import { ConfigError, ConfigStore } from "./config";
 import type { Db } from "./db";
 import { correlationsFrom, openExposures } from "./engine";
 import { type AppEvent, publish, subscribe } from "./events";
 import { fetchCandles, fetchTickers } from "./market";
+import { syncOnce, status as mt5Status } from "./mt5bridge";
+import { findExportDir } from "./mt5";
+import { cancelRun, getRun, listRuns, startRun } from "./research";
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -44,20 +50,6 @@ function intParam(
   const n = Number.parseInt(raw, 10);
   if (!Number.isFinite(n) || n <= 0) return fallback;
   return Math.min(n, max);
-}
-
-/**
- * Validate an asset id from the query string.
- *
- * Returns undefined when absent, an Error Response when present-but-unknown.
- * An unknown asset is rejected rather than silently returning an empty list,
- * which would look identical to "this asset has no activity".
- */
-function assetParam(url: URL): string | undefined | Response {
-  const asset = url.searchParams.get("asset");
-  if (asset === null) return undefined;
-  if (!getAsset(asset)) return bad(`unknown asset "${asset}"`, 404);
-  return asset;
 }
 
 /** Parse a JSON object body, or return an error Response. */
@@ -103,21 +95,62 @@ function camelAll(rows: object[]): Record<string, unknown>[] {
   return rows.map(camel);
 }
 
+/**
+ * Per-request config stores, keyed by database.
+ *
+ * handleApi is called as `(db, req, url)` by the tests, which construct a fresh
+ * in-memory database each time. Caching the store per database keeps that
+ * signature working while still giving every request the same live snapshot the
+ * server's own store holds, rather than re-reading SQLite on each call.
+ */
+const storesByDb = new WeakMap<Db, ConfigStore>();
+
+function storeFor(db: Db, provided?: ConfigStore): ConfigStore {
+  if (provided) return provided;
+  let store = storesByDb.get(db);
+  if (!store) {
+    store = new ConfigStore(db);
+    storesByDb.set(db, store);
+  }
+  return store;
+}
+
 export async function handleApi(
   db: Db,
   req: Request,
   url: URL,
+  configStore?: ConfigStore,
 ): Promise<Response | null> {
   const path = url.pathname;
+  const store = storeFor(db, configStore);
+  const cfg = store.get();
+
+  /** Look up a configured asset by id. Replaces the compiled-in registry. */
+  const findAsset = (id: string): AssetConfig | undefined =>
+    cfg.assets.find(a => a.id === id);
+
+  /**
+   * Validate an asset id from the query string, against the live config.
+   *
+   * Unknown is a 404 rather than an empty list, for the same reason as before:
+   * `[]` is indistinguishable from "no activity yet" and hides a typo.
+   */
+  const assetParam = (u: URL): string | undefined | Response => {
+    const asset = u.searchParams.get("asset");
+    if (asset === null) return undefined;
+    if (!findAsset(asset)) return bad(`unknown asset "${asset}"`, 404);
+    return asset;
+  };
 
   // ─── Assets ───
   if (path === "/api/assets") {
     return json({
-      assets: ASSETS.map(a => ({
+      assets: cfg.assets.map(a => ({
         id: a.id,
         symbol: a.displaySymbol,
         precision: a.pricePrecision,
         enabled: a.enabled,
+        dataSource: a.dataSource,
       })),
     });
   }
@@ -177,7 +210,7 @@ export async function handleApi(
     if (asset instanceof Response) return asset;
     // Per asset always. A combined total would sum points across instruments,
     // which is not a meaningful quantity.
-    const assets = asset ? [asset] : getEnabledAssets().map(a => a.id);
+    const assets = asset ? [asset] : enabledAssets(cfg).map(a => a.id);
     return json({
       byAsset: assets.map(a => {
         const perf = db.performance(a);
@@ -200,10 +233,13 @@ export async function handleApi(
 
   // ─── Portfolio ───
   if (path === "/api/portfolio") {
-    const assets = getEnabledAssets();
-    const matrix = correlationsFrom(db, assets);
+    const assets = enabledAssets(cfg).map(toAssetDefinition);
+    const matrix = correlationsFrom(db, assets, {
+      prior: cfg.risk.assumedCorrelation,
+      minSamples: cfg.risk.minCorrelationSamples,
+    });
     const open = openExposures(db);
-    const book = summarise(open, matrix);
+    const book = summarise(open, matrix, { maxRisk: cfg.risk.maxRisk });
 
     // Every distinct pair, so a refusal in the journal can be traced to the
     // correlation that caused it.
@@ -233,9 +269,7 @@ export async function handleApi(
     // Hold the win rate fixed and shrink the sample — the rate is what was
     // observed; only the confidence it supports is being discounted.
     const effectiveWins =
-      periods.length > 0
-        ? Math.round((wins / periods.length) * effective)
-        : 0;
+      periods.length > 0 ? Math.round((wins / periods.length) * effective) : 0;
 
     return json({
       ...book,
@@ -306,7 +340,7 @@ export async function handleApi(
         return bad("direction must be LONG or SHORT");
       }
       const asset = (body.asset as string) ?? DEFAULT_ASSET_ID;
-      if (!getAsset(asset)) return bad(`unknown asset "${asset}"`, 404);
+      if (!findAsset(asset)) return bad(`unknown asset "${asset}"`, 404);
 
       const id = db.createManualTrade({
         asset,
@@ -361,7 +395,7 @@ export async function handleApi(
       return bad("direction must be LONG or SHORT");
     }
     const asset = (body.asset as string) ?? DEFAULT_ASSET_ID;
-    if (!getAsset(asset)) return bad(`unknown asset "${asset}"`, 404);
+    if (!findAsset(asset)) return bad(`unknown asset "${asset}"`, 404);
 
     const entryPrice = body.entryPrice as number;
     const id = db.createIdea({
@@ -391,11 +425,21 @@ export async function handleApi(
   // and the live spot price.
   if (path === "/api/klines") {
     const symbol = url.searchParams.get("symbol") ?? DEFAULT_ASSET_ID;
-    if (!getAsset(symbol)) return bad(`unknown asset "${symbol}"`, 404);
+    const asset = findAsset(symbol);
+    if (!asset) return bad(`unknown asset "${symbol}"`, 404);
     const interval = url.searchParams.get("interval") ?? "5m";
     const limit = intParam(url, "limit", 200, 1000);
+
+    // An MT5 instrument has no venue to proxy: its bars arrive from the
+    // terminal. Serving the stored series keeps the chart working instead of
+    // asking an exchange for a broker-specific symbol it has never heard of.
+    if (asset.dataSource === "mt5") {
+      return json(db.getCandles(asset.id, interval, limit));
+    }
     try {
-      const candles = await fetchCandles(symbol, interval, { limit });
+      const candles = await fetchCandles(asset.dataSourceSymbol, interval, {
+        limit,
+      });
       return json(candles);
     } catch (e) {
       return bad(e instanceof Error ? e.message : "upstream failed", 502);
@@ -404,15 +448,198 @@ export async function handleApi(
 
   if (path === "/api/prices") {
     const requested = url.searchParams.get("symbols");
-    const ids = requested
-      ? requested.split(",").filter(sym => getAsset(sym))
-      : getEnabledAssets().map(a => a.id);
-    if (ids.length === 0) return bad("no known symbols requested", 404);
+    const wanted = requested
+      ? (requested
+          .split(",")
+          .map(sym => findAsset(sym))
+          .filter(Boolean) as AssetConfig[])
+      : enabledAssets(cfg);
+    // Only exchange-fed assets have a ticker endpoint behind them.
+    const venue = wanted.filter(a => a.dataSource === "binance");
+    if (wanted.length === 0) return bad("no known symbols requested", 404);
     try {
-      return json({ tickers: await fetchTickers(ids) });
+      const tickers =
+        venue.length > 0
+          ? await fetchTickers(venue.map(a => a.dataSourceSymbol))
+          : [];
+      return json({ tickers });
     } catch (e) {
       return bad(e instanceof Error ? e.message : "upstream failed", 502);
     }
+  }
+
+  // ─── Configuration ───
+  //
+  // This is what makes the app configurable without touching code. GET hands
+  // the UI the live document; PUT validates and replaces it wholesale.
+  //
+  // Wholesale rather than per-field patching because the rules that matter are
+  // cross-field — TP1 inside TP2, MACD fast under slow, execution requiring the
+  // bridge — and a patch API would let a client satisfy each field in isolation
+  // while leaving the document as a whole incoherent.
+  if (path === "/api/config") {
+    if (req.method === "GET") {
+      return json(cfg);
+    }
+    if (req.method === "PUT" || req.method === "POST") {
+      const body = await readBody(req);
+      if (body instanceof Response) return body;
+      try {
+        const saved = store.save(body);
+        publish("config");
+        return json(saved);
+      } catch (e) {
+        if (e instanceof ConfigError) {
+          // 422, not 400: the request was well-formed JSON and the objection is
+          // to its contents, which is what the form needs to render per field.
+          return json({ error: e.message, issues: e.issues }, 422);
+        }
+        throw e;
+      }
+    }
+    return bad("GET or PUT", 405);
+  }
+
+  if (path === "/api/config/defaults") {
+    return json(defaultConfig());
+  }
+
+  if (path === "/api/config/reset" && req.method === "POST") {
+    const saved = store.reset();
+    publish("config");
+    return json(saved);
+  }
+
+  // ─── MetaTrader 5 ───
+  if (path === "/api/mt5/status") {
+    return json(mt5Status(db, cfg));
+  }
+
+  if (path === "/api/mt5/discover") {
+    // Offered as a button in the UI, so the operator never has to know that
+    // MT5 hides its files under a hashed directory inside a Wine bottle.
+    const dir = findExportDir();
+    return json({ directory: dir, found: dir !== null });
+  }
+
+  // ─── Strategy discovery ───
+  //
+  // A run is a resource rather than a request: pulling two years of bars from a
+  // broker and searching thousands of configurations both outlast any sensible
+  // HTTP timeout, so the browser starts one and then polls it.
+  if (path === "/api/research/runs" && req.method === "GET") {
+    return json({ runs: listRuns() });
+  }
+
+  if (path === "/api/research/runs" && req.method === "POST") {
+    const body = await readBody(req);
+    if (body instanceof Response) return body;
+
+    const symbol = String(body.symbol ?? "").trim();
+    const interval = String(body.interval ?? "15m");
+    const from = Number(body.from);
+    const to = Number(body.to);
+    const iterations = Number(body.iterations ?? 500);
+
+    if (!symbol) return bad("symbol is required");
+    if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) {
+      return bad("from and to must be UTC seconds with to after from");
+    }
+    // Bounded because each iteration is three backtests over the whole window,
+    // and an unbounded number would let one request occupy the process for
+    // hours while the live engine's timers starve.
+    if (!Number.isFinite(iterations) || iterations < 10 || iterations > 20000) {
+      return bad("iterations must be between 10 and 20000");
+    }
+
+    const assetId = String(body.assetId ?? `MT5:${symbol}`);
+    const run = startRun(db, cfg, {
+      assetId,
+      symbol,
+      interval,
+      from: Math.floor(from),
+      to: Math.floor(to),
+      iterations: Math.floor(iterations),
+      seed: Number(body.seed ?? 1),
+      minTrades: body.minTrades === undefined ? undefined : Number(body.minTrades),
+    });
+    return json(run, 202);
+  }
+
+  if (path.startsWith("/api/research/runs/")) {
+    const id = decodeURIComponent(path.slice("/api/research/runs/".length));
+
+    if (id.endsWith("/cancel") && req.method === "POST") {
+      const runId = id.slice(0, -"/cancel".length);
+      return json({ cancelled: cancelRun(runId) });
+    }
+
+    if (id.endsWith("/adopt") && req.method === "POST") {
+      // Adopting a discovered configuration is the point of the whole feature:
+      // a report you cannot act on without retyping twenty numbers is a report
+      // nobody acts on.
+      const runId = id.slice(0, -"/adopt".length);
+      const run = getRun(runId);
+      if (!run) return bad("no such run", 404);
+      if (!run.report?.best) {
+        return bad("that run has no qualified strategy to adopt", 409);
+      }
+
+      const body = await readBody(req);
+      if (body instanceof Response) return body;
+      const targetId = String(body.assetId || run.assetId);
+
+      const strategy = run.report.best.config;
+      const target = cfg.assets.find(a => a.id === targetId);
+
+      // Researching an instrument you have not configured yet is the normal
+      // way to meet one, so adopting its strategy ADDS it rather than
+      // refusing. It arrives disabled: discovering a strategy and trading it
+      // are separate decisions, and collapsing them would put an untested
+      // instrument into the live engine on one click.
+      const assets = target
+        ? cfg.assets.map(a =>
+            a.id === targetId ? { ...a, config: strategy } : a,
+          )
+        : [
+            ...cfg.assets,
+            {
+              ...newAsset(targetId, {
+                displaySymbol: run.symbol,
+                dataSourceSymbol: run.symbol,
+                dataSource: "mt5",
+                enabled: false,
+                config: strategy,
+              }),
+            },
+          ];
+
+      try {
+        store.save({ ...cfg, assets });
+      } catch (e) {
+        if (e instanceof ConfigError) {
+          return json({ error: e.message, issues: e.issues }, 422);
+        }
+        throw e;
+      }
+      return json({
+        adopted: true,
+        assetId: targetId,
+        added: target === undefined,
+      });
+    }
+
+    const run = getRun(id);
+    if (!run) return bad("no such run", 404);
+    return json(run);
+  }
+
+  if (path === "/api/mt5/sync" && req.method === "POST") {
+    const outcome = syncOnce(db, cfg, updater => {
+      store.save({ ...cfg, assets: updater(cfg.assets) });
+    });
+    publish("mt5");
+    return json(outcome, outcome.ok ? 200 : 502);
   }
 
   // ─── Teo sidecar ───
@@ -442,7 +669,7 @@ export async function handleApi(
       const asset = (body.asset as string) ?? DEFAULT_ASSET_ID;
       // Reject symbols the engine does not track: a forward-test row for an
       // asset nothing monitors could never be resolved.
-      if (!getAsset(asset)) return bad(`unknown asset "${asset}"`, 404);
+      if (!findAsset(asset)) return bad(`unknown asset "${asset}"`, 404);
 
       const entryPrice = body.entryPrice as number;
       const id = db.createIdea({

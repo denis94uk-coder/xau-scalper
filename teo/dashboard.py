@@ -1,5 +1,5 @@
 """
-Dashboard bridge — submits trade proposals to the Convex /teo/propose endpoint.
+Dashboard bridge — submits trade proposals to the local Bun server's /teo/propose endpoint.
 
 Usage:
     from teo.dashboard import submit_to_dashboard

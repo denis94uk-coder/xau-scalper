@@ -15,11 +15,18 @@
 
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { getEnabledAssets } from "../core/assets";
+import {
+  type AppConfig,
+  enabledAssets,
+  toAssetDefinition,
+} from "../core/config";
 import { handleApi, handleEvents } from "./api";
+import { ConfigStore } from "./config";
 import { Db } from "./db";
 import { generateSignals, monitorIdeas, recoverGap } from "./engine";
 import { publish } from "./events";
+import { syncOnce } from "./mt5bridge";
+import { executeIdea } from "./execution";
 import { scanLiquiditySweeps } from "./intel/liquiditySweep";
 import { fetchMacroData } from "./intel/macroCorrelation";
 import { updateCalendar } from "./intel/newsCalendar";
@@ -41,17 +48,18 @@ const DIST =
     ? join(dirname(process.execPath), "dist")
     : join(import.meta.dir, "..", "dist"));
 
-/** Timer cadences. Monitor is the tight loop; the rest are housekeeping. */
-const MONITOR_MS = 60_000;
-const SIGNAL_MS = 5 * 60_000;
+/**
+ * Housekeeping that has no reason to be configurable.
+ *
+ * Every other cadence now comes from the runtime config, because they are the
+ * ones an operator has an opinion about. Journal pruning is not one of them:
+ * how often the trim runs is invisible, only how much history it keeps, and
+ * that IS configurable.
+ */
 const PRUNE_MS = 6 * 60 * 60_000;
-// Regime, macro, news and sweeps move on a much slower clock than price, so
-// running them every 5 minutes (as the Convex crons did) spent requests to
-// recompute values that had not changed.
-const INTEL_MS = 15 * 60_000;
-const JOURNAL_RETENTION_DAYS = Number(process.env.TEO_JOURNAL_DAYS ?? 90);
 
 const db = new Db();
+const config = new ConfigStore(db);
 
 /**
  * Run a job, never letting a failure kill the timer.
@@ -117,7 +125,7 @@ const server = Bun.serve({
 
     if (url.pathname === "/api/events") return handleEvents();
 
-    const api = await handleApi(db, req, url);
+    const api = await handleApi(db, req, url, config);
     if (api) return api;
 
     return serveStatic(url.pathname);
@@ -134,14 +142,36 @@ console.log(`
   UI + API   http://${HOST}:${PORT}
   Database   ${process.env.TEO_DB_PATH ?? "data/teo.db"}
   UI assets  ${DIST}
-  Assets     ${getEnabledAssets().length} enabled
+  Assets     ${enabledAssets(config.get()).length} enabled
+  Settings   http://${HOST}:${PORT}/settings — everything is editable there
   Feed       public market data (no account, no key)
 `);
+
+/**
+ * Engine dependencies built from the CURRENT configuration.
+ *
+ * Rebuilt per run rather than captured once: a save that changes the asset list
+ * or the risk cap must affect the very next cycle, and a closed-over snapshot
+ * would keep the old rules alive until restart — the exact surprise that makes
+ * a settings page untrustworthy.
+ */
+function engineDeps() {
+  const cfg = config.get();
+  return {
+    db,
+    assets: enabledAssets(cfg).map(toAssetDefinition),
+    limits: { maxRisk: cfg.risk.maxRisk },
+    correlationOptions: {
+      prior: cfg.risk.assumedCorrelation,
+      minSamples: cfg.risk.minCorrelationSamples,
+    },
+  };
+}
 
 // Resolve anything that happened while this machine was off BEFORE starting the
 // timers, so the first monitor tick sees an accurate position set.
 await safely("recover", async () => {
-  const changed = await recoverGap({ db });
+  const changed = await recoverGap(engineDeps());
   if (changed > 0) console.log(`[recover] resolved ${changed} state change(s)`);
 });
 
@@ -154,29 +184,90 @@ async function runIntel(): Promise<void> {
   publish("regime");
 }
 
+/**
+ * One signal cycle, honouring the master switch.
+ *
+ * Pausing stops NEW signals only. The monitor keeps running, because positions
+ * that are already open still have to reach their exits — a pause that also
+ * abandoned them would be a far more dangerous button than it looks.
+ */
+async function runSignals(): Promise<void> {
+  if (!config.get().engine.autoTradingEnabled) return;
+
+  // Ideas open before the run are remembered so that only the ones this run
+  // created are placed. Comparing against "everything currently open" would
+  // re-send an order for a position that has simply not closed yet.
+  const before = new Set(db.openIdeas().map(i => i.id));
+
+  await generateSignals(engineDeps());
+
+  const cfg = config.get();
+  if (!cfg.mt5.enabled || !cfg.mt5.executionEnabled) return;
+
+  for (const idea of db.openIdeas()) {
+    if (before.has(idea.id)) continue;
+    const outcome = executeIdea(db, cfg, idea);
+    if (!outcome.placed) {
+      console.log(`[mt5] idea ${idea.id} not placed: ${outcome.reason}`);
+    }
+  }
+}
+
+/** Pull from MetaTrader 5, when the bridge is switched on. */
+async function runMt5(): Promise<void> {
+  const cfg = config.get();
+  if (!cfg.mt5.enabled) return;
+  syncOnce(db, cfg, updater => {
+    const live = config.get();
+    config.save({ ...live, assets: updater(live.assets) });
+  });
+}
+
 // Prime candles and evaluate immediately rather than idling for a full cycle.
-await safely("signals", () => generateSignals({ db }));
-await safely("monitor", () => monitorIdeas({ db }));
+await safely("mt5", runMt5);
+await safely("signals", runSignals);
+await safely("monitor", () => monitorIdeas(engineDeps()));
 await runIntel();
 
-const timers = [
-  setInterval(
-    () => void safely("monitor", () => monitorIdeas({ db })),
-    MONITOR_MS,
-  ),
-  setInterval(
-    () => void safely("signals", () => generateSignals({ db })),
-    SIGNAL_MS,
-  ),
-  setInterval(() => void runIntel(), INTEL_MS),
-  setInterval(() => {
-    const removed = db.pruneJournal(JOURNAL_RETENTION_DAYS);
-    if (removed > 0) {
-      console.log(`[prune] removed ${removed} journal row(s)`);
-      publish("journal");
-    }
-  }, PRUNE_MS),
-];
+/**
+ * Timers that can be rebuilt when their cadence changes.
+ *
+ * A setInterval captures its period at creation, so changing "signal every 5
+ * minutes" to "every minute" would otherwise do nothing until restart. The
+ * config store notifies on save and the affected timers are recreated — which
+ * is the whole reason the store has listeners at all.
+ */
+let timers: ReturnType<typeof setInterval>[] = [];
+
+function scheduleTimers(cfg: AppConfig): void {
+  for (const t of timers) clearInterval(t);
+  timers = [
+    setInterval(
+      () => void safely("monitor", () => monitorIdeas(engineDeps())),
+      cfg.engine.monitorSeconds * 1000,
+    ),
+    setInterval(
+      () => void safely("signals", runSignals),
+      cfg.engine.signalSeconds * 1000,
+    ),
+    setInterval(() => void runIntel(), cfg.engine.intelSeconds * 1000),
+    setInterval(() => void safely("mt5", runMt5), cfg.mt5.syncSeconds * 1000),
+    setInterval(() => {
+      const removed = db.pruneJournal(config.get().engine.journalRetentionDays);
+      if (removed > 0) {
+        console.log(`[prune] removed ${removed} journal row(s)`);
+        publish("journal");
+      }
+    }, PRUNE_MS),
+  ];
+}
+
+scheduleTimers(config.get());
+
+config.onChange(cfg => {
+  scheduleTimers(cfg);
+  console.log("[config] settings saved — timers rescheduled");
+});
 
 function shutdown(signal: string) {
   console.log(`\n${signal} — shutting down`);

@@ -2,7 +2,9 @@
  * Route tests. handleApi is a pure function of (db, request, url), so these run
  * without binding a port.
  */
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { AppConfig } from "../../core/config";
+import { validateConfig } from "../../core/config";
 import { handleApi } from "../api";
 import { Db, type NewIdea } from "../db";
 
@@ -271,9 +273,9 @@ describe("portfolio", () => {
     // response must admit that rather than serving 0 as if it were a finding.
     expect(b.correlations.length).toBeGreaterThan(0);
     expect(b.correlations.every(c => c.assumed)).toBe(true);
-    expect(b.correlations.every(c => c.samples === null || c.samples === 0)).toBe(
-      true,
-    );
+    expect(
+      b.correlations.every(c => c.samples === null || c.samples === 0),
+    ).toBe(true);
     expect(b.correlationsMeasured).toBe(false);
   });
 
@@ -531,5 +533,202 @@ describe("logging an idea by hand", () => {
         }),
       ),
     ).toBe(404);
+  });
+});
+
+/**
+ * Settings routes.
+ *
+ * The contract the Settings page depends on: a valid document is stored and
+ * read back, an invalid one is refused as a whole with a per-field list, and
+ * nothing partial is ever persisted. A form that could half-save would leave
+ * the engine running a configuration no one chose.
+ */
+describe("GET/PUT /api/config", () => {
+  test("serves a valid document on a fresh install", async () => {
+    const cfg = await body<Record<string, unknown>>(call("/api/config"));
+    expect(Array.isArray(cfg.assets)).toBe(true);
+    expect(validateConfig(cfg)).toEqual([]);
+  });
+
+  test("saves a change and reads it back", async () => {
+    const cfg = await body<AppConfig>(call("/api/config"));
+    const next = {
+      ...cfg,
+      engine: { ...cfg.engine, autoTradingEnabled: false },
+    };
+
+    expect(await status(call("/api/config", "PUT", next))).toBe(200);
+
+    const stored = await body<AppConfig>(call("/api/config"));
+    expect(stored.engine.autoTradingEnabled).toBe(false);
+  });
+
+  test("refuses an invalid document with 422 and a per-field list", async () => {
+    const cfg = await body<AppConfig>(call("/api/config"));
+    const broken = { ...cfg, engine: { ...cfg.engine, monitorSeconds: -5 } };
+
+    const res = call("/api/config", "PUT", broken);
+    expect(await status(res)).toBe(422);
+
+    const payload = await body<{ issues: Array<{ path: string }> }>(
+      call("/api/config", "PUT", broken),
+    );
+    expect(payload.issues.length).toBeGreaterThan(0);
+    expect(payload.issues[0].path).toContain("monitorSeconds");
+  });
+
+  test("a refused save changes nothing", async () => {
+    const before = await body<AppConfig>(call("/api/config"));
+    await call("/api/config", "PUT", { ...before, assets: [] });
+    const after = await body<AppConfig>(call("/api/config"));
+    expect(after).toEqual(before);
+  });
+
+  test("exposes the defaults separately, for a reset preview", async () => {
+    const defaults = await body<Record<string, unknown>>(
+      call("/api/config/defaults"),
+    );
+    expect(validateConfig(defaults)).toEqual([]);
+  });
+
+  test("reset restores the defaults", async () => {
+    const cfg = await body<AppConfig>(call("/api/config"));
+    await call("/api/config", "PUT", {
+      ...cfg,
+      engine: { ...cfg.engine, monitorSeconds: 99 },
+    });
+
+    await call("/api/config/reset", "POST");
+
+    const after = await body<AppConfig>(call("/api/config"));
+    expect(after.engine.monitorSeconds).not.toBe(99);
+  });
+});
+
+describe("MT5 routes", () => {
+  // Pointed at a directory that cannot exist, so the result describes the code
+  // rather than whether the machine running the tests happens to have a
+  // MetaTrader terminal installed.
+  beforeEach(() => {
+    process.env.TEO_MT5_DIR = "/nonexistent/teo-test-terminal";
+  });
+  afterEach(() => {
+    delete process.env.TEO_MT5_DIR;
+  });
+
+  test("status reports disconnected rather than failing when no terminal exists", async () => {
+    const res = await body<{ connected: boolean; symbols: unknown[] }>(
+      call("/api/mt5/status"),
+    );
+    expect(res.connected).toBe(false);
+    expect(res.symbols).toEqual([]);
+  });
+
+  test("discover answers even when it finds nothing", async () => {
+    const res = await body<{ found: boolean }>(call("/api/mt5/discover"));
+    expect(typeof res.found).toBe("boolean");
+  });
+
+  test("a sync with no terminal reports the reason instead of throwing", async () => {
+    const res = call("/api/mt5/sync", "POST");
+    expect(await status(res)).toBe(502);
+  });
+});
+
+/**
+ * Research routes.
+ *
+ * These start real work, so the tests stay on the request contract: bad input
+ * is refused before anything is scheduled, and a started run is addressable.
+ */
+describe("research routes", () => {
+  // Never point at a real terminal: a test run must not drop request files
+  // into whatever MetaTrader install happens to exist on this machine.
+  beforeEach(() => {
+    process.env.TEO_MT5_DIR = "/nonexistent/teo-test-terminal";
+  });
+  afterEach(() => {
+    delete process.env.TEO_MT5_DIR;
+  });
+
+  test("requires a symbol", async () => {
+    expect(
+      await status(
+        call("/api/research/runs", "POST", {
+          interval: "15m",
+          from: 1,
+          to: 2,
+        }),
+      ),
+    ).toBe(400);
+  });
+
+  test("requires the end to be after the start", async () => {
+    expect(
+      await status(
+        call("/api/research/runs", "POST", {
+          symbol: "NAS100",
+          interval: "15m",
+          from: 2000,
+          to: 1000,
+        }),
+      ),
+    ).toBe(400);
+  });
+
+  test("caps the number of configurations", async () => {
+    // Unbounded iterations would let one request occupy the process for hours
+    // while the live engine's timers starve.
+    expect(
+      await status(
+        call("/api/research/runs", "POST", {
+          symbol: "NAS100",
+          interval: "15m",
+          from: 1_700_000_000,
+          to: 1_705_000_000,
+          iterations: 10_000_000,
+        }),
+      ),
+    ).toBe(400);
+  });
+
+  test("a started run is accepted and addressable", async () => {
+    const run = await body<{ id: string; status: string }>(
+      call("/api/research/runs", "POST", {
+        symbol: "NOSUCHSYMBOL",
+        interval: "15m",
+        from: 1_700_000_000,
+        to: 1_705_000_000,
+        iterations: 10,
+      }),
+    );
+    expect(run.id).toBeTruthy();
+
+    const fetched = await body<{ id: string }>(
+      call(`/api/research/runs/${encodeURIComponent(run.id)}`),
+    );
+    expect(fetched.id).toBe(run.id);
+  });
+
+  test("an unknown run is a 404, not an empty run", async () => {
+    expect(await status(call("/api/research/runs/nope"))).toBe(404);
+  });
+
+  test("adopting from a run with no result is refused", async () => {
+    const run = await body<{ id: string }>(
+      call("/api/research/runs", "POST", {
+        symbol: "NOSUCHSYMBOL",
+        interval: "15m",
+        from: 1_700_000_000,
+        to: 1_705_000_000,
+        iterations: 10,
+      }),
+    );
+    expect(
+      await status(
+        call(`/api/research/runs/${encodeURIComponent(run.id)}/adopt`, "POST"),
+      ),
+    ).toBe(409);
   });
 });

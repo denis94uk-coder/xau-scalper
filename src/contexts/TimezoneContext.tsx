@@ -103,8 +103,8 @@ export function TimezoneProvider({ children }: { children: ReactNode }) {
       minute: "numeric",
       hour12: false,
     }).formatToParts(now);
-    const h = parseInt(parts.find(p => p.type === "hour")?.value || "0");
-    const m = parseInt(parts.find(p => p.type === "minute")?.value || "0");
+    const h = parseInt(parts.find(p => p.type === "hour")?.value || "0", 10);
+    const m = parseInt(parts.find(p => p.type === "minute")?.value || "0", 10);
     return h + m / 60;
   };
 

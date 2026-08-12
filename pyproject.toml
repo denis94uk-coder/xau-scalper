@@ -15,6 +15,15 @@ dependencies = [
     "pydantic>=2.6",
     "httpx>=0.27",
     "numpy>=1.26",
+    # Lower bounds pin transitive deps above known CVEs (pip-audit). The
+    # sidecar is localhost-only, but these cost nothing to floor.
+    "cryptography>=50.0.0",
+    "pydantic-settings>=2.14.2",
+    "click>=8.3.3",
+    "msgpack>=1.2.1",
+    "pygments>=2.20.0",
+    "pynacl>=1.6.2",
+    "setuptools>=83.0.0",
 ]
 
 [project.optional-dependencies]

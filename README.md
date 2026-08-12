@@ -23,7 +23,22 @@ every exit is written to an append-only journal before the outcome is known, so
 performance is a record rather than a reconstruction.
 
 **Registered assets** — `PAXGUSDT` (gold), `BTCUSDT`, `ETHUSDT`, `BNBUSDT`,
-`LINKUSDT`, `AAVEUSDT`, `TAOUSDT`.
+`LINKUSDT`, `AAVEUSDT`, `TAOUSDT`. Those are the defaults, not the limits:
+instruments, indicator parameters, risk and the MT5 bridge are all edited in
+the UI at `/settings` and stored in the database. Nothing here requires
+editing code.
+
+Three things you can do from the browser alone:
+
+- **Settings** (`/settings`) — add or remove instruments, retune every
+  indicator, set risk, point the app at your MT5 terminal, and arm live
+  execution. A rejected save reports each offending field and changes nothing.
+- **Find Strategies** (`/research`) — pick a symbol, a timeframe and a date
+  range; the app pulls the history from MT5 itself and searches for a
+  configuration, then either offers one with its out-of-sample evidence or
+  tells you it found nothing. Adopting a result writes it into settings.
+- **Live execution** — off by default, behind its own switch, and impossible
+  to arm while the bridge is off.
 
 ### Read this before trusting a number
 
@@ -176,7 +191,7 @@ applied.
 | Command | What it does |
 |---|---|
 | `bun run typecheck` | `tsc -b --force` across UI, server, core and scripts. |
-| `bun test core server` | 102 tests. |
+| `bun test core server` | 249 TypeScript tests across the strategy core and server. |
 | `bun run check` / `format` | Biome lint + format. |
 | `.venv/bin/python -m pytest` | 89 Python tests. |
 
@@ -205,6 +220,12 @@ Served on the same origin as the UI. No authentication: the server binds to
 | `GET` | `/api/prices?symbols` | Batched 24h ticker. One upstream request for all symbols. |
 | `GET` | `/api/state/:key` | Intel engine output — `marketRegime`, `macroState`, `newsShield`, `liquiditySweeps`. |
 | `GET` | `/api/events` | SSE stream. Pushes `{kind}` on change; clients refetch. |
+| `GET` | `/api/config` | The whole live configuration document. |
+| `GET` | `/api/config/defaults` | The shipped defaults, for a reset preview. |
+| `GET` | `/api/mt5/status` | Bridge directory, whether a terminal is answering, per-symbol freshness. Reports disconnected rather than failing when no terminal exists. |
+| `GET` | `/api/mt5/discover` | Look for a terminal in the usual install locations. |
+| `GET` | `/api/research/runs` | Strategy searches, newest first. |
+| `GET` | `/api/research/runs/:id` | One search: status, progress, and the report once it has one. |
 
 ### Writes
 
@@ -216,6 +237,12 @@ Served on the same origin as the UI. No authentication: the server binds to
 | `POST` | `/api/trades/:id` | Close at `exitPrice`. **P&L and WIN/LOSS/BREAKEVEN are derived server-side** from the stored entry; the caller does not get to state the result. |
 | `DELETE` | `/api/trades/:id` | Remove a manual trade. |
 | `GET` | `/api/trades/stats` | Aggregate manual-trade performance. |
+| `PUT` | `/api/config` | Replace the configuration wholesale. Validated as a document: a rejection is `422` with every offending field and path, and nothing is written. Partial saves are not possible. |
+| `POST` | `/api/config/reset` | Restore the shipped defaults. |
+| `POST` | `/api/mt5/sync` | Pull bars and symbol specifications now. `502` when no terminal answers. |
+| `POST` | `/api/research/runs` | Start a search over a symbol, timeframe and date range. |
+| `POST` | `/api/research/runs/:id/cancel` | Stop a search. |
+| `POST` | `/api/research/runs/:id/adopt` | Write the discovered configuration into settings. `409` if the search produced no qualifying candidate. Adds the instrument disabled if it was not configured. |
 | `POST` | `/teo/propose` | Teo forward-test entry, recorded before the outcome is known. |
 | `POST` | `/teo/decision` | Teo self-heal decision. Append-only — it never applies a config change. |
 
@@ -229,6 +256,23 @@ route.
 
 An unknown `asset` is a `404`, not an empty list — silently returning `[]` is
 indistinguishable from "no activity yet" and hides typos in a filter.
+
+---
+
+## Searching for a strategy
+
+`core/discovery.ts`, driven from **Find Strategies**. A random search over the
+parameter space, scored on three windows cut in time order: it fits on the
+first, selects on the second, and reports the third — which no decision
+touched — as the number to believe. The page says so, and shows all three side
+by side so a configuration that only works in-sample is obvious.
+
+Searching thousands of configurations will surface a good-looking one from pure
+noise, so the reported p-value is corrected (Šidák) for how many were actually
+tried, and the correction is redone at the end against the true attempt count.
+A candidate that does not clear the bar is labelled and listed with the reason
+it failed. **A search is allowed to conclude that it found nothing** — the test
+suite includes a random walk, and asserts that no strategy is offered for it.
 
 ---
 
@@ -422,9 +466,27 @@ uses, since gold is `XAUUSD` at some and `GOLD` or `XAUUSD.r` at others.
 - Bars are stored under a namespaced asset id (`MT5:XAUUSD`) so broker data can
   never be mixed with an exchange symbol of the same name.
 
-**What it does not do**: place orders, or read your credentials. It is a
-read-only data path. Volume is tick count, not traded size — most FX and CFD
-brokers do not publish real volume.
+**History on demand**
+
+The exporter also answers requests. The server writes a small JSON file into
+`teo/requests/`, the EA fills it with `CopyRates` — retrying while the broker
+back-fills the range — and writes the answer to `teo/history/` with a progress
+file beside it. Answers land under a temporary name and are renamed into place,
+so a half-written file is never read as a complete one. This is what "Find
+Strategies" uses; you do not download or convert anything by hand.
+
+**Order execution**
+
+Orders are opt-in twice: `InpAllowTrading` on the EA (default `false`) and the
+execution switch in Settings (default off, and unavailable while the bridge is
+off). When both are on, a qualifying signal is written as an order file, the
+EA deletes the file before sending so a restart cannot replay it, sends with
+the stop and second target as the broker-side bracket, and writes an
+acknowledgement. Every send and every refusal, with its reason, is journalled.
+
+**What it does not do**: read your credentials, or trade an instrument you have
+not configured. Volume is tick count, not traded size — most FX and CFD brokers
+do not publish real volume.
 
 Only the spread is measured. Fees and stop slippage cannot be read from a quote,
 so they remain assumptions and are labelled as such in the output.
@@ -515,6 +577,7 @@ Everything has a working default; none of this is required.
 | `TEO_DB_PATH` | `data/teo.db` | SQLite file. |
 | `TEO_JOURNAL_DAYS` | `90` | Journal retention. |
 | `TEO_BINANCE_BASE_URL` | public mirror | Market data endpoint. |
+| `TEO_MT5_DIR` | auto-discovered | MT5 `MQL5/Files/teo` directory. Settings can also set this. |
 | `TEO_KRONOS_LOCAL_DIR` | — | Local Kronos weights. |
 | `TEO_KRONOS_DEVICE` | `cpu` | Kronos inference device. |
 
@@ -564,9 +627,20 @@ Stated plainly, because a trading tool that hides these is worse than no tool.
    reported as seven independent results. The `hedge` strategy in Teo scales
    position size and drawdown by the same constant, so every ratio is identical
    to `edge` — it is not a hedge.
-6. **Credentials in git history.** `.env.local` was committed while this repo
-   was public. Those keys are now dead (they addressed a Convex deployment and
-   an email service the app no longer uses) but the values remain in history.
+6. **Live execution has not been proven against a real account.** The order path
+   is covered by tests against a simulated terminal, not by a filled trade.
+   Run it on a demo account first, and take point 1 seriously before arming it
+   on anything else. It sends market orders with a broker-side bracket; it does
+   not manage the position afterwards from the broker side, so the trail and
+   partial exits still depend on this process being alive.
+7. **A discovered strategy is a hypothesis.** The third window is honest
+   evidence, not a guarantee: it is one sample of one period, and the search
+   still chose the space it drew from. Forward-test before believing it.
+8. **Credentials were committed, now removed.** `.env.local` was once tracked
+   while this repo was public. It has since been `git rm --cached`'d and stays
+   out of the tree (see `.gitignore`), and a secret-free `.env.example` now
+   documents every variable. If those keys were ever live, **rotate them** — the
+   values may still exist in old commits.
 
 ---
 

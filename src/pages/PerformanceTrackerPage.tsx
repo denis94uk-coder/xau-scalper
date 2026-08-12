@@ -392,7 +392,7 @@ export function PerformanceTrackerPage() {
                   title={`${date}: ${data.count} trades, ${data.pnl >= 0 ? "+" : ""}${data.pnl.toFixed(1)} pts`}
                 >
                   <span className="text-muted-foreground">
-                    {new Date(date + "T12:00:00").getDate()}
+                    {new Date(`${date}T12:00:00`).getDate()}
                   </span>
                   <span
                     className={`font-mono font-medium ${data.pnl > 0 ? "text-emerald-400" : "text-red-400"}`}

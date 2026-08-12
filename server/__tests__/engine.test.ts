@@ -448,3 +448,107 @@ describe("gap recovery", () => {
     expect(db.getIdea(id)!.status).toBe("ACTIVE");
   });
 });
+
+describe("regime overlay", () => {
+  // Same bullish setup as the portfolio gate: a grade-A long fires with no
+  // regime in play. Each scenario gets a fresh in-memory db so the per-asset
+  // cooldown from one call never blocks the next.
+  const capitulation: Candle[] = (() => {
+    const p = [100];
+    for (let i = 1; i < 77; i++) p.push(p[i - 1] * 1.0005);
+    for (let i = 0; i < 3; i++) p.push(p[p.length - 1] * 0.995);
+    return p.map((price, i) => ({
+      time: 1_000_000 + i * 300_000,
+      open: price,
+      high: price * 1.002,
+      low: price * 0.998,
+      close: price,
+      volume: 1,
+    }));
+  })();
+
+  function freshFeed() {
+    const localDb = new Db(":memory:");
+    return { db: localDb, fetcher: klineFetcher(capitulation) };
+  }
+
+  const VOLATILE = {
+    timestamp: Date.now(),
+    regime: "VOLATILE" as const,
+    confidence: 80,
+    atrRatio: 2,
+    adxProxy: 10,
+    trendStrength: 0,
+    priceVsEma50: 0,
+    priceVsEma200: 0,
+    bbWidth: 3,
+    rangeHighLow: 2,
+    recommendedStrategy: "widen",
+    description: "volatile",
+    slMultiplier: 1.5,
+    tpMultiplier: 1.3,
+    positionSizeMultiplier: 0.5,
+    minGrade: "B" as const,
+    favorDirection: "BOTH" as const,
+  };
+
+  const BEARISH = {
+    timestamp: Date.now(),
+    regime: "TRENDING_DOWN" as const,
+    confidence: 80,
+    atrRatio: 1,
+    adxProxy: 40,
+    trendStrength: -30,
+    priceVsEma50: 0,
+    priceVsEma200: 0,
+    bbWidth: 1,
+    rangeHighLow: 1,
+    recommendedStrategy: "short",
+    description: "bearish",
+    slMultiplier: 1,
+    tpMultiplier: 1,
+    positionSizeMultiplier: 1,
+    minGrade: "B" as const,
+    favorDirection: "SHORT" as const,
+  };
+
+  test("no regime: SL/TP taken verbatim from the strategy", async () => {
+    const feed = freshFeed();
+    const id = await generateForAsset(feed, ASSET);
+    expect(id).not.toBeNull();
+    const idea = feed.db.getIdea(id!)!;
+    // The strategy derives SL/TP from the candles, not constants.
+    expect(idea.stop_loss).toBeGreaterThan(0);
+    expect(idea.tp1).toBeGreaterThan(idea.stop_loss);
+    expect(idea.tp2).toBeGreaterThan(idea.tp1);
+  });
+
+  test("volatile regime widens SL and TP via multipliers, still fires", async () => {
+    // Baseline levels with no regime on a fresh db.
+    const baseDb = new Db(":memory:");
+    const baseId = await generateForAsset(
+      { db: baseDb, fetcher: klineFetcher(capitulation) },
+      ASSET,
+    );
+    expect(baseId).not.toBeNull();
+    const base = baseDb.getIdea(baseId!)!;
+
+    const feed = freshFeed();
+    feed.db.setSetting("marketRegime", VOLATILE);
+    const id = await generateForAsset(feed, ASSET);
+    expect(id).not.toBeNull();
+    const idea = feed.db.getIdea(id!)!;
+    expect(idea.stop_loss).toBeCloseTo(base.stop_loss * 1.5);
+    expect(idea.tp1).toBeCloseTo(base.tp1 * 1.3);
+    expect(idea.tp2).toBeCloseTo(base.tp2 * 1.3);
+    expect(idea.reason).toContain("regime VOLATILE");
+  });
+
+  test("regime favoring the opposite direction vetoes the signal", async () => {
+    const feed = freshFeed();
+    feed.db.setSetting("marketRegime", BEARISH);
+    const id = await generateForAsset(feed, ASSET);
+    expect(id).toBeNull();
+    expect(feed.db.listIdeas()).toHaveLength(0);
+  });
+});

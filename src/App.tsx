@@ -8,7 +8,9 @@ import {
   DashboardPage,
   ExperimentalPage,
   PerformanceTrackerPage,
+  ResearchPage,
   RiskManagerPage,
+  SettingsPage,
   SignalJournalPage,
   TradingIdeasPage,
 } from "./pages";
@@ -28,6 +30,8 @@ function App() {
               <Route path="/performance" element={<PerformanceTrackerPage />} />
               <Route path="/risk" element={<RiskManagerPage />} />
               <Route path="/experimental" element={<ExperimentalPage />} />
+              <Route path="/research" element={<ResearchPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

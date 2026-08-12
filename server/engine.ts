@@ -54,6 +54,11 @@ export interface EngineDeps {
   /** Portfolio risk cap. Omit for the default. */
   limits?: PortfolioLimits;
   /**
+   * Correlation estimation options, from the runtime config. Omit for the
+   * module defaults.
+   */
+  correlationOptions?: { prior?: number; minSamples?: number };
+  /**
    * Correlations between assets. Supplied by `generateSignals`; measured from
    * stored candles when absent, so a direct `generateForAsset` call is still
    * gated rather than silently unguarded.
@@ -80,6 +85,15 @@ export async function syncCandles(
   interval: string,
 ): Promise<Candle[]> {
   const { db } = deps;
+
+  // MT5 assets are filled by the terminal bridge, not by a venue request.
+  // Fetching them from Binance would either 404 on a broker-specific symbol or,
+  // worse, silently return an unrelated instrument that happens to share a
+  // name — so the stored bars are simply read back as they are.
+  if (asset.dataSource === "mt5") {
+    return db.getCandles(asset.id, interval, HISTORY_BARS);
+  }
+
   const stored = db.latestCandleTime(asset.id, interval);
 
   const fresh = await fetchCandles(asset.dataSourceSymbol, interval, {
@@ -106,12 +120,13 @@ export async function syncCandles(
 export function correlationsFrom(
   db: Db,
   assets: AssetDefinition[],
+  options: { prior?: number; minSamples?: number } = {},
 ): CorrelationMatrix {
   const series: Record<string, Candle[]> = {};
   for (const a of assets) {
     series[a.id] = db.getCandles(a.id, SIGNAL_INTERVAL, HISTORY_BARS);
   }
-  return buildCorrelationMatrix(series);
+  return buildCorrelationMatrix(series, options);
 }
 
 /** Open positions, as the portfolio model sees them. */
@@ -168,6 +183,20 @@ export async function generateForAsset(
   if (a15 && a15.direction !== a5.direction) return null;
   if (a5.grade !== "A" && a5.grade !== "B") return null;
 
+  // Regime overlay from the intel engine (written every 15m). Tightens risk in
+  // volatile regimes, gating both grade and direction. Absent until the first
+  // intel run finishes — then the static config governs, as before.
+  const regime = db.regimeFromDb();
+  if (regime) {
+    const GRADE_RANK = { A: 2, B: 1, C: 0 } as const;
+    if (GRADE_RANK[a5.grade] < GRADE_RANK[regime.minGrade]) return null;
+    if (
+      regime.favorDirection !== "BOTH" &&
+      a5.direction !== regime.favorDirection
+    )
+      return null;
+  }
+
   // Per-asset, per-direction cooldown.
   const last = db.lastIdeaAt(asset.id, a5.direction);
   if (last !== null && now - last < asset.config.cooldownMs) return null;
@@ -178,7 +207,11 @@ export async function generateForAsset(
   // book is admitted even when the book is full.
   const matrix =
     deps.correlations ??
-    correlationsFrom(db, deps.assets ?? getEnabledAssets());
+    correlationsFrom(
+      db,
+      deps.assets ?? getEnabledAssets(),
+      deps.correlationOptions,
+    );
   const decision = admit(
     openExposures(db),
     { asset: asset.id, direction: a5.direction },
@@ -200,19 +233,31 @@ export async function generateForAsset(
   const confidence = a15 ? Math.min(95, a5.confidence + 10) : a5.confidence;
   const grade = a15 && a5.grade === "B" && a15.grade === "A" ? "A" : a5.grade;
 
+  // Regime SL/TP multipliers widen stops and targets in volatile regimes,
+  // tighten them in ranges. Multipliers are 1 when no regime is set yet.
+  const slMult = regime?.slMultiplier ?? 1;
+  const tpMult = regime?.tpMultiplier ?? 1;
+  const stopLoss = roundTo(a5.stopLoss * slMult, asset.pricePrecision);
+  const tp1 = roundTo(a5.tp1 * tpMult, asset.pricePrecision);
+  const tp2 = roundTo(a5.tp2 * tpMult, asset.pricePrecision);
+  const regimeTag = regime
+    ? ` · regime ${regime.regime} (SL ${slMult}× TP ${tpMult}×)`
+    : "";
+
   const id = db.createIdea({
     asset: asset.id,
     direction: a5.direction,
     source: "engine",
     entryPrice: a5.entryPrice,
-    stopLoss: a5.stopLoss,
-    tp1: a5.tp1,
-    tp2: a5.tp2,
+    stopLoss,
+    tp1,
+    tp2,
     confidence,
     grade,
     reason:
       `[ENGINE] ${a5.reason}${a15 ? " · 15m confirms" : ""}` +
-      (decision.hedge ? " · hedges the open book" : ""),
+      (decision.hedge ? " · hedges the open book" : "") +
+      regimeTag,
     timeframe: a15 ? "5m+15m" : "5m",
     bias: a5.bias,
     biasStrength: a5.biasStrength,
@@ -227,9 +272,9 @@ export async function generateForAsset(
     price: a5.entryPrice,
     details:
       `[${asset.displaySymbol}] ${grade} ${a5.direction} @ ${a5.entryPrice} | ` +
-      `SL ${a5.stopLoss} | TP1 ${a5.tp1} | TP2 ${a5.tp2} | ${confidence}% | ` +
+      `SL ${stopLoss} | TP1 ${tp1} | TP2 ${tp2} | ${confidence}% | ` +
       `portfolio risk ${decision.riskBefore.toFixed(2)} → ${decision.riskAfter.toFixed(2)}`,
-    metadata: { portfolio: decision },
+    metadata: { portfolio: decision, regime: regime ?? undefined },
   });
 
   return id;
@@ -242,7 +287,14 @@ export async function generateSignals(deps: EngineDeps): Promise<void> {
       // Rebuilt each iteration: the previous asset may have just synced fresh
       // candles, and may have opened a position that changes what comes next.
       const id = await generateForAsset(
-        { ...deps, correlations: correlationsFrom(deps.db, assets) },
+        {
+          ...deps,
+          correlations: correlationsFrom(
+            deps.db,
+            assets,
+            deps.correlationOptions,
+          ),
+        },
         asset,
       );
       if (id !== null) publish("ideas");

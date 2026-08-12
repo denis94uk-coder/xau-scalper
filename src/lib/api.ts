@@ -12,11 +12,18 @@ export class ApiError extends Error {
   // Declared as a field rather than a parameter property: the app's tsconfig
   // sets erasableSyntaxOnly, which forbids the constructor-parameter shorthand.
   status: number;
+  /**
+   * Per-field objections, when the server rejected a document rather than a
+   * request. Carried on the error because a settings form has to mark the
+   * offending inputs, and a flattened message string cannot say which they are.
+   */
+  issues: ValidationIssue[];
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, issues: ValidationIssue[] = []) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.issues = issues;
   }
 }
 
@@ -32,13 +39,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     // Surface the server's own message where it gave one; a bare status code
     // tells the user nothing about what went wrong.
     let detail = res.statusText;
+    let issues: ValidationIssue[] = [];
     try {
-      const body = (await res.json()) as { error?: string };
+      const body = (await res.json()) as {
+        error?: string;
+        issues?: ValidationIssue[];
+      };
       if (body?.error) detail = body.error;
+      if (Array.isArray(body?.issues)) issues = body.issues;
     } catch {
       // non-JSON error body
     }
-    throw new ApiError(detail, res.status);
+    throw new ApiError(detail, res.status, issues);
   }
 
   return (await res.json()) as T;
@@ -47,6 +59,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const get = <T>(path: string) => request<T>(path);
 export const post = <T>(path: string, body?: unknown) =>
   request<T>(path, { method: "POST", body: JSON.stringify(body ?? {}) });
+export const put = <T>(path: string, body?: unknown) =>
+  request<T>(path, { method: "PUT", body: JSON.stringify(body ?? {}) });
 export const del = <T>(path: string) => request<T>(path, { method: "DELETE" });
 
 // ─── Shapes returned by the server ───
@@ -233,6 +247,136 @@ export interface AssetInfo {
   symbol: string;
   precision: number;
   enabled: boolean;
+  dataSource: "binance" | "mt5";
+}
+
+// ─── Configuration ───
+//
+// These mirror core/config.ts. Duplicated rather than imported because the UI
+// builds against tsconfig.app.json, which does not include the server tree —
+// and the shapes are the wire format, which is allowed to outlive an internal
+// refactor of the server's own types.
+
+export interface StrategyConfig {
+  emaFast: number;
+  emaMid: number;
+  emaSlow: number;
+  rsiPeriod: number;
+  rsiOversold: number;
+  rsiOverbought: number;
+  macdFast: number;
+  macdSlow: number;
+  macdSignal: number;
+  atrPeriod: number;
+  atrSlMultiplier: number;
+  atrTrailMultiplier: number;
+  stochPeriod: number;
+  stochOversold: number;
+  stochOverbought: number;
+  bollingerPeriod: number;
+  bollingerStdDev: number;
+  tp1R: number;
+  tp2R: number;
+  gradeAExtreme: number;
+  gradeAStrength: number;
+  gradeBExtreme: number;
+  gradeBStrength: number;
+  gradeCStrength: number;
+  confidenceMultiplier: number;
+  confidenceCap: number;
+  biasNeutralThreshold: number;
+  cooldownMs: number;
+}
+
+export interface CostModel {
+  halfSpreadBps: number;
+  takerFeeBps: number;
+  makerFeeBps: number;
+  stopSlippageBps: number;
+}
+
+export interface AssetConfig {
+  id: string;
+  displaySymbol: string;
+  dataSourceSymbol: string;
+  dataSource: "binance" | "mt5";
+  pricePrecision: number;
+  enabled: boolean;
+  config: StrategyConfig;
+  costs: CostModel;
+  useMt5Costs: boolean;
+}
+
+export interface AppConfig {
+  version: number;
+  assets: AssetConfig[];
+  risk: {
+    maxRisk: number;
+    assumedCorrelation: number;
+    minCorrelationSamples: number;
+  };
+  engine: {
+    monitorSeconds: number;
+    signalSeconds: number;
+    intelSeconds: number;
+    journalRetentionDays: number;
+    autoTradingEnabled: boolean;
+  };
+  mt5: {
+    enabled: boolean;
+    directory: string;
+    syncSeconds: number;
+    executionEnabled: boolean;
+    lotSize: number;
+    maxOpenPositions: number;
+  };
+}
+
+export interface ValidationIssue {
+  path: string;
+  message: string;
+}
+
+export interface Mt5SymbolStatus {
+  symbol: string;
+  interval: string;
+  bars: number;
+  ageSeconds: number;
+  spreadBps: number;
+  bid: number;
+  ask: number;
+  assetId: string;
+}
+
+export interface Mt5Status {
+  enabled: boolean;
+  directory: string | null;
+  found: boolean;
+  /** Fresh data, not merely a directory that exists. */
+  connected: boolean;
+  lastSyncAt: number | null;
+  lastError: string | null;
+  symbols: Mt5SymbolStatus[];
+  execution: {
+    enabled: boolean;
+    pending: number;
+    lastAck: {
+      id: string;
+      ok: boolean;
+      ticket: number | null;
+      price: number | null;
+      error: string | null;
+      at: number;
+    } | null;
+  };
+}
+
+export interface Mt5SyncOutcome {
+  ok: boolean;
+  directory: string | null;
+  ingested: number;
+  symbols: string[];
+  errors: string[];
 }
 
 export interface Candle {
@@ -254,6 +398,97 @@ const q = (params: Record<string, string | number | undefined>) => {
   const out = s.toString();
   return out ? `?${out}` : "";
 };
+
+/** Metrics for one backtest window. Mirrors core/backtest.ts. */
+export interface BacktestMetrics {
+  trades: number;
+  wins: number;
+  losses: number;
+  winRate: number;
+  netPoints: number;
+  avgWin: number;
+  avgLoss: number;
+  maxDrawdown: number;
+  profitFactor: number | null;
+  grossPoints: number;
+  costPoints: number;
+  expectancyPerTrade: number;
+  breakevenWinRate: number | null;
+}
+
+export type CandidateVerdict =
+  | "qualified"
+  | "too_few_trades"
+  | "unprofitable_in_sample"
+  | "failed_validation"
+  | "failed_test"
+  | "not_significant"
+  | "below_breakeven";
+
+export interface DiscoveryCandidate {
+  config: StrategyConfig;
+  train: BacktestMetrics;
+  validation: BacktestMetrics;
+  test: BacktestMetrics;
+  overall: BacktestMetrics;
+  score: number;
+  adjustedPValue: number;
+  verdict: CandidateVerdict;
+  summary: string;
+}
+
+export interface DiscoveryReport {
+  asset: string;
+  interval: string;
+  bars: number;
+  from: number;
+  to: number;
+  iterations: number;
+  evaluated: number;
+  seed: number;
+  split: { train: number; validation: number; test: number };
+  candidates: DiscoveryCandidate[];
+  best: DiscoveryCandidate | null;
+  conclusion: string;
+}
+
+export type RunStatus =
+  | "requesting"
+  | "downloading"
+  | "searching"
+  | "done"
+  | "failed"
+  | "cancelled";
+
+export interface ResearchRun {
+  id: string;
+  assetId: string;
+  symbol: string;
+  interval: string;
+  from: number;
+  to: number;
+  iterations: number;
+  status: RunStatus;
+  progress: number;
+  message: string;
+  startedAt: number;
+  finishedAt: number | null;
+  bars: number;
+  report: DiscoveryReport | null;
+  error: string | null;
+}
+
+export interface StartRunInput {
+  assetId?: string;
+  symbol: string;
+  interval: string;
+  /** UTC seconds. */
+  from: number;
+  to: number;
+  iterations: number;
+  seed?: number;
+  minTrades?: number;
+}
 
 export const api = {
   assets: () => get<{ assets: AssetInfo[] }>("/api/assets"),
@@ -291,6 +526,36 @@ export const api = {
 
   /** Intel state written by the engines: regime, macro, news, sweeps. */
   state: <T>(key: string) => get<T>(`/api/state/${key}`),
+
+  config: () => get<AppConfig>("/api/config"),
+  saveConfig: (cfg: AppConfig) => put<AppConfig>("/api/config", cfg),
+  defaultConfig: () => get<AppConfig>("/api/config/defaults"),
+  resetConfig: () => post<AppConfig>("/api/config/reset"),
+
+  mt5Status: () => get<Mt5Status>("/api/mt5/status"),
+  mt5Discover: () =>
+    get<{ directory: string | null; found: boolean }>("/api/mt5/discover"),
+  mt5Sync: () => post<Mt5SyncOutcome>("/api/mt5/sync"),
+
+  researchRuns: () => get<{ runs: ResearchRun[] }>("/api/research/runs"),
+  startResearch: (input: StartRunInput) =>
+    post<ResearchRun>("/api/research/runs", input),
+  research: (id: string) =>
+    get<ResearchRun>(`/api/research/runs/${encodeURIComponent(id)}`),
+  cancelResearch: (id: string) =>
+    post<{ cancelled: boolean }>(
+      `/api/research/runs/${encodeURIComponent(id)}/cancel`,
+    ),
+  /**
+   * Apply a discovered strategy to an instrument. Omit `assetId` to apply it to
+   * the instrument the run was about, adding it to the configuration (disabled)
+   * if it is not there yet.
+   */
+  adoptStrategy: (id: string, assetId?: string) =>
+    post<{ adopted: boolean; assetId: string; added: boolean }>(
+      `/api/research/runs/${encodeURIComponent(id)}/adopt`,
+      { assetId },
+    ),
 
   health: () =>
     get<{

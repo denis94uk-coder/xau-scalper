@@ -174,7 +174,7 @@ function DashboardContent() {
     const interval = setInterval(() => loadAll(), 30000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loadRemaining, loadCritical, loadAll, activeTimeframe]);
 
   const activeCandles =
     activeTimeframe === "1m"
@@ -636,7 +636,7 @@ function IndicatorPill({
   format: number;
   color?: string;
 }) {
-  if (value === undefined || isNaN(value)) return null;
+  if (value === undefined || Number.isNaN(value)) return null;
   return (
     <div className="flex items-center gap-1 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded bg-secondary/30">
       <span className="text-[9px] sm:text-[10px] text-muted-foreground">

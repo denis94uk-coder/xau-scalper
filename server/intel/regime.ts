@@ -174,7 +174,9 @@ function detectRegime(candles: Candle[]) {
     description = `Moderate ${dir} trend. Standard approach with directional bias.`;
   } else {
     regime = "RANGING";
-    confidence = Math.round(40 + Math.random() * 15);
+    // ponytail: random seed removed so the same data reproduces the same
+    // confidence — a diagnostics readout must be deterministic.
+    confidence = 45;
     recommendedStrategy =
       "Mixed signals — use tight stops, wait for clearer setup";
     description = "No clear trend or volatility regime. Exercise patience.";
@@ -238,6 +240,7 @@ export async function detectMarketRegime(
     const r = detectRegime(candles);
 
     db.setSetting(KEY, {
+      timestamp: Date.now(),
       regime: r.regime,
       confidence: r.confidence,
       atrRatio: r.atrRatio,

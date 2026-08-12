@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - name: Typecheck
+        run: node ./node_modules/typescript/bin/tsc -b --force
+      - name: Biome
+        run: ./node_modules/.bin/biome ci .
+      - name: Unit tests
+        run: bun test core server
+      - name: JS dep audit
+        run: bun audit
+
+  py:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e ".[dev]"
+      - name: Python tests
+        run: python -m pytest -q
+      - name: Python dep audit
+        run: pip install pip-audit && pip-audit

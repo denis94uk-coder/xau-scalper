@@ -14,7 +14,14 @@
 import type { CostModel } from "./costs";
 import { DEFAULT_STRATEGY_CONFIG, type StrategyConfig } from "./strategy";
 
-export type DataSource = "binance";
+/**
+ * Where an asset's bars come from.
+ *
+ * "mt5" assets are not fetched at all: the sync loop loads them from the
+ * terminal's export directory, so the engine reads them out of the database
+ * rather than off the network.
+ */
+export type DataSource = "binance" | "mt5";
 export type SessionType = "24_7";
 
 export interface AssetDefinition {
