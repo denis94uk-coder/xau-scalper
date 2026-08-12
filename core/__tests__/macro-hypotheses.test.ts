@@ -12,7 +12,14 @@ import type { Candle } from "../strategy";
 
 function makeCandle(date: string, close = 2000): Candle {
   const time = Math.floor(new Date(date + "T12:00:00Z").getTime() / 1000);
-  return { time, open: close, high: close + 1, low: close - 1, close, volume: 100 };
+  return {
+    time,
+    open: close,
+    high: close + 1,
+    low: close - 1,
+    close,
+    volume: 100,
+  };
 }
 
 describe("buildSeries", () => {
@@ -134,15 +141,27 @@ describe("largeYieldMove", () => {
 
 describe("yieldCurveSlope", () => {
   test("steepening curve → LONG gold", () => {
-    const y10 = new Map([["2024-01-01", 4.0], ["2024-01-02", 4.1]]);
-    const y2 = new Map([["2024-01-01", 3.8], ["2024-01-02", 3.8]]); // 2yr flat
+    const y10 = new Map([
+      ["2024-01-01", 4.0],
+      ["2024-01-02", 4.1],
+    ]);
+    const y2 = new Map([
+      ["2024-01-01", 3.8],
+      ["2024-01-02", 3.8],
+    ]); // 2yr flat
     const candle = makeCandle("2024-01-03");
     expect(yieldCurveSlope(y10, y2).signal([candle], 0)).toBe("LONG");
   });
 
   test("flattening curve → SHORT gold", () => {
-    const y10 = new Map([["2024-01-01", 4.0], ["2024-01-02", 3.9]]);
-    const y2 = new Map([["2024-01-01", 3.8], ["2024-01-02", 3.8]]);
+    const y10 = new Map([
+      ["2024-01-01", 4.0],
+      ["2024-01-02", 3.9],
+    ]);
+    const y2 = new Map([
+      ["2024-01-01", 3.8],
+      ["2024-01-02", 3.8],
+    ]);
     const candle = makeCandle("2024-01-03");
     expect(yieldCurveSlope(y10, y2).signal([candle], 0)).toBe("SHORT");
   });
@@ -150,15 +169,27 @@ describe("yieldCurveSlope", () => {
 
 describe("realYieldProxy", () => {
   test("real yield falling (10yr drops faster than 1yr) → LONG gold", () => {
-    const y10 = new Map([["2024-01-01", 4.0], ["2024-01-02", 3.8]]);
-    const y1 = new Map([["2024-01-01", 3.5], ["2024-01-02", 3.5]]);
+    const y10 = new Map([
+      ["2024-01-01", 4.0],
+      ["2024-01-02", 3.8],
+    ]);
+    const y1 = new Map([
+      ["2024-01-01", 3.5],
+      ["2024-01-02", 3.5],
+    ]);
     const candle = makeCandle("2024-01-03");
     expect(realYieldProxy(y10, y1).signal([candle], 0)).toBe("LONG");
   });
 
   test("real yield rising → SHORT gold", () => {
-    const y10 = new Map([["2024-01-01", 4.0], ["2024-01-02", 4.2]]);
-    const y1 = new Map([["2024-01-01", 3.5], ["2024-01-02", 3.5]]);
+    const y10 = new Map([
+      ["2024-01-01", 4.0],
+      ["2024-01-02", 4.2],
+    ]);
+    const y1 = new Map([
+      ["2024-01-01", 3.5],
+      ["2024-01-02", 3.5],
+    ]);
     const candle = makeCandle("2024-01-03");
     expect(realYieldProxy(y10, y1).signal([candle], 0)).toBe("SHORT");
   });

@@ -245,8 +245,7 @@ export function realYieldProxy(
 
   return {
     name: "real-yield-proxy",
-    claim:
-      "Falling 10yr−1yr (real yield proxy) is LONG gold; rising is SHORT.",
+    claim: "Falling 10yr−1yr (real yield proxy) is LONG gold; rising is SHORT.",
     signal(candles: Candle[], i: number): Direction | null {
       const date = toDate(candles[i].time);
       const realDir = macroDayDirection(real, date);

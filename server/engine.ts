@@ -30,6 +30,7 @@ import {
   type Exposure,
   type PortfolioLimits,
 } from "../core/portfolio";
+import { analyzeQuietTrend, htfRegime } from "../core/quiet-trend";
 import {
   type AnalysisResult,
   analyzeCandles,
@@ -37,10 +38,8 @@ import {
   calcATR,
   roundTo,
 } from "../core/strategy";
-import { analyzeQuietTrend, htfRegime } from "../core/quiet-trend";
 import type { Db, TradingIdea } from "./db";
 import { publish } from "./events";
-import type { RiskManager } from "./risk-manager";
 import {
   type Fetcher,
   fetchCandles,
@@ -48,6 +47,7 @@ import {
   intervalMs,
   venueSymbols,
 } from "./market";
+import type { RiskManager } from "./risk-manager";
 
 export interface EngineDeps {
   db: Db;

@@ -804,7 +804,11 @@ export async function handleApi(
 
   // ─── Kill switch / risk manager ───
   if (path === "/api/risk") {
-    if (!risk) return json({ limitsActive: false, message: "Risk manager not configured." });
+    if (!risk)
+      return json({
+        limitsActive: false,
+        message: "Risk manager not configured.",
+      });
     return json(risk.status());
   }
 

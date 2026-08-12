@@ -12,7 +12,12 @@
  */
 
 import type { AssetDefinition } from "./assets";
-import { type BacktestMetrics, computeMetrics, runBacktest, toBacktestModel } from "./backtest";
+import {
+  type BacktestMetrics,
+  computeMetrics,
+  runBacktest,
+  toBacktestModel,
+} from "./backtest";
 import type { Candle, StrategyConfig } from "./strategy";
 
 /** Knobs worth sweeping, and the values to try. Small, because a sweep is O(product). */

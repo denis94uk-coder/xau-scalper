@@ -10,13 +10,9 @@
  *   bun run scripts/quiet-trend-bt.ts [--interval 1h] [--atr-sl 1.5] [--tp-r 2.0]
  */
 
-import type { Candle, Direction } from "../core/strategy";
-import {
-  type CostModel,
-  entryCost,
-  exitCost,
-} from "../core/costs";
 import { mt5Asset } from "../core/assets";
+import { type CostModel, entryCost, exitCost } from "../core/costs";
+import type { Candle, Direction } from "../core/strategy";
 import { db as openDb } from "../server/db";
 
 interface Trade {
@@ -55,14 +51,12 @@ function signal(candles: Candle[], i: number): Direction | null {
 
   const vol = meanAbsMove(candles, i, 14);
   const recent: number[] = [];
-  for (let k = i - 99; k <= i; k += 5)
-    recent.push(meanAbsMove(candles, k, 14));
+  for (let k = i - 99; k <= i; k += 5) recent.push(meanAbsMove(candles, k, 14));
   recent.sort((a, b) => a - b);
   const cut = recent[Math.floor((recent.length * 50) / 100)];
   if (vol > cut) return null;
 
-  const fast =
-    candles.slice(i - 8, i + 1).reduce((s, c) => s + c.close, 0) / 9;
+  const fast = candles.slice(i - 8, i + 1).reduce((s, c) => s + c.close, 0) / 9;
   const slow =
     candles.slice(i - 20, i + 1).reduce((s, c) => s + c.close, 0) / 21;
   if (fast === slow) return null;
@@ -89,10 +83,8 @@ function backtest(
     const slDist = opts.atrSl * currentAtr;
     const tpDist = opts.tpR * slDist;
 
-    const slPrice =
-      dir === "LONG" ? entryPrice - slDist : entryPrice + slDist;
-    const tpPrice =
-      dir === "LONG" ? entryPrice + tpDist : entryPrice - tpDist;
+    const slPrice = dir === "LONG" ? entryPrice - slDist : entryPrice + slDist;
+    const tpPrice = dir === "LONG" ? entryPrice + tpDist : entryPrice - tpDist;
 
     let exitPrice = 0;
     let exitKind: Trade["exitKind"] = "TIME";
@@ -100,7 +92,11 @@ function backtest(
     let trailStop = slPrice;
     let bestPrice = entryPrice;
 
-    for (let j = i + 1; j < Math.min(i + opts.maxBars + 1, candles.length); j++) {
+    for (
+      let j = i + 1;
+      j < Math.min(i + opts.maxBars + 1, candles.length);
+      j++
+    ) {
       barsHeld = j - i;
       const bar = candles[j];
 
@@ -151,7 +147,11 @@ function backtest(
       dir === "LONG" ? exitPrice - entryPrice : entryPrice - exitPrice;
     const eCost = entryCost(entryPrice, costs);
     const xKind = exitKind === "TP" ? "TP" : "SL";
-    const xCost = exitCost(exitPrice, xKind === "TP" ? "TP" : "TRAIL_SL", costs);
+    const xCost = exitCost(
+      exitPrice,
+      xKind === "TP" ? "TP" : "TRAIL_SL",
+      costs,
+    );
     const net = gross - eCost - xCost;
 
     trades.push({
@@ -180,11 +180,18 @@ function summarize(trades: Trade[], label: string) {
   const losses = trades.filter(t => t.net <= 0);
   const winRate = (wins.length / trades.length) * 100;
   const totalNet = trades.reduce((s, t) => s + t.net, 0);
-  const avgWin = wins.length > 0 ? wins.reduce((s, t) => s + t.net, 0) / wins.length : 0;
-  const avgLoss = losses.length > 0 ? Math.abs(losses.reduce((s, t) => s + t.net, 0) / losses.length) : 0;
+  const avgWin =
+    wins.length > 0 ? wins.reduce((s, t) => s + t.net, 0) / wins.length : 0;
+  const avgLoss =
+    losses.length > 0
+      ? Math.abs(losses.reduce((s, t) => s + t.net, 0) / losses.length)
+      : 0;
   const expectancy = (winRate / 100) * avgWin - (1 - winRate / 100) * avgLoss;
   const sorted = [...trades.map(t => t.net)].sort((a, b) => a - b);
-  const worstDecile = sorted.slice(0, Math.max(1, Math.floor(sorted.length / 10)));
+  const worstDecile = sorted.slice(
+    0,
+    Math.max(1, Math.floor(sorted.length / 10)),
+  );
   const worstAvg = worstDecile.reduce((a, b) => a + b, 0) / worstDecile.length;
 
   const byExit = { TP: 0, SL: 0, TRAIL_SL: 0, TIME: 0 };
@@ -210,11 +217,21 @@ function summarize(trades: Trade[], label: string) {
   }
 
   console.log(`\n${label}`);
-  console.log(`  Trades: ${trades.length}   Win rate: ${winRate.toFixed(1)}%   Windows +ve: ${windowsPositive}/6`);
-  console.log(`  Total P&L: ${totalNet.toFixed(1)} pts   Expectancy: ${expectancy.toFixed(2)} pts/trade`);
-  console.log(`  Avg win: ${avgWin.toFixed(2)}   Avg loss: ${avgLoss.toFixed(2)}   Payoff: ${(avgWin / (avgLoss || 1)).toFixed(2)}R`);
-  console.log(`  Worst decile: ${worstAvg.toFixed(2)}   Max drawdown: ${maxDD.toFixed(1)} pts`);
-  console.log(`  Exits: TP=${byExit.TP} SL=${byExit.SL} Trail=${byExit.TRAIL_SL} Time=${byExit.TIME}`);
+  console.log(
+    `  Trades: ${trades.length}   Win rate: ${winRate.toFixed(1)}%   Windows +ve: ${windowsPositive}/6`,
+  );
+  console.log(
+    `  Total P&L: ${totalNet.toFixed(1)} pts   Expectancy: ${expectancy.toFixed(2)} pts/trade`,
+  );
+  console.log(
+    `  Avg win: ${avgWin.toFixed(2)}   Avg loss: ${avgLoss.toFixed(2)}   Payoff: ${(avgWin / (avgLoss || 1)).toFixed(2)}R`,
+  );
+  console.log(
+    `  Worst decile: ${worstAvg.toFixed(2)}   Max drawdown: ${maxDD.toFixed(1)} pts`,
+  );
+  console.log(
+    `  Exits: TP=${byExit.TP} SL=${byExit.SL} Trail=${byExit.TRAIL_SL} Time=${byExit.TIME}`,
+  );
 }
 
 function main() {
@@ -240,15 +257,61 @@ function main() {
   );
 
   const configs = [
-    { atrSl: 1.0, tpR: 1.5, maxBars: 24, label: "1.0× ATR SL / 1.5R TP / 24h max" },
-    { atrSl: 1.0, tpR: 2.0, maxBars: 24, label: "1.0× ATR SL / 2.0R TP / 24h max" },
-    { atrSl: 1.5, tpR: 1.5, maxBars: 24, label: "1.5× ATR SL / 1.5R TP / 24h max" },
-    { atrSl: 1.5, tpR: 2.0, maxBars: 24, label: "1.5× ATR SL / 2.0R TP / 24h max" },
-    { atrSl: 1.5, tpR: 2.5, maxBars: 24, label: "1.5× ATR SL / 2.5R TP / 24h max" },
-    { atrSl: 2.0, tpR: 1.5, maxBars: 24, label: "2.0× ATR SL / 1.5R TP / 24h max" },
-    { atrSl: 2.0, tpR: 2.0, maxBars: 24, label: "2.0× ATR SL / 2.0R TP / 24h max" },
-    { atrSl: 1.5, tpR: 2.0, maxBars: 48, label: "1.5× ATR SL / 2.0R TP / 48h max" },
-    { atrSl: 1.5, tpR: 2.0, maxBars: 24, trailAfterR: 1.0, label: "1.5× ATR SL / 2.0R TP / trail / 24h" },
+    {
+      atrSl: 1.0,
+      tpR: 1.5,
+      maxBars: 24,
+      label: "1.0× ATR SL / 1.5R TP / 24h max",
+    },
+    {
+      atrSl: 1.0,
+      tpR: 2.0,
+      maxBars: 24,
+      label: "1.0× ATR SL / 2.0R TP / 24h max",
+    },
+    {
+      atrSl: 1.5,
+      tpR: 1.5,
+      maxBars: 24,
+      label: "1.5× ATR SL / 1.5R TP / 24h max",
+    },
+    {
+      atrSl: 1.5,
+      tpR: 2.0,
+      maxBars: 24,
+      label: "1.5× ATR SL / 2.0R TP / 24h max",
+    },
+    {
+      atrSl: 1.5,
+      tpR: 2.5,
+      maxBars: 24,
+      label: "1.5× ATR SL / 2.5R TP / 24h max",
+    },
+    {
+      atrSl: 2.0,
+      tpR: 1.5,
+      maxBars: 24,
+      label: "2.0× ATR SL / 1.5R TP / 24h max",
+    },
+    {
+      atrSl: 2.0,
+      tpR: 2.0,
+      maxBars: 24,
+      label: "2.0× ATR SL / 2.0R TP / 24h max",
+    },
+    {
+      atrSl: 1.5,
+      tpR: 2.0,
+      maxBars: 48,
+      label: "1.5× ATR SL / 2.0R TP / 48h max",
+    },
+    {
+      atrSl: 1.5,
+      tpR: 2.0,
+      maxBars: 24,
+      trailAfterR: 1.0,
+      label: "1.5× ATR SL / 2.0R TP / trail / 24h",
+    },
   ];
 
   for (const cfg of configs) {

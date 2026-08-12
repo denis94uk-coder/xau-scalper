@@ -11,8 +11,8 @@
 
 import { readFileSync } from "fs";
 import { basename } from "path";
-import { db as openDb } from "../server/db";
 import type { Candle } from "../core/strategy";
+import { db as openDb } from "../server/db";
 
 const INTERVAL_MAP: Record<string, string> = {
   M1: "1m",
@@ -89,8 +89,7 @@ function main() {
   const database = openDb();
 
   for (const file of cli.files) {
-    const interval =
-      cli.interval ?? inferInterval(basename(file)) ?? "5m";
+    const interval = cli.interval ?? inferInterval(basename(file)) ?? "5m";
     const text = readFileSync(file, "utf-8");
     const candles = parseCsv(text);
 
