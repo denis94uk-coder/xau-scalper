@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AppConfig } from "../../core/config";
 import { validateConfig } from "../../core/config";
 import { handleApi } from "../api";
+import { putRun } from "../research";
 import { Db, type NewIdea } from "../db";
 
 let db: Db;
@@ -642,6 +643,41 @@ describe("MT5 routes", () => {
  * These start real work, so the tests stay on the request contract: bad input
  * is refused before anything is scheduled, and a started run is addressable.
  */
+/** A finished run carrying one qualified candidate, for the adopt route. */
+function qualifiedRun(
+  id: string,
+  assetId: string,
+  config: unknown,
+  symbol = assetId,
+) {
+  const metrics = {
+    trades: 120, wins: 70, losses: 50, breakeven: 0, winRate: 58.3,
+    netPoints: 420, grossPoints: 500, costPoints: 80, expectancy: 3.5,
+    profitFactor: 1.6, maxDrawdown: 90, breakevenWinRate: 52,
+  };
+  return {
+    id, assetId, symbol, interval: "15m",
+    from: 1_700_000_000, to: 1_705_000_000, iterations: 100,
+    status: "done", progress: 1,
+    message: "done", startedAt: Date.now(), finishedAt: Date.now(),
+    bars: 5000, error: null,
+    report: {
+      asset: assetId, interval: "15m", bars: 5000,
+      from: 1_700_000_000, to: 1_705_000_000,
+      iterations: 100, evaluated: 100, seed: 1,
+      split: { train: 2500, validation: 1250, test: 1250 },
+      candidates: [],
+      best: {
+        config,
+        train: metrics, validation: metrics, test: metrics, overall: metrics,
+        score: 1, significance: { pValue: 0.001, significant: true },
+        adjustedPValue: 0.01, verdict: "qualified", summary: "survived",
+      },
+      conclusion: "1 of 100 configurations survived.",
+    },
+  } as never;
+}
+
 describe("research routes", () => {
   // Never point at a real terminal: a test run must not drop request files
   // into whatever MetaTrader install happens to exist on this machine.
@@ -713,6 +749,47 @@ describe("research routes", () => {
 
   test("an unknown run is a 404, not an empty run", async () => {
     expect(await status(call("/api/research/runs/nope"))).toBe(404);
+  });
+
+  test("adopting a qualified strategy writes it into the configuration", async () => {
+    // The success path a search rarely reaches on real data, and the only route
+    // that rewrites the live configuration from a research result.
+    const cfg = await body<AppConfig>(call("/api/config"));
+    const target = cfg.assets[0];
+    const tuned = { ...target.config, emaFast: 7, emaMid: 19, emaSlow: 44 };
+
+    putRun(qualifiedRun("adopt-known", target.id, tuned));
+
+    const res = await body<{ adopted: boolean; added: boolean }>(
+      call("/api/research/runs/adopt-known/adopt", "POST"),
+    );
+    expect(res.adopted).toBe(true);
+    expect(res.added).toBe(false);
+
+    const after = await body<AppConfig>(call("/api/config"));
+    const updated = after.assets.find(a => a.id === target.id)!;
+    expect(updated.config.emaFast).toBe(7);
+    expect(updated.config.emaSlow).toBe(44);
+  });
+
+  test("adopting for an unconfigured instrument adds it, disabled", async () => {
+    // Discovering a strategy and trading it are separate decisions: a new
+    // instrument must not join the live engine on one click.
+    const cfg = await body<AppConfig>(call("/api/config"));
+    const tuned = cfg.assets[0].config;
+
+    putRun(qualifiedRun("adopt-new", "MT5:NEWSYM", tuned, "NEWSYM"));
+
+    const res = await body<{ added: boolean }>(
+      call("/api/research/runs/adopt-new/adopt", "POST"),
+    );
+    expect(res.added).toBe(true);
+
+    const after = await body<AppConfig>(call("/api/config"));
+    const added = after.assets.find(a => a.id === "MT5:NEWSYM")!;
+    expect(added).toBeDefined();
+    expect(added.enabled).toBe(false);
+    expect(validateConfig(after)).toEqual([]);
   });
 
   test("adopting from a run with no result is refused", async () => {

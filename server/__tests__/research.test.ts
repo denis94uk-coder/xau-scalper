@@ -170,6 +170,32 @@ describe("a research run end to end", () => {
     expect(run.message).not.toContain("Asked MetaTrader");
   }, 40_000);
 
+  test("reports how many configurations it really tested", async () => {
+    // The search runs in slices and each slice returns only its best few. Adding
+    // up what came back reported a 60-configuration search as 20, understating
+    // the work AND disagreeing with the multiple-comparisons correction, which
+    // was always applied to the full count.
+    const from = 1_704_067_200;
+    const step = 900;
+    fakeTerminal(() => ({ bars: bars(3000, from, step) }));
+
+    const run = await settle(
+      startRun(db, config(), {
+        assetId: "MT5:NAS100",
+        symbol: "NAS100",
+        interval: "15m",
+        from,
+        to: from + 3000 * step,
+        iterations: 60,
+      }).id,
+      40_000,
+    );
+
+    expect(run.status).toBe("done");
+    expect(run.report?.iterations).toBe(60);
+    expect(run.report?.evaluated).toBe(60);
+  }, 60_000);
+
   test("a broker that does not have the symbol fails with the broker's reason", async () => {
     fakeTerminal(() => ({
       error: "symbol NAS100 is not available at this broker",

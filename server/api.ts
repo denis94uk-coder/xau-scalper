@@ -53,6 +53,23 @@ function intParam(
 }
 
 /** Parse a JSON object body, or return an error Response. */
+/** Like `readBody`, but an absent body is an empty object rather than an error. */
+async function readOptionalBody(
+  req: Request,
+): Promise<Record<string, unknown> | Response> {
+  const raw = await req.text();
+  if (!raw.trim()) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return bad("body must be a JSON object");
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return bad("invalid JSON body");
+  }
+}
+
 async function readBody(
   req: Request,
 ): Promise<Record<string, unknown> | Response> {
@@ -585,7 +602,10 @@ export async function handleApi(
         return bad("that run has no qualified strategy to adopt", 409);
       }
 
-      const body = await readBody(req);
+      // The instrument is optional: adopting onto the one that was researched
+      // is the common case, so a bodyless POST must work rather than fail as
+      // malformed JSON.
+      const body = await readOptionalBody(req);
       if (body instanceof Response) return body;
       const targetId = String(body.assetId || run.assetId);
 

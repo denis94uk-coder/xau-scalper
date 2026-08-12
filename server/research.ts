@@ -102,6 +102,18 @@ export function listRuns(): ResearchRun[] {
   return [...runs.values()].sort((a, b) => b.startedAt - a.startedAt);
 }
 
+/**
+ * Insert a finished run directly.
+ *
+ * Exists so the adopt route can be tested against a qualified result. A search
+ * only produces one when the data happens to contain a surviving edge, which
+ * is exactly what real market data usually does not, and a route that writes
+ * your live configuration should not go untested for that reason.
+ */
+export function putRun(run: ResearchRun): void {
+  runs.set(run.id, run);
+}
+
 export function cancelRun(id: string): boolean {
   const run = runs.get(id);
   if (!run || run.status === "done" || run.status === "failed") return false;
@@ -354,6 +366,10 @@ async function searchInSlices(
   let merged: DiscoveryReport | null = null;
   const all: Candidate[] = [];
   let done = 0;
+  // Configurations actually backtested. Distinct from `all.length`, which only
+  // holds the top few kept per slice: reporting the kept count as "evaluated"
+  // understated a 300-configuration search as 120.
+  let evaluated = 0;
 
   while (done < total) {
     if (cancelled.has(run.id)) {
@@ -386,6 +402,7 @@ async function searchInSlices(
     if (part.bars > 0 && part.split.train < 200) return part;
 
     all.push(...part.candidates);
+    evaluated += part.evaluated;
     merged = part;
     done += slice;
 
@@ -399,7 +416,7 @@ async function searchInSlices(
     await sleep(0);
   }
 
-  return finalise(all, merged, candles, total, input);
+  return finalise(all, merged, candles, total, input, evaluated);
 }
 
 /**
@@ -415,6 +432,7 @@ function finalise(
   candles: Candle[],
   total: number,
   input: StartRunInput,
+  evaluated: number,
 ): DiscoveryReport {
   const corrected = all.map(c => {
     const adjusted = 1 - (1 - c.significance.pValue) ** total;
@@ -447,7 +465,7 @@ function finalise(
     from: candles[0]?.time ?? input.from,
     to: candles.at(-1)?.time ?? input.to,
     iterations: total,
-    evaluated: all.length,
+    evaluated,
     seed: input.seed ?? 1,
     split: last?.split ?? { train: 0, validation: 0, test: 0 },
     candidates: corrected.slice(0, 10),
