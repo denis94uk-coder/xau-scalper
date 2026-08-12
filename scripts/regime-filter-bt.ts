@@ -10,11 +10,11 @@
  * H1 stream; here we use trailing windows to simulate it).
  */
 
-import type { Candle, Direction } from "../core/strategy";
-import { type CostModel, entryCost, exitCost } from "../core/costs";
-import { htfRegime, DEFAULT_QUIET_TREND_CONFIG } from "../core/quiet-trend";
-import { calcATR, calcEMA } from "../core/strategy";
 import { mt5Asset } from "../core/assets";
+import { type CostModel, entryCost, exitCost } from "../core/costs";
+import { DEFAULT_QUIET_TREND_CONFIG, htfRegime } from "../core/quiet-trend";
+import type { Candle, Direction } from "../core/strategy";
+import { calcATR, calcEMA } from "../core/strategy";
 import { db as openDb } from "../server/db";
 
 interface Trade {
@@ -58,7 +58,10 @@ function backtest(
   let i = 120;
 
   while (i < candles.length - 1) {
-    if (!isQuiet(candles, i)) { i++; continue; }
+    if (!isQuiet(candles, i)) {
+      i++;
+      continue;
+    }
 
     // Entry signal: price vs EMA with buffer
     const price = closes[i];
@@ -67,7 +70,10 @@ function backtest(
     let dir: Direction;
     if (price > ema + buf) dir = "LONG";
     else if (price < ema - buf) dir = "SHORT";
-    else { i++; continue; }
+    else {
+      i++;
+      continue;
+    }
 
     // H1 regime: look back 60 bars to simulate reading the current H1 window
     let regimeAligned = true;
@@ -85,7 +91,10 @@ function backtest(
     const entry = price;
     const atrSeries = calcATR(candles, cfg.atrPeriod);
     const currentAtr = atrSeries[i] ?? 0;
-    if (currentAtr <= 0) { i++; continue; }
+    if (currentAtr <= 0) {
+      i++;
+      continue;
+    }
 
     const slDist = cfg.atrSlMultiple * currentAtr;
     const tpDist = cfg.tpR * slDist;
@@ -96,15 +105,35 @@ function backtest(
     let exitKind: Trade["exitKind"] = "TIME";
     let barsHeld = 0;
 
-    for (let j = i + 1; j < Math.min(i + cfg.maxHoldBars + 1, candles.length); j++) {
+    for (
+      let j = i + 1;
+      j < Math.min(i + cfg.maxHoldBars + 1, candles.length);
+      j++
+    ) {
       barsHeld = j - i;
       const bar = candles[j];
       if (dir === "LONG") {
-        if (bar.low <= sl) { exitPrice = sl; exitKind = "SL"; break; }
-        if (bar.high >= tp) { exitPrice = tp; exitKind = "TP"; break; }
+        if (bar.low <= sl) {
+          exitPrice = sl;
+          exitKind = "SL";
+          break;
+        }
+        if (bar.high >= tp) {
+          exitPrice = tp;
+          exitKind = "TP";
+          break;
+        }
       } else {
-        if (bar.high >= sl) { exitPrice = sl; exitKind = "SL"; break; }
-        if (bar.low <= tp) { exitPrice = tp; exitKind = "TP"; break; }
+        if (bar.high >= sl) {
+          exitPrice = sl;
+          exitKind = "SL";
+          break;
+        }
+        if (bar.low <= tp) {
+          exitPrice = tp;
+          exitKind = "TP";
+          break;
+        }
       }
     }
     if (exitKind === "TIME") {
@@ -114,7 +143,10 @@ function backtest(
     }
 
     const gross = dir === "LONG" ? exitPrice - entry : entry - exitPrice;
-    const net = gross - entryCost(entry, costs) - exitCost(exitPrice, exitKind === "TP" ? "TP" : "TRAIL_SL", costs);
+    const net =
+      gross -
+      entryCost(entry, costs) -
+      exitCost(exitPrice, exitKind === "TP" ? "TP" : "TRAIL_SL", costs);
     trades.push({ net, dir, barsHeld, exitKind, regimeAligned });
     i += Math.max(barsHeld, 1);
   }
@@ -122,16 +154,25 @@ function backtest(
 }
 
 function summarize(trades: Trade[], label: string) {
-  if (trades.length === 0) { console.log(`${label}: no trades`); return; }
+  if (trades.length === 0) {
+    console.log(`${label}: no trades`);
+    return;
+  }
   const wins = trades.filter(t => t.net > 0);
   const winRate = (wins.length / trades.length) * 100;
   const totalNet = trades.reduce((s, t) => s + t.net, 0);
-  const avgWin = wins.length ? wins.reduce((s, t) => s + t.net, 0) / wins.length : 0;
+  const avgWin = wins.length
+    ? wins.reduce((s, t) => s + t.net, 0) / wins.length
+    : 0;
   const losses = trades.filter(t => t.net <= 0);
-  const avgLoss = losses.length ? Math.abs(losses.reduce((s, t) => s + t.net, 0) / losses.length) : 0;
+  const avgLoss = losses.length
+    ? Math.abs(losses.reduce((s, t) => s + t.net, 0) / losses.length)
+    : 0;
   const exp = (winRate / 100) * avgWin - (1 - winRate / 100) * avgLoss;
 
-  let maxDD = 0, peak = 0, eq = 0;
+  let maxDD = 0,
+    peak = 0,
+    eq = 0;
   for (const t of trades) {
     eq += t.net;
     if (eq > peak) peak = eq;
@@ -141,28 +182,51 @@ function summarize(trades: Trade[], label: string) {
   const wSize = Math.floor(trades.length / 6);
   let wPos = 0;
   for (let w = 0; w < 6; w++) {
-    const s = w * wSize, e = w === 5 ? trades.length : s + wSize;
+    const s = w * wSize,
+      e = w === 5 ? trades.length : s + wSize;
     if (trades.slice(s, e).reduce((a, t) => a + t.net, 0) > 0) wPos++;
   }
 
-  const byDir = { LONG: trades.filter(t => t.dir === "LONG").length, SHORT: trades.filter(t => t.dir === "SHORT").length };
+  const byDir = {
+    LONG: trades.filter(t => t.dir === "LONG").length,
+    SHORT: trades.filter(t => t.dir === "SHORT").length,
+  };
 
   console.log(`\n${label}`);
-  console.log(`  Trades: ${trades.length} (L=${byDir.LONG} S=${byDir.SHORT})  Win: ${winRate.toFixed(1)}%  Windows: ${wPos}/6`);
-  console.log(`  Exp/trade: ${exp >= 0 ? "+" : ""}${exp.toFixed(2)} pts  Total: ${totalNet >= 0 ? "+" : ""}${totalNet.toFixed(0)} pts  MaxDD: ${maxDD.toFixed(0)} pts`);
-  console.log(`  Avg win: ${avgWin.toFixed(2)}  Avg loss: ${avgLoss.toFixed(2)}  Payoff: ${(avgWin / (avgLoss || 1)).toFixed(2)}R`);
+  console.log(
+    `  Trades: ${trades.length} (L=${byDir.LONG} S=${byDir.SHORT})  Win: ${winRate.toFixed(1)}%  Windows: ${wPos}/6`,
+  );
+  console.log(
+    `  Exp/trade: ${exp >= 0 ? "+" : ""}${exp.toFixed(2)} pts  Total: ${totalNet >= 0 ? "+" : ""}${totalNet.toFixed(0)} pts  MaxDD: ${maxDD.toFixed(0)} pts`,
+  );
+  console.log(
+    `  Avg win: ${avgWin.toFixed(2)}  Avg loss: ${avgLoss.toFixed(2)}  Payoff: ${(avgWin / (avgLoss || 1)).toFixed(2)}R`,
+  );
 }
 
 function main() {
   const database = openDb();
-  const meta = database.getSetting<{ symbol: string; digits: number; assetId: string; spreadBps: number }>("mt5:XAUUSD");
-  if (!meta) { console.error("No MT5 data"); process.exit(1); }
+  const meta = database.getSetting<{
+    symbol: string;
+    digits: number;
+    assetId: string;
+    spreadBps: number;
+  }>("mt5:XAUUSD");
+  if (!meta) {
+    console.error("No MT5 data");
+    process.exit(1);
+  }
   const asset = mt5Asset(meta);
   const candles = database.getCandles(meta.assetId, "1h", 100_000);
-  console.log(`H1 bars: ${candles.length} (${new Date(candles[0].time * 1000).toISOString().slice(0, 10)} → ${new Date(candles.at(-1)!.time * 1000).toISOString().slice(0, 10)})`);
+  console.log(
+    `H1 bars: ${candles.length} (${new Date(candles[0].time * 1000).toISOString().slice(0, 10)} → ${new Date(candles.at(-1)!.time * 1000).toISOString().slice(0, 10)})`,
+  );
 
   summarize(backtest(candles, asset.costs, false), "Without H1 regime filter");
-  summarize(backtest(candles, asset.costs, true),  "With H1 regime filter (EMA50 + 0.05% buffer)");
+  summarize(
+    backtest(candles, asset.costs, true),
+    "With H1 regime filter (EMA50 + 0.05% buffer)",
+  );
 }
 
 main();

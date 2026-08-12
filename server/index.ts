@@ -24,8 +24,6 @@ import { handleApi, handleEvents } from "./api";
 import { ConfigStore } from "./config";
 import { Db } from "./db";
 import { generateSignals, monitorIdeas, recoverGap } from "./engine";
-import { reconcileState } from "./reconciliation";
-import { RiskManager, riskConfigFromEnv } from "./risk-manager";
 import { publish } from "./events";
 import { executeIdea } from "./execution";
 import { scanLiquiditySweeps } from "./intel/liquiditySweep";
@@ -33,6 +31,8 @@ import { fetchMacroData } from "./intel/macroCorrelation";
 import { updateCalendar } from "./intel/newsCalendar";
 import { detectMarketRegime } from "./intel/regime";
 import { syncOnce } from "./mt5bridge";
+import { reconcileState } from "./reconciliation";
+import { RiskManager, riskConfigFromEnv } from "./risk-manager";
 import { runSelfHeal } from "./selfheal";
 
 const HOST = process.env.TEO_HOST ?? "127.0.0.1";
@@ -60,10 +60,6 @@ const DIST =
  * that IS configurable.
  */
 const PRUNE_MS = 6 * 60 * 60_000;
-// Regime, macro, news and sweeps move on a much slower clock than price, so
-// running them every 5 minutes (as the Convex crons did) spent requests to
-// recompute values that had not changed.
-const INTEL_MS = 15 * 60_000;
 /**
  * Self-heal cadence. Six hours, not minutes: a sweep re-reads the same market
  * a faster loop would, so running it often produces more chances to be fooled

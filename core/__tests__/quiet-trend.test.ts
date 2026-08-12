@@ -1,9 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  analyzeQuietTrend,
-  DEFAULT_QUIET_TREND_CONFIG,
-  htfRegime,
-} from "../quiet-trend";
+import { analyzeQuietTrend, htfRegime } from "../quiet-trend";
 import type { Candle } from "../strategy";
 
 function candles(
@@ -105,8 +101,7 @@ describe("analyzeQuietTrend", () => {
     const c = risingTrend(200, 2000, 0.5);
     const result2 = analyzeQuietTrend(c, 2);
     if (!result2) throw new Error("no result");
-    const decimals = (n: number) =>
-      (n.toString().split(".")[1] ?? "").length;
+    const decimals = (n: number) => (n.toString().split(".")[1] ?? "").length;
     expect(decimals(result2.entryPrice)).toBeLessThanOrEqual(2);
     expect(decimals(result2.stopLoss)).toBeLessThanOrEqual(2);
   });
@@ -114,7 +109,7 @@ describe("analyzeQuietTrend", () => {
   test("returns null when volatility is too high", () => {
     // Large random jumps → vol above median → filter blocks entry
     const closes: number[] = [2000];
-    const rng = () => (Math.sin(closes.length * 1.7) * 0.5 + 0.5);
+    const rng = () => Math.sin(closes.length * 1.7) * 0.5 + 0.5;
     for (let i = 1; i < 200; i++) {
       const trend = 0.5; // small upward drift
       const noise = (rng() - 0.5) * 60; // large noise

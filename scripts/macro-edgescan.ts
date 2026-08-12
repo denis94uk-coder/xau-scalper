@@ -14,6 +14,7 @@
  * relationship with the daily macro input.
  */
 
+import { mt5Asset } from "../core/assets";
 import { MIN_OCCURRENCES, scanEdges, survives } from "../core/edgescan";
 import {
   buildSeries,
@@ -24,7 +25,6 @@ import {
   yieldCurveSlope,
   yieldDirectionGold,
 } from "../core/macro-hypotheses";
-import { mt5Asset } from "../core/assets";
 import { db as openDb } from "../server/db";
 
 const FMP_BASE = "https://financialmodelingprep.com/api/v3";
@@ -63,11 +63,15 @@ async function fetchTreasury(): Promise<FmpTreasuryRecord[]> {
   return res.json() as Promise<FmpTreasuryRecord[]>;
 }
 
-async function fetchHistorical(symbol: string, from?: string): Promise<FmpHistoricalRecord[]> {
+async function fetchHistorical(
+  symbol: string,
+  from?: string,
+): Promise<FmpHistoricalRecord[]> {
   let url = `${FMP_BASE}/historical-price-full/${symbol}?apikey=${API_KEY}`;
   if (from) url += `&from=${from}`;
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`FMP historical fetch for ${symbol} failed: ${res.status}`);
+  if (!res.ok)
+    throw new Error(`FMP historical fetch for ${symbol} failed: ${res.status}`);
   const json = (await res.json()) as { historical?: FmpHistoricalRecord[] };
   return json.historical ?? [];
 }
@@ -130,9 +134,7 @@ async function main() {
   const yield1 = buildSeries(
     treasury.map(r => ({ date: r.date, value: r.year1 })),
   );
-  const dxy = buildSeries(
-    dxyHist.map(r => ({ date: r.date, value: r.close })),
-  );
+  const dxy = buildSeries(dxyHist.map(r => ({ date: r.date, value: r.close })));
 
   console.log(
     `Treasury records: ${treasury.length}  (10yr: ${yield10.size} dates, 2yr: ${yield2.size}, 1yr: ${yield1.size})`,
@@ -154,7 +156,7 @@ async function main() {
     ...(dxy.size > 0 ? [dxyAligned(dxy), dxyContrarian(dxy)] : []),
     yieldDirectionGold(yield10),
     largeYieldMove(yield10, 0.05),
-    largeYieldMove(yield10, 0.10),
+    largeYieldMove(yield10, 0.1),
     ...(yield2.size > 0 ? [yieldCurveSlope(yield10, yield2)] : []),
     ...(yield1.size > 0 ? [realYieldProxy(yield10, yield1)] : []),
   ];
@@ -165,20 +167,21 @@ async function main() {
     `\nScanning ${hypotheses.length} macro hypotheses with H=${HORIZON}h horizon...\n`,
   );
 
-  const results = scanEdges(candles, hypotheses, HORIZON, 6, asset.costs);
-  const adjAlpha =
-    1 - Math.pow(1 - 0.05, 1 / Math.max(hypotheses.length, 1));
+  const report = scanEdges(candles, hypotheses, asset.costs, {
+    horizonBars: HORIZON,
+    windows: 6,
+  });
 
-  console.log(`Šidák-adjusted α for ${hypotheses.length} tests: ${adjAlpha.toFixed(5)}\n`);
   console.log(
-    "─".repeat(90),
+    `Šidák-adjusted α for ${hypotheses.length} tests: ${report.adjustedAlpha.toFixed(5)}\n`,
   );
+  console.log("─".repeat(90));
   console.log(
     `${"Hypothesis".padEnd(28)} ${"N".padStart(5)} ${"Mean".padStart(8)} ${"p-value".padStart(10)} ${"WF wins".padStart(8)}  Survives?`,
   );
   console.log("─".repeat(90));
 
-  for (const r of results) {
+  for (const r of report.results) {
     if (r.n < MIN_OCCURRENCES) {
       console.log(
         `${r.name.padEnd(28)} ${"<30".padStart(5)}  (not enough occurrences to measure)`,
@@ -186,7 +189,7 @@ async function main() {
       continue;
     }
 
-    const passes = survives(r, adjAlpha);
+    const passes = survives(r, report);
     const star = passes ? " ✓ SURVIVES" : "";
     console.log(
       `${r.name.padEnd(28)} ${String(r.n).padStart(5)} ${r.meanNet >= 0 ? "+" : ""}${r.meanNet.toFixed(3).padStart(7)} ${r.pValue.toFixed(4).padStart(10)} ${`${r.windowsPositive}/6`.padStart(8)}${star}`,
@@ -195,7 +198,9 @@ async function main() {
 
   console.log("─".repeat(90));
 
-  const survivors = results.filter(r => r.n >= MIN_OCCURRENCES && survives(r, adjAlpha));
+  const survivors = report.results.filter(
+    r => r.n >= MIN_OCCURRENCES && survives(r, report),
+  );
   if (survivors.length === 0) {
     console.log(
       "\nNo macro hypothesis survives correction. The textbook relationships may not be strong enough at H1 resolution to gate this strategy.",

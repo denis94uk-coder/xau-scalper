@@ -44,6 +44,8 @@ export interface QuietTrendConfig {
   tpR: number;
   /** R-multiple for TP1 (partial profit). */
   tp1R: number;
+  /** Maximum bars to hold before forcing an exit. */
+  maxHoldBars: number;
 }
 
 export const DEFAULT_QUIET_TREND_CONFIG: QuietTrendConfig = {
@@ -56,6 +58,7 @@ export const DEFAULT_QUIET_TREND_CONFIG: QuietTrendConfig = {
   atrSlMultiple: 1.5,
   tpR: 2.5,
   tp1R: 1.2,
+  maxHoldBars: 24,
 };
 
 // ─── HTF regime filter ───────────────────────────────────────────────────────
@@ -72,7 +75,10 @@ export const DEFAULT_QUIET_TREND_CONFIG: QuietTrendConfig = {
  */
 export function htfRegime(
   h1Candles: Candle[],
-  cfg: Pick<QuietTrendConfig, "emaPeriod" | "emaBuffer"> = DEFAULT_QUIET_TREND_CONFIG,
+  cfg: Pick<
+    QuietTrendConfig,
+    "emaPeriod" | "emaBuffer"
+  > = DEFAULT_QUIET_TREND_CONFIG,
 ): Direction | null {
   if (h1Candles.length < cfg.emaPeriod + 1) return null;
 
@@ -99,11 +105,7 @@ function meanAbsMove(candles: Candle[], i: number, n: number): number {
   return sum / n;
 }
 
-function isQuiet(
-  candles: Candle[],
-  i: number,
-  cfg: QuietTrendConfig,
-): boolean {
+function isQuiet(candles: Candle[], i: number, cfg: QuietTrendConfig): boolean {
   if (i < cfg.volPeriod + 1) return false;
   const vol = meanAbsMove(candles, i, cfg.volPeriod);
 
@@ -131,7 +133,12 @@ export function analyzeQuietTrend(
   pricePrecision: number,
   cfg: QuietTrendConfig = DEFAULT_QUIET_TREND_CONFIG,
 ): AnalysisResult | null {
-  const warmup = Math.max(cfg.emaPeriod, cfg.volPeriod + 1, cfg.atrPeriod + 1, 120);
+  const warmup = Math.max(
+    cfg.emaPeriod,
+    cfg.volPeriod + 1,
+    cfg.atrPeriod + 1,
+    120,
+  );
   if (candles.length < warmup + 1) return null;
 
   const i = candles.length - 1;
@@ -165,8 +172,12 @@ export function analyzeQuietTrend(
   const entry = r(price);
   const slDist = cfg.atrSlMultiple * currentAtr;
   const stopLoss = r(dir === "LONG" ? entry - slDist : entry + slDist);
-  const tp1 = r(dir === "LONG" ? entry + cfg.tp1R * slDist : entry - cfg.tp1R * slDist);
-  const tp2 = r(dir === "LONG" ? entry + cfg.tpR * slDist : entry - cfg.tpR * slDist);
+  const tp1 = r(
+    dir === "LONG" ? entry + cfg.tp1R * slDist : entry - cfg.tp1R * slDist,
+  );
+  const tp2 = r(
+    dir === "LONG" ? entry + cfg.tpR * slDist : entry - cfg.tpR * slDist,
+  );
 
   const emaDist = Math.abs(price - currentEma);
   const biasStrength = Math.min(100, (emaDist / currentAtr) * 50);
