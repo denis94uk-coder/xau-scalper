@@ -12,6 +12,9 @@
  * every byte the page receives is the byte the server produces.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   cleanup,
   fireEvent,
@@ -19,9 +22,6 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { handleApi } from "../../server/api";
 import { ConfigStore } from "../../server/config";
 import { Db } from "../../server/db";
@@ -84,7 +84,9 @@ describe("Settings page against the real API", () => {
     // it. A stub cannot catch the registry and the page disagreeing.
     openTab(/instruments|assets/i);
     for (const asset of store.get().assets.slice(0, 3)) {
-      expect(screen.getAllByText(asset.displaySymbol).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(asset.displaySymbol).length).toBeGreaterThan(
+        0,
+      );
     }
   });
 

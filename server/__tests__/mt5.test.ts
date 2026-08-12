@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { defaultConfig } from "../../core/config";
 import { Db } from "../db";
 import {
   costModelFrom,
@@ -21,7 +22,6 @@ import {
   toCandles,
 } from "../mt5";
 import { status, syncOnce } from "../mt5bridge";
-import { defaultConfig } from "../../core/config";
 
 let db: Db;
 let dir: string;
@@ -270,10 +270,7 @@ describe("sync diagnostics", () => {
     const cfg = defaultConfig();
     cfg.mt5.enabled = true;
     cfg.mt5.directory = dir;
-    writeFileSync(
-      join(dir, "XAUUSD_M5.json"),
-      JSON.stringify(exportFixture()),
-    );
+    writeFileSync(join(dir, "XAUUSD_M5.json"), JSON.stringify(exportFixture()));
 
     const out = syncOnce(db, cfg);
 
@@ -292,7 +289,9 @@ describe("test-suite safety", () => {
     delete process.env.TEO_MT5_DIR;
 
     // The guard restores the safe value rather than allowing the delete.
-    expect(String(process.env.TEO_MT5_DIR)).toBe("/nonexistent/teo-test-terminal");
+    expect(String(process.env.TEO_MT5_DIR)).toBe(
+      "/nonexistent/teo-test-terminal",
+    );
     expect(findExportDir()).toBe(null);
   });
 });

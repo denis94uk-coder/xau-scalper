@@ -60,8 +60,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
-  api,
   ApiError,
+  api,
   type BacktestMetrics,
   type DiscoveryCandidate,
   type ResearchRun,
@@ -230,7 +230,11 @@ function CandidateCard({
           p = {candidate.adjustedPValue.toFixed(4)} after correcting for the
           number of configurations tried
           {candidate.overall.breakevenWinRate !== null && (
-            <> · needs {candidate.overall.breakevenWinRate.toFixed(1)}% wins to cover costs</>
+            <>
+              {" "}
+              · needs {candidate.overall.breakevenWinRate.toFixed(1)}% wins to
+              cover costs
+            </>
           )}
         </div>
 
@@ -290,7 +294,11 @@ export function ResearchPage() {
   const start = async () => {
     const fromSec = toSeconds(from);
     const toSec = toSeconds(to);
-    if (!Number.isFinite(fromSec) || !Number.isFinite(toSec) || toSec <= fromSec) {
+    if (
+      !Number.isFinite(fromSec) ||
+      !Number.isFinite(toSec) ||
+      toSec <= fromSec
+    ) {
       toast.error("The end date must be after the start date.");
       return;
     }
@@ -469,7 +477,9 @@ export function ResearchPage() {
                 <div className="grid gap-2 sm:grid-cols-4 text-xs">
                   <div>
                     <p className="text-muted-foreground">Bars</p>
-                    <p className="font-medium tabular-nums">{run.report.bars}</p>
+                    <p className="font-medium tabular-nums">
+                      {run.report.bars}
+                    </p>
                   </div>
                   <div>
                     <p className="text-muted-foreground">Split</p>
@@ -486,7 +496,9 @@ export function ResearchPage() {
                   </div>
                   <div>
                     <p className="text-muted-foreground">Seed</p>
-                    <p className="font-medium tabular-nums">{run.report.seed}</p>
+                    <p className="font-medium tabular-nums">
+                      {run.report.seed}
+                    </p>
                   </div>
                 </div>
                 <p className="text-sm">{run.report.conclusion}</p>
@@ -539,7 +551,9 @@ export function ResearchPage() {
                           : c.validation.netPoints.toFixed(1)}
                       </TableCell>
                       <TableCell className="text-right tabular-nums text-xs">
-                        {c.test.trades === 0 ? "—" : c.test.netPoints.toFixed(1)}
+                        {c.test.trades === 0
+                          ? "—"
+                          : c.test.netPoints.toFixed(1)}
                       </TableCell>
                       <TableCell className="text-right tabular-nums text-xs">
                         {c.adjustedPValue >= 1

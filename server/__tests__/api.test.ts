@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AppConfig } from "../../core/config";
 import { defaultConfig, validateConfig } from "../../core/config";
 import { handleApi } from "../api";
-import { putRun } from "../research";
 import { Db, type NewIdea } from "../db";
+import { putRun } from "../research";
 
 let db: Db;
 
@@ -666,27 +666,56 @@ function qualifiedRun(
   symbol = assetId,
 ) {
   const metrics = {
-    trades: 120, wins: 70, losses: 50, breakeven: 0, winRate: 58.3,
-    netPoints: 420, grossPoints: 500, costPoints: 80, expectancy: 3.5,
-    profitFactor: 1.6, maxDrawdown: 90, breakevenWinRate: 52,
+    trades: 120,
+    wins: 70,
+    losses: 50,
+    breakeven: 0,
+    winRate: 58.3,
+    netPoints: 420,
+    grossPoints: 500,
+    costPoints: 80,
+    expectancy: 3.5,
+    profitFactor: 1.6,
+    maxDrawdown: 90,
+    breakevenWinRate: 52,
   };
   return {
-    id, assetId, symbol, interval: "15m",
-    from: 1_700_000_000, to: 1_705_000_000, iterations: 100,
-    status: "done", progress: 1,
-    message: "done", startedAt: Date.now(), finishedAt: Date.now(),
-    bars: 5000, error: null,
+    id,
+    assetId,
+    symbol,
+    interval: "15m",
+    from: 1_700_000_000,
+    to: 1_705_000_000,
+    iterations: 100,
+    status: "done",
+    progress: 1,
+    message: "done",
+    startedAt: Date.now(),
+    finishedAt: Date.now(),
+    bars: 5000,
+    error: null,
     report: {
-      asset: assetId, interval: "15m", bars: 5000,
-      from: 1_700_000_000, to: 1_705_000_000,
-      iterations: 100, evaluated: 100, seed: 1,
+      asset: assetId,
+      interval: "15m",
+      bars: 5000,
+      from: 1_700_000_000,
+      to: 1_705_000_000,
+      iterations: 100,
+      evaluated: 100,
+      seed: 1,
       split: { train: 2500, validation: 1250, test: 1250 },
       candidates: [],
       best: {
         config,
-        train: metrics, validation: metrics, test: metrics, overall: metrics,
-        score: 1, significance: { pValue: 0.001, significant: true },
-        adjustedPValue: 0.01, verdict: "qualified", summary: "survived",
+        train: metrics,
+        validation: metrics,
+        test: metrics,
+        overall: metrics,
+        score: 1,
+        significance: { pValue: 0.001, significant: true },
+        adjustedPValue: 0.01,
+        verdict: "qualified",
+        summary: "survived",
       },
       conclusion: "1 of 100 configurations survived.",
     },

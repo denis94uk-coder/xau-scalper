@@ -25,12 +25,12 @@ import { ConfigStore } from "./config";
 import { Db } from "./db";
 import { generateSignals, monitorIdeas, recoverGap } from "./engine";
 import { publish } from "./events";
-import { syncOnce } from "./mt5bridge";
 import { executeIdea } from "./execution";
 import { scanLiquiditySweeps } from "./intel/liquiditySweep";
 import { fetchMacroData } from "./intel/macroCorrelation";
 import { updateCalendar } from "./intel/newsCalendar";
 import { detectMarketRegime } from "./intel/regime";
+import { syncOnce } from "./mt5bridge";
 
 const HOST = process.env.TEO_HOST ?? "127.0.0.1";
 const PORT = Number(process.env.TEO_PORT ?? 4000);

@@ -9,7 +9,15 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defaultConfig } from "../../core/config";
@@ -69,7 +77,12 @@ function bars(n: number, startTime: number, step: number) {
  * that has no such symbol as easily as one that delivers.
  */
 function fakeTerminal(
-  answer: (req: { id: string; symbol: string; from: number; to: number }) =>
+  answer: (req: {
+    id: string;
+    symbol: string;
+    from: number;
+    to: number;
+  }) =>
     | { bars: Array<[number, number, number, number, number, number]> }
     | { error: string },
 ): void {

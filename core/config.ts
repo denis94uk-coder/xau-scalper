@@ -298,7 +298,10 @@ function checkSection(
   // quietly discarded looks exactly like a knob that had no effect.
   for (const key of Object.keys(record)) {
     if (!(key in bounds)) {
-      issues.push({ path: `${path}.${key}`, message: "is not a known setting" });
+      issues.push({
+        path: `${path}.${key}`,
+        message: "is not a known setting",
+      });
     }
   }
 }
@@ -337,7 +340,10 @@ export function validateConfig(input: unknown): ValidationIssue[] {
     issues.push({ path: "assets", message: "must be an array" });
   } else {
     if (cfg.assets.length === 0) {
-      issues.push({ path: "assets", message: "at least one asset is required" });
+      issues.push({
+        path: "assets",
+        message: "at least one asset is required",
+      });
     }
     const seen = new Set<string>();
     cfg.assets.forEach((raw, i) => {

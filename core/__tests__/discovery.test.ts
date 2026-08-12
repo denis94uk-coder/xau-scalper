@@ -17,7 +17,7 @@ import {
   rng,
   sampleConfig,
 } from "../discovery";
-import { DEFAULT_STRATEGY_CONFIG, type Candle } from "../strategy";
+import { type Candle, DEFAULT_STRATEGY_CONFIG } from "../strategy";
 
 const asset: AssetDefinition = {
   id: "TEST",
@@ -107,7 +107,11 @@ describe("sampling", () => {
   test("every draw respects the strategy's ordering rules", () => {
     const rand = rng(11);
     for (let i = 0; i < 500; i++) {
-      const c = sampleConfig(DEFAULT_STRATEGY_CONFIG, DEFAULT_SEARCH_SPACE, rand);
+      const c = sampleConfig(
+        DEFAULT_STRATEGY_CONFIG,
+        DEFAULT_SEARCH_SPACE,
+        rand,
+      );
 
       // Distinct and ordered: equal EMAs make "aligned" vacuously true.
       expect(c.emaFast).toBeLessThan(c.emaMid);
@@ -125,7 +129,11 @@ describe("sampling", () => {
   test("period knobs stay integers", () => {
     const rand = rng(5);
     for (let i = 0; i < 100; i++) {
-      const c = sampleConfig(DEFAULT_STRATEGY_CONFIG, DEFAULT_SEARCH_SPACE, rand);
+      const c = sampleConfig(
+        DEFAULT_STRATEGY_CONFIG,
+        DEFAULT_SEARCH_SPACE,
+        rand,
+      );
       for (const k of [
         "emaFast",
         "emaMid",

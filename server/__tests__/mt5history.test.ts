@@ -122,7 +122,9 @@ describe("the request lifecycle", () => {
     mkdirSync(join(dir, "history"), { recursive: true });
     writeFileSync(
       join(dir, "history", `${req.id}.json`),
-      JSON.stringify({ error: "symbol NAS100 is not available at this broker" }),
+      JSON.stringify({
+        error: "symbol NAS100 is not available at this broker",
+      }),
     );
     const state = historyState(dir, req.id);
     expect(state.status).toBe("failed");

@@ -5,8 +5,8 @@ import {
   Lightbulb,
   ScrollText,
   Settings,
-  Sparkles,
   Shield,
+  Sparkles,
 } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { APP_NAME } from "@/lib/constants";

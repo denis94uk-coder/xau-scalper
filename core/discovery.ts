@@ -40,16 +40,13 @@
 
 import type { AssetDefinition } from "./assets";
 import { type BacktestMetrics, computeMetrics, runBacktest } from "./backtest";
-import {
-  assessSignificance,
-  type SignificanceReport,
-} from "./significance";
-import { scoreMetrics } from "./sweep";
+import { assessSignificance, type SignificanceReport } from "./significance";
 import {
   type Candle,
   DEFAULT_STRATEGY_CONFIG,
   type StrategyConfig,
 } from "./strategy";
+import { scoreMetrics } from "./sweep";
 
 /**
  * What each knob is allowed to be during a search.
@@ -312,7 +309,11 @@ export function discover(
     iterations,
     evaluated: 0,
     seed,
-    split: { train: trainEnd, validation: validationEnd - trainEnd, test: n - validationEnd },
+    split: {
+      train: trainEnd,
+      validation: validationEnd - trainEnd,
+      test: n - validationEnd,
+    },
     candidates: [],
     best: null,
     conclusion,
@@ -321,7 +322,11 @@ export function discover(
   // Each window needs the 60-bar warm-up plus room to actually trade. Below
   // that the numbers would be arithmetic on noise, and reporting them as a
   // three-way validation would be a lie about how much was checked.
-  if (trainEnd < 200 || validationEnd - trainEnd < 100 || n - validationEnd < 100) {
+  if (
+    trainEnd < 200 ||
+    validationEnd - trainEnd < 100 ||
+    n - validationEnd < 100
+  ) {
     return emptyReport(
       `Not enough history: ${n} bars split into ${trainEnd}/${validationEnd - trainEnd}/${n - validationEnd}. ` +
         "A three-way validation needs roughly 800 bars to mean anything — widen the date range.",
@@ -344,20 +349,34 @@ export function discover(
     // skipping its other two backtests is most of the run's speed.
     if (train.trades < minTrades) {
       evaluated.push(
-        reject(config, train, "too_few_trades",
-          `Only ${train.trades} trades in training — too few to judge.`),
+        reject(
+          config,
+          train,
+          "too_few_trades",
+          `Only ${train.trades} trades in training — too few to judge.`,
+        ),
       );
       continue;
     }
     if (train.netPoints <= 0) {
       evaluated.push(
-        reject(config, train, "unprofitable_in_sample",
-          "Lost money on its own training window, after costs."),
+        reject(
+          config,
+          train,
+          "unprofitable_in_sample",
+          "Lost money on its own training window, after costs.",
+        ),
       );
       continue;
     }
 
-    const validation = metricsFor(candles, config, asset, trainEnd, validationEnd);
+    const validation = metricsFor(
+      candles,
+      config,
+      asset,
+      trainEnd,
+      validationEnd,
+    );
     const test = metricsFor(candles, config, asset, validationEnd, n);
     const overall = metricsFor(candles, config, asset, 60, n);
 
@@ -372,10 +391,12 @@ export function discover(
 
     if (validation.netPoints <= 0) {
       verdict = "failed_validation";
-      summary = "Profitable in training and not on the next window — the usual signature of a fit to noise.";
+      summary =
+        "Profitable in training and not on the next window — the usual signature of a fit to noise.";
     } else if (test.netPoints <= 0) {
       verdict = "failed_test";
-      summary = "Survived validation but lost on the untouched test window, which is the only unbiased look.";
+      summary =
+        "Survived validation but lost on the untouched test window, which is the only unbiased look.";
     } else if (overall.winRate <= breakeven) {
       verdict = "below_breakeven";
       summary = `Won ${overall.winRate.toFixed(1)}% against a ${breakeven.toFixed(1)}% cost-adjusted breakeven.`;

@@ -61,8 +61,8 @@ import { useLive } from "@/hooks/useLive";
 import {
   ApiError,
   type AppConfig,
-  api,
   type AssetConfig,
+  api,
   type Mt5Status,
   type StrategyConfig,
   type ValidationIssue,
@@ -270,7 +270,11 @@ const GROUP_LABELS: Record<string, string> = {
   grading: "Grading",
 };
 
-const COST_FIELDS: Array<{ key: keyof AssetConfig["costs"]; label: string; help: string }> = [
+const COST_FIELDS: Array<{
+  key: keyof AssetConfig["costs"];
+  label: string;
+  help: string;
+}> = [
   {
     key: "halfSpreadBps",
     label: "Half spread (bps)",
@@ -525,7 +529,9 @@ export function SettingsPage() {
 
   const asset =
     draft.assets.find(a => a.id === selectedAsset) ?? draft.assets[0] ?? null;
-  const assetIndex = asset ? draft.assets.findIndex(a => a.id === asset.id) : -1;
+  const assetIndex = asset
+    ? draft.assets.findIndex(a => a.id === asset.id)
+    : -1;
 
   return (
     <div className="space-y-4 max-w-5xl">
@@ -538,7 +544,10 @@ export function SettingsPage() {
         </div>
         <div className="flex items-center gap-2">
           {dirty && (
-            <Badge variant="outline" className="text-amber-500 border-amber-500/40">
+            <Badge
+              variant="outline"
+              className="text-amber-500 border-amber-500/40"
+            >
               Unsaved changes
             </Badge>
           )}
@@ -797,7 +806,8 @@ export function SettingsPage() {
                         </SelectContent>
                       </Select>
                       <p className="text-xs text-muted-foreground leading-snug">
-                        MT5 bars arrive from your broker, with their real spread.
+                        MT5 bars arrive from your broker, with their real
+                        spread.
                       </p>
                     </div>
                     <TextField
@@ -1019,7 +1029,10 @@ export function SettingsPage() {
                     <Check className="h-3 w-3" /> Live
                   </Badge>
                 ) : mt5?.found ? (
-                  <Badge variant="outline" className="text-amber-500 border-amber-500/40">
+                  <Badge
+                    variant="outline"
+                    className="text-amber-500 border-amber-500/40"
+                  >
                     Stale
                   </Badge>
                 ) : (

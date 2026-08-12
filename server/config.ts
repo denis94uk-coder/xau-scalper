@@ -18,8 +18,8 @@ import {
   type AppConfig,
   CONFIG_KEY,
   defaultConfig,
-  validateConfig,
   type ValidationIssue,
+  validateConfig,
   withDefaults,
 } from "../core/config";
 import type { Db } from "./db";

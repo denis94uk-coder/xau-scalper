@@ -26,8 +26,8 @@ import type { Db } from "./db";
 import { correlationsFrom, openExposures } from "./engine";
 import { type AppEvent, publish, subscribe } from "./events";
 import { fetchCandles, fetchTickers } from "./market";
-import { syncOnce, status as mt5Status } from "./mt5bridge";
 import { findExportDir } from "./mt5";
+import { status as mt5Status, syncOnce } from "./mt5bridge";
 import { cancelRun, getRun, listRuns, startRun } from "./research";
 
 const json = (body: unknown, status = 200) =>
@@ -61,7 +61,11 @@ async function readOptionalBody(
   if (!raw.trim()) return {};
   try {
     const parsed = JSON.parse(raw);
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    if (
+      parsed === null ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed)
+    ) {
       return bad("body must be a JSON object");
     }
     return parsed as Record<string, unknown>;
@@ -578,7 +582,8 @@ export async function handleApi(
       to: Math.floor(to),
       iterations: Math.floor(iterations),
       seed: Number(body.seed ?? 1),
-      minTrades: body.minTrades === undefined ? undefined : Number(body.minTrades),
+      minTrades:
+        body.minTrades === undefined ? undefined : Number(body.minTrades),
     });
     return json(run, 202);
   }

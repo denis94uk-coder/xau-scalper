@@ -70,7 +70,13 @@ describe("structural validation", () => {
   });
 
   test("requires at least one asset", () => {
-    expect(ok(mutate(c => { c.assets = []; }))).toBe(false);
+    expect(
+      ok(
+        mutate(c => {
+          c.assets = [];
+        }),
+      ),
+    ).toBe(false);
   });
 
   test("rejects duplicate asset ids", () => {
@@ -91,33 +97,41 @@ describe("cross-field rules", () => {
         c.assets[0].config.tp2R = 2;
       }),
     );
-    expect(issues.some(i => i.path.includes("tp1R") || i.path.includes("tp2R"))).toBe(true);
+    expect(
+      issues.some(i => i.path.includes("tp1R") || i.path.includes("tp2R")),
+    ).toBe(true);
   });
 
   test("MACD fast must be shorter than slow", () => {
     expect(
-      ok(mutate(c => {
-        c.assets[0].config.macdFast = 30;
-        c.assets[0].config.macdSlow = 20;
-      })),
+      ok(
+        mutate(c => {
+          c.assets[0].config.macdFast = 30;
+          c.assets[0].config.macdSlow = 20;
+        }),
+      ),
     ).toBe(false);
   });
 
   test("the EMAs must be strictly ordered", () => {
     expect(
-      ok(mutate(c => {
-        c.assets[0].config.emaFast = 50;
-        c.assets[0].config.emaMid = 20;
-      })),
+      ok(
+        mutate(c => {
+          c.assets[0].config.emaFast = 50;
+          c.assets[0].config.emaMid = 20;
+        }),
+      ),
     ).toBe(false);
   });
 
   test("oversold must be below overbought", () => {
     expect(
-      ok(mutate(c => {
-        c.assets[0].config.rsiOversold = 80;
-        c.assets[0].config.rsiOverbought = 20;
-      })),
+      ok(
+        mutate(c => {
+          c.assets[0].config.rsiOversold = 80;
+          c.assets[0].config.rsiOverbought = 20;
+        }),
+      ),
     ).toBe(false);
   });
 
@@ -135,33 +149,65 @@ describe("cross-field rules", () => {
 
   test("execution with the bridge on is allowed", () => {
     expect(
-      ok(mutate(c => {
-        c.mt5.enabled = true;
-        c.mt5.executionEnabled = true;
-      })),
+      ok(
+        mutate(c => {
+          c.mt5.enabled = true;
+          c.mt5.executionEnabled = true;
+        }),
+      ),
     ).toBe(true);
   });
 });
 
 describe("bounds", () => {
   test("a negative cadence is rejected", () => {
-    expect(ok(mutate(c => { c.engine.monitorSeconds = -1; }))).toBe(false);
+    expect(
+      ok(
+        mutate(c => {
+          c.engine.monitorSeconds = -1;
+        }),
+      ),
+    ).toBe(false);
   });
 
   test("a zero lot size is rejected", () => {
-    expect(ok(mutate(c => { c.mt5.lotSize = 0; }))).toBe(false);
+    expect(
+      ok(
+        mutate(c => {
+          c.mt5.lotSize = 0;
+        }),
+      ),
+    ).toBe(false);
   });
 
   test("a correlation outside [-1, 1] is rejected", () => {
-    expect(ok(mutate(c => { c.risk.assumedCorrelation = 1.5; }))).toBe(false);
+    expect(
+      ok(
+        mutate(c => {
+          c.risk.assumedCorrelation = 1.5;
+        }),
+      ),
+    ).toBe(false);
   });
 
   test("negative costs are rejected", () => {
-    expect(ok(mutate(c => { c.assets[0].costs.halfSpreadBps = -1; }))).toBe(false);
+    expect(
+      ok(
+        mutate(c => {
+          c.assets[0].costs.halfSpreadBps = -1;
+        }),
+      ),
+    ).toBe(false);
   });
 
   test("a zero-risk cap is rejected, since it could admit nothing", () => {
-    expect(ok(mutate(c => { c.risk.maxRisk = 0; }))).toBe(false);
+    expect(
+      ok(
+        mutate(c => {
+          c.risk.maxRisk = 0;
+        }),
+      ),
+    ).toBe(false);
   });
 });
 

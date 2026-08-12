@@ -24,16 +24,16 @@
 
 import { existsSync } from "node:fs";
 import type { AssetDefinition } from "../core/assets";
+import type { AppConfig } from "../core/config";
+import { toAssetDefinition } from "../core/config";
 import {
   type Candidate,
   DEFAULT_SEARCH_SPACE,
-  discover,
   type DiscoveryReport,
+  discover,
   type SearchSpace,
   sampleConfig,
 } from "../core/discovery";
-import type { AppConfig } from "../core/config";
-import { toAssetDefinition } from "../core/config";
 import type { Candle } from "../core/strategy";
 import type { Db } from "./db";
 import { publish } from "./events";
@@ -379,7 +379,8 @@ async function searchInSlices(
         finishedAt: Date.now(),
       });
       return (
-        merged ?? discover(candles, asset, { iterations: 0, space, seed: baseSeed })
+        merged ??
+        discover(candles, asset, { iterations: 0, space, seed: baseSeed })
       );
     }
 

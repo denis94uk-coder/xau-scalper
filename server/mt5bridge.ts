@@ -191,7 +191,13 @@ export function syncOnce(
       ? `directory not found: ${dir}`
       : "no MetaTrader 5 export directory found — is TeoExporter running?";
     db.setSetting(LAST_ERROR_KEY, message);
-    return { ok: false, directory: dir, ingested: 0, symbols: [], errors: [message] };
+    return {
+      ok: false,
+      directory: dir,
+      ingested: 0,
+      symbols: [],
+      errors: [message],
+    };
   }
 
   const { ingested, errors } = ingestDir(db, dir, { now });
@@ -245,7 +251,9 @@ export function syncOnce(
   db.setSetting(LAST_SYNC_KEY, now);
   db.setSetting(
     LAST_ERROR_KEY,
-    errors.length > 0 ? errors.map(e => `${e.file}: ${e.error}`).join("; ") : null,
+    errors.length > 0
+      ? errors.map(e => `${e.file}: ${e.error}`).join("; ")
+      : null,
   );
   if (ingested.length > 0) publish("candles");
 
