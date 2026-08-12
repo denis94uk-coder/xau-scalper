@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { Db } from "../db";
 import {
   costModelFrom,
+  findExportDir,
   ingestDir,
   type Mt5Export,
   parseExport,
@@ -279,5 +280,19 @@ describe("sync diagnostics", () => {
     expect(out.ok).toBe(true);
     expect(out.symbols).toEqual(["XAUUSD"]);
     expect(status(db, cfg).lastError).toBe(null);
+  });
+});
+
+describe("test-suite safety", () => {
+  // A stray history request once appeared in the operator's real terminal.
+  // The EA consumes that directory, so an artifact there is not litter — it is
+  // an instruction to a live trading terminal. The preload guard in
+  // src/__tests__/mt5-guard.ts is what stops discovery reaching it.
+  test("discovery cannot reach a real terminal, even after the pin is deleted", () => {
+    delete process.env.TEO_MT5_DIR;
+
+    // The guard restores the safe value rather than allowing the delete.
+    expect(String(process.env.TEO_MT5_DIR)).toBe("/nonexistent/teo-test-terminal");
+    expect(findExportDir()).toBe(null);
   });
 });
