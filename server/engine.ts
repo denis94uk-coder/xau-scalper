@@ -22,6 +22,7 @@ import {
   DEFAULT_ASSET_ID,
   getEnabledAssets,
 } from "../core/assets";
+import { analyzeFamilyCandles, type FamilyAnalysis } from "../core/families";
 import {
   admit,
   buildCorrelationMatrix,
@@ -30,13 +31,16 @@ import {
   type PortfolioLimits,
 } from "../core/portfolio";
 import {
+  type AnalysisResult,
   analyzeCandles,
   type Candle,
   calcATR,
   roundTo,
 } from "../core/strategy";
+import { analyzeQuietTrend, htfRegime } from "../core/quiet-trend";
 import type { Db, TradingIdea } from "./db";
 import { publish } from "./events";
+import type { RiskManager } from "./risk-manager";
 import {
   type Fetcher,
   fetchCandles,
@@ -64,12 +68,18 @@ export interface EngineDeps {
    * gated rather than silently unguarded.
    */
   correlations?: CorrelationMatrix;
+  /** Kill-switch / circuit-breaker. When provided, checked before every new idea. */
+  riskManager?: RiskManager;
 }
 
 const SIGNAL_INTERVAL = "5m";
 const CONFIRM_INTERVAL = "15m";
+/** H1 bars used for the structural regime filter in quiet-trend mode. */
+const REGIME_INTERVAL = "1h";
 /** Bars of history kept per asset/interval. 200 covers every indicator warm-up. */
 const HISTORY_BARS = 200;
+/** H1 bars kept for the regime filter — needs EMA(50) + buffer + some extra. */
+const REGIME_BARS = 120;
 
 // ─── Candle upkeep ───
 
@@ -139,6 +149,28 @@ export function openExposures(db: Db): Exposure[] {
 // ─── Signal generation ───
 
 /**
+ * Score a window with whichever model the asset names.
+ *
+ * The combined model scores trend-following and mean-reversion evidence into
+ * one bull/bear pair; because they fire in opposite conditions they cancel, and
+ * the backtest that validates a config runs whichever model the asset declares.
+ * Routing here keeps the live engine on the same model it was measured with —
+ * before this, an asset could be tuned as `trend` and traded as `combined`.
+ */
+function analyzeFor(
+  asset: AssetDefinition,
+  candles: Candle[],
+): AnalysisResult | FamilyAnalysis | null {
+  const model = asset.model ?? "combined";
+  if (model === "quiet-trend") {
+    return analyzeQuietTrend(candles, asset.pricePrecision);
+  }
+  return model === "combined"
+    ? analyzeCandles(candles, asset.config, asset.pricePrecision)
+    : analyzeFamilyCandles(candles, model, asset.config, asset.pricePrecision);
+}
+
+/**
  * Analyse one asset and record a signal if the setup qualifies.
  *
  * Mirrors the live rules: 5m primary, 15m must agree if it has an opinion,
@@ -154,11 +186,22 @@ export async function generateForAsset(
   const candles5m = await syncCandles(deps, asset, SIGNAL_INTERVAL);
   const candles15m = await syncCandles(deps, asset, CONFIRM_INTERVAL);
 
+  // Quiet-trend uses H1 for the structural regime filter. Fetch separately so
+  // other models don't pay for the extra request.
+  let candlesH1: Candle[] | null = null;
+  if (asset.model === "quiet-trend") {
+    candlesH1 = await syncCandles(deps, asset, REGIME_INTERVAL);
+    // Trim to the window the regime filter needs — avoid growing without bound.
+    if (candlesH1.length > REGIME_BARS) {
+      candlesH1 = candlesH1.slice(-REGIME_BARS);
+    }
+  }
+
   const price = candles5m.at(-1)?.close;
   if (price === undefined) return null;
 
-  const a5 = analyzeCandles(candles5m, asset.config, asset.pricePrecision);
-  const a15 = analyzeCandles(candles15m, asset.config, asset.pricePrecision);
+  const a5 = analyzeFor(asset, candles5m);
+  const a15 = analyzeFor(asset, candles15m);
 
   db.logJournal({
     eventType: "ENGINE_RUN",
@@ -172,7 +215,7 @@ export async function generateForAsset(
         bias: a5.bias,
         grade: a5.grade,
         confidence: a5.confidence,
-        indicators: a5.indicators,
+        indicators: "indicators" in a5 ? a5.indicators : undefined,
       },
       fifteenMin: a15 && { bias: a15.bias, grade: a15.grade },
     },
@@ -181,6 +224,26 @@ export async function generateForAsset(
   if (!a5) return null;
   // 15m disagreement vetoes; 15m silence does not.
   if (a15 && a15.direction !== a5.direction) return null;
+
+  // H1 structural regime filter (quiet-trend model only).
+  // If the 1H is in a structural trend, only signals aligned with it pass.
+  // NEUTRAL (price inside EMA buffer) → no veto, both directions allowed.
+  if (asset.model === "quiet-trend" && candlesH1 !== null) {
+    const regime = htfRegime(candlesH1);
+    if (regime !== null && regime !== a5.direction) {
+      db.logJournal({
+        eventType: "SIGNAL_BLOCKED",
+        asset: asset.id,
+        direction: a5.direction,
+        price,
+        details:
+          `[${asset.displaySymbol}] Vetoed ${a5.direction} — ` +
+          `1H regime is ${regime} (counter-trend signal)`,
+      });
+      return null;
+    }
+  }
+
   if (a5.grade !== "A" && a5.grade !== "B") return null;
 
   // Regime overlay from the intel engine (written every 15m). Tightens risk in
@@ -200,6 +263,24 @@ export async function generateForAsset(
   // Per-asset, per-direction cooldown.
   const last = db.lastIdeaAt(asset.id, a5.direction);
   if (last !== null && now - last < asset.config.cooldownMs) return null;
+
+  // Kill-switch / circuit-breaker — checked before the portfolio gate so that
+  // a halt from a daily loss limit blocks the signal without touching the
+  // correlation matrix at all.
+  if (deps.riskManager) {
+    const risk = deps.riskManager.canTrade(now);
+    if (!risk.allowed) {
+      db.logJournal({
+        eventType: "SIGNAL_BLOCKED",
+        asset: asset.id,
+        direction: a5.direction,
+        price: a5.entryPrice,
+        details: `[${asset.displaySymbol}] ${a5.grade} ${a5.direction} not taken. ${risk.reason}`,
+        metadata: { killSwitch: true, reason: risk.reason },
+      });
+      return null;
+    }
+  }
 
   // Portfolio gate. Every check above this line looks at one asset in
   // isolation, and none of them can see that a fifth crypto long is the same

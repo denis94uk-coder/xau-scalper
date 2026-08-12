@@ -24,6 +24,8 @@ import { handleApi, handleEvents } from "./api";
 import { ConfigStore } from "./config";
 import { Db } from "./db";
 import { generateSignals, monitorIdeas, recoverGap } from "./engine";
+import { reconcileState } from "./reconciliation";
+import { RiskManager, riskConfigFromEnv } from "./risk-manager";
 import { publish } from "./events";
 import { executeIdea } from "./execution";
 import { scanLiquiditySweeps } from "./intel/liquiditySweep";
@@ -31,6 +33,7 @@ import { fetchMacroData } from "./intel/macroCorrelation";
 import { updateCalendar } from "./intel/newsCalendar";
 import { detectMarketRegime } from "./intel/regime";
 import { syncOnce } from "./mt5bridge";
+import { runSelfHeal } from "./selfheal";
 
 const HOST = process.env.TEO_HOST ?? "127.0.0.1";
 const PORT = Number(process.env.TEO_PORT ?? 4000);
@@ -57,9 +60,22 @@ const DIST =
  * that IS configurable.
  */
 const PRUNE_MS = 6 * 60 * 60_000;
+// Regime, macro, news and sweeps move on a much slower clock than price, so
+// running them every 5 minutes (as the Convex crons did) spent requests to
+// recompute values that had not changed.
+const INTEL_MS = 15 * 60_000;
+/**
+ * Self-heal cadence. Six hours, not minutes: a sweep re-reads the same market
+ * a faster loop would, so running it often produces more chances to be fooled
+ * by noise rather than more information. Set TEO_SELFHEAL_MS to change it, or
+ * TEO_SELFHEAL=off to disable the loop entirely.
+ */
+const SELFHEAL_MS = Number(process.env.TEO_SELFHEAL_MS ?? 6 * 60 * 60_000);
+const SELFHEAL_ON = process.env.TEO_SELFHEAL !== "off";
 
 const db = new Db();
 const config = new ConfigStore(db);
+const risk = new RiskManager(db, riskConfigFromEnv());
 
 /**
  * Run a job, never letting a failure kill the timer.
@@ -125,7 +141,7 @@ const server = Bun.serve({
 
     if (url.pathname === "/api/events") return handleEvents();
 
-    const api = await handleApi(db, req, url, config);
+    const api = await handleApi(db, req, url, config, risk);
     if (api) return api;
 
     return serveStatic(url.pathname);
@@ -173,6 +189,14 @@ function engineDeps() {
 await safely("recover", async () => {
   const changed = await recoverGap(engineDeps());
   if (changed > 0) console.log(`[recover] resolved ${changed} state change(s)`);
+});
+
+// Safety net for positions that candle-replay could not reach (downtime longer
+// than the stored candle window). Compares open ideas against the current live
+// price; anything definitively past its SL or TP2 is force-closed here.
+await safely("reconcile", async () => {
+  const ghosts = await reconcileState({ db });
+  if (ghosts > 0) console.log(`[reconcile] closed ${ghosts} ghost trade(s)`);
 });
 
 /** The four intel engines, run together. One failing must not stop the rest. */
@@ -229,6 +253,17 @@ await safely("signals", runSignals);
 await safely("monitor", () => monitorIdeas(engineDeps()));
 await runIntel();
 
+// Catch up if the loop is overdue. A bare interval means a machine that
+// restarts more often than the cadence never self-heals at all.
+if (SELFHEAL_ON) {
+  const last = db.lastRun("selfheal");
+  if (last === null || Date.now() - last >= SELFHEAL_MS) {
+    void safely("selfheal", async () => {
+      await runSelfHeal({ db });
+    });
+  }
+}
+
 /**
  * Timers that can be rebuilt when their cadence changes.
  *
@@ -252,6 +287,17 @@ function scheduleTimers(cfg: AppConfig): void {
     ),
     setInterval(() => void runIntel(), cfg.engine.intelSeconds * 1000),
     setInterval(() => void safely("mt5", runMt5), cfg.mt5.syncSeconds * 1000),
+    ...(SELFHEAL_ON
+      ? [
+          setInterval(
+            () =>
+              void safely("selfheal", async () => {
+                await runSelfHeal({ db });
+              }),
+            SELFHEAL_MS,
+          ),
+        ]
+      : []),
     setInterval(() => {
       const removed = db.pruneJournal(config.get().engine.journalRetentionDays);
       if (removed > 0) {
@@ -266,8 +312,23 @@ scheduleTimers(config.get());
 
 config.onChange(cfg => {
   scheduleTimers(cfg);
-  console.log("[config] settings saved — timers rescheduled");
+  console.log("[config] settings saved -- timers rescheduled");
 });
+
+/** Milliseconds until the next UTC midnight. */
+function msUntilMidnight(): number {
+  const now = Date.now();
+  const next = new Date(now);
+  next.setUTCHours(24, 0, 0, 0);
+  return next.getTime() - now;
+}
+
+// Fire once at the next UTC midnight, then every 24 h, to reset the kill switch
+// daily loss accounting for the new trading day.
+setTimeout(() => {
+  risk.dailyReset();
+  timers.push(setInterval(() => risk.dailyReset(), 24 * 60 * 60_000));
+}, msUntilMidnight());
 
 function shutdown(signal: string) {
   console.log(`\n${signal} — shutting down`);

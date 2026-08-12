@@ -20,6 +20,7 @@ export type EventKind =
   | "candles"
   | "mt5"
   | "research"
+  | "risk"
   | "hello";
 
 export interface AppEvent {

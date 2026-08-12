@@ -51,8 +51,16 @@
 input string InpSymbols      = "XAUUSD";
 //--- Timeframes to export. The dashboard analyses M5 and confirms on M15.
 input string InpTimeframes   = "M5,M15";
-//--- Bars per timeframe. 5000 M5 bars is about three weeks.
-input int    InpBarCount     = 5000;
+//--- Bars per timeframe.
+//--- 5000 M5 bars is about two and a half weeks, which is not enough to test
+//--- anything that depends on the time of day: a London-session claim gets
+//--- roughly a dozen independent observations out of it, and a dozen
+//--- observations cannot tell a real effect from a run of luck. 60000 M5 bars
+//--- is about seven months and gives those claims a sample worth testing.
+//--- Raise InpIntervalSecs if rewriting a file this size every minute is heavy;
+//--- history that is already in the local database is not lost when it ages out
+//--- of the export window.
+input int    InpBarCount     = 60000;
 //--- Seconds between exports. 60 keeps the dashboard within one bar of live.
 input int    InpIntervalSecs = 60;
 //--- Subdirectory under MQL5/Files.
@@ -564,6 +572,10 @@ int OnInit()
       Print("[Teo] InpBarCount below 100 — the strategy needs 60 bars of warm-up");
       return INIT_PARAMETERS_INCORRECT;
    }
+   // CopyRates is bounded by the terminal's own history depth, which is capped
+   // per timeframe in Tools > Options > Charts ("Max bars in chart"). Asking for
+   // more than that silently returns fewer, so the count is reported after the
+   // first export rather than assumed.
    if(InpIntervalSecs < 5)
    {
       Print("[Teo] InpIntervalSecs below 5 would rewrite the files pointlessly often");

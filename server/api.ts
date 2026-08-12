@@ -19,6 +19,7 @@ import {
   newAsset,
   toAssetDefinition,
 } from "../core/config";
+import { summariseByRegime } from "../core/memory";
 import { averageConcurrency, summarise } from "../core/portfolio";
 import { assessSignificance, effectiveSampleSize } from "../core/significance";
 import { ConfigError, ConfigStore } from "./config";
@@ -29,6 +30,7 @@ import { fetchCandles, fetchTickers } from "./market";
 import { findExportDir } from "./mt5";
 import { status as mt5Status, syncOnce } from "./mt5bridge";
 import { cancelRun, getRun, listRuns, startRun } from "./research";
+import type { RiskManager } from "./risk-manager";
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -141,6 +143,7 @@ export async function handleApi(
   req: Request,
   url: URL,
   configStore?: ConfigStore,
+  risk?: RiskManager,
 ): Promise<Response | null> {
   const path = url.pathname;
   const store = storeFor(db, configStore);
@@ -249,6 +252,37 @@ export async function handleApi(
           significance: assessSignificance(perf.wins, decided, breakeven),
         };
       }),
+    });
+  }
+
+  // ─── Self-heal ───
+  if (path === "/api/selfheal") {
+    const asset = assetParam(url);
+    if (asset instanceof Response) return asset;
+    const limit = intParam(url, "limit", 50, 500);
+    const rows = db.outcomes({ asset: asset ?? undefined, limit });
+
+    // Regime summaries per asset, so the page can show what the loop has
+    // learned rather than only what it last did.
+    const assets = asset ? [asset] : [...new Set(rows.map(r => r.asset))];
+    const memory = db.outcomes({ asset: asset ?? undefined, limit: 1000 });
+    const records = memory.map(r => ({
+      asset: r.asset,
+      regime: r.regime,
+      score: r.score,
+      config: r.config,
+      action: r.action,
+      at: r.at,
+    }));
+
+    return json({
+      outcomes: rows,
+      byAsset: assets.map(a => ({
+        asset: a,
+        regimes: summariseByRegime(records, a),
+        latest: rows.find(r => r.asset === a) ?? null,
+      })),
+      lastRunAt: db.lastRun("selfheal"),
     });
   }
 
@@ -766,6 +800,18 @@ export async function handleApi(
     });
     publish("journal");
     return json({ ok: true, timestamp: Date.now() });
+  }
+
+  // ─── Kill switch / risk manager ───
+  if (path === "/api/risk") {
+    if (!risk) return json({ limitsActive: false, message: "Risk manager not configured." });
+    return json(risk.status());
+  }
+
+  if (path === "/api/risk/resume" && req.method === "POST") {
+    if (!risk) return bad("Risk manager not configured.", 503);
+    risk.resume();
+    return json({ ok: true });
   }
 
   // Any other /api/* path is a mistake, not a client-side route. Falling

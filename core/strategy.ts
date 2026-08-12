@@ -344,13 +344,46 @@ export function precomputeIndicators(
  * dominated by redundant work: a 36-config sweep over 1,200 bars took 16
  * seconds before this existed.
  */
+/**
+ * Why a bar produced no tradable signal, and the scores behind that call.
+ *
+ * analyzeAt returns null for four distinct reasons, and from the outside they
+ * are indistinguishable. Telling them apart is the difference between "the
+ * model never sees a setup here" and "it sees them and the grade bar is too
+ * high" — opposite diagnoses with opposite fixes. Passing a sink to analyzeAt
+ * records the reason without a second copy of the scoring, which would drift.
+ */
+export interface RejectionSink {
+  reason:
+    | "out_of_range"
+    | "no_score"
+    | "neutral_bias"
+    | "no_trade_grade"
+    | "graded";
+  /** max(bullScore, bearScore) — the value grade thresholds are compared to. */
+  strength: number;
+  /** Normalised bull/bear imbalance, 0-100. NOT what grading uses. */
+  biasStrength: number;
+  /** Extreme-indicator count in the signal's own direction. */
+  extremeCount: number;
+  grade: SignalGrade | null;
+}
+
 export function analyzeAt(
   candles: Candle[],
   ind: IndicatorSeries,
   last: number,
   config: StrategyConfig = DEFAULT_STRATEGY_CONFIG,
   pricePrecision = 2,
+  sink?: RejectionSink,
 ): AnalysisResult | null {
+  if (sink) {
+    sink.reason = "out_of_range";
+    sink.strength = 0;
+    sink.biasStrength = 0;
+    sink.extremeCount = 0;
+    sink.grade = null;
+  }
   if (last < 59 || last >= candles.length) return null;
 
   const r = (n: number) => roundTo(n, pricePrecision);
@@ -463,6 +496,10 @@ export function analyzeAt(
   }
 
   const total = bullScore + bearScore;
+  if (sink) {
+    sink.reason = "no_score";
+    sink.strength = Math.max(bullScore, bearScore);
+  }
   if (total === 0) return null;
 
   const biasStrength = Math.round(
@@ -475,6 +512,10 @@ export function analyzeAt(
         ? "BULLISH"
         : "BEARISH";
 
+  if (sink) {
+    sink.reason = "neutral_bias";
+    sink.biasStrength = biasStrength;
+  }
   if (bias === "NEUTRAL") return null;
 
   const direction: Direction = bias === "BULLISH" ? "LONG" : "SHORT";
@@ -487,6 +528,13 @@ export function analyzeAt(
   const extremeCount = direction === "LONG" ? extremeBull : extremeBear;
   const strength = Math.max(bullScore, bearScore);
   const grade = gradeSignal(confidence, extremeCount, strength, config);
+
+  if (sink) {
+    sink.reason = grade === "NO_TRADE" ? "no_trade_grade" : "graded";
+    sink.strength = strength;
+    sink.extremeCount = extremeCount;
+    sink.grade = grade;
+  }
 
   // Only generate tradeable signals (A or B grade)
   if (grade === "NO_TRADE") return null;

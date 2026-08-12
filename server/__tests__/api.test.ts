@@ -198,6 +198,92 @@ describe("performance", () => {
   });
 });
 
+describe("selfheal", () => {
+  type Feed = {
+    outcomes: Array<{ asset: string; action: string; reason: string }>;
+    byAsset: Array<{
+      asset: string;
+      regimes: Array<{ regime: string; records: number; proposals: number }>;
+      latest: { action: string } | null;
+    }>;
+    lastRunAt: number | null;
+  };
+
+  const outcome = (over: Record<string, unknown> = {}) =>
+    db.recordOutcome({
+      asset: "BTCUSDT",
+      regime: "trend_up/normal_vol",
+      action: "hold",
+      status: "healthy",
+      score: 1.5,
+      config: { atrSlMultiplier: 1.5 },
+      reason: "profit factor fine",
+      ...over,
+    });
+
+  test("an untouched database reports nothing rather than erroring", async () => {
+    const b = await body<Feed>(call("/api/selfheal"));
+    expect(b.outcomes).toEqual([]);
+    expect(b.byAsset).toEqual([]);
+    expect(b.lastRunAt).toBeNull();
+  });
+
+  test("holds are served, not only proposals", async () => {
+    // A feed that shows only the times the loop wanted to change something
+    // reads as though it were changing things constantly.
+    outcome({ action: "hold" });
+    outcome({ action: "propose_swap", status: "degraded" });
+    const b = await body<Feed>(call("/api/selfheal"));
+    expect(b.outcomes).toHaveLength(2);
+    expect(b.outcomes.map(o => o.action).sort()).toEqual([
+      "hold",
+      "propose_swap",
+    ]);
+  });
+
+  test("newest first, and the latest is the newest", async () => {
+    outcome({ reason: "older", at: 1_000 });
+    outcome({ reason: "newer", at: 9_000 });
+    const b = await body<Feed>(call("/api/selfheal"));
+    expect(b.outcomes[0].reason).toBe("newer");
+    expect(b.byAsset[0].latest).not.toBeNull();
+  });
+
+  test("summarises what the loop has learned per regime", async () => {
+    outcome({ regime: "chop/high_vol", score: 1 });
+    outcome({ regime: "chop/high_vol", score: 3, action: "propose_swap" });
+    outcome({ regime: "trend_up/low_vol", score: 9 });
+
+    const b = await body<Feed>(call("/api/selfheal"));
+    const btc = b.byAsset.find(a => a.asset === "BTCUSDT")!;
+    const chop = btc.regimes.find(r => r.regime === "chop/high_vol")!;
+    expect(chop.records).toBe(2);
+    expect(chop.proposals).toBe(1);
+    expect(btc.regimes).toHaveLength(2);
+  });
+
+  test("filters by asset", async () => {
+    outcome({ asset: "BTCUSDT" });
+    outcome({ asset: "ETHUSDT" });
+    const b = await body<Feed>(call("/api/selfheal?asset=ETHUSDT"));
+    expect(b.outcomes).toHaveLength(1);
+    expect(b.outcomes[0].asset).toBe("ETHUSDT");
+  });
+
+  test("an unknown asset is a 404, not an empty history", async () => {
+    expect(await status(call("/api/selfheal?asset=NOPE"))).toBe(404);
+  });
+
+  test("the stored config round-trips through JSON intact", async () => {
+    outcome({ config: { atrSlMultiplier: 2.5, tp2R: 3.5 } });
+    const rows = db.outcomes();
+    expect(rows[0].config).toEqual({
+      atrSlMultiplier: 2.5,
+      tp2R: 3.5,
+    } as never);
+  });
+});
+
 describe("portfolio", () => {
   type Portfolio = {
     positions: unknown[];

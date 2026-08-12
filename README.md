@@ -88,6 +88,7 @@ tested; the trades to feed it do not exist yet.
 │  timers   ──┬── monitor  60s   open positions        │
 │             ├── signals   5m   generate signals      │
 │             ├── intel    15m   regime/macro/news     │
+│             ├── selfheal  6h   sweep + propose       │
 │             └── prune     6h   journal retention     │
 │                                                      │
 │  bun:sqlite ──── data/teo.db                         │
@@ -114,13 +115,13 @@ a price that never existed.
 
 | Path | What lives there |
 |---|---|
-| `core/` | Strategy, indicators, asset registry, backtest replay, cost model, regime tagging, parameter sweep, self-heal decision, statistical significance, portfolio risk. No framework imports — shared by the server, the CLI tools and the tests. |
-| `server/` | HTTP + SSE, SQLite layer, signal engine, scheduler. |
+| `core/` | Strategy, indicators, asset registry, backtest replay, cost model, regime tagging, parameter sweep, self-heal decision, regime-tagged memory, statistical significance, portfolio risk. No framework imports — shared by the server, the CLI tools and the tests. |
+| `server/` | HTTP + SSE, SQLite layer, signal engine, self-heal loop, scheduler. |
 | `server/intel/` | Regime, macro correlation, news calendar, liquidity sweeps. |
 | `src/` | React UI (Vite, Tailwind, shadcn/ui). |
 | `scripts/` | Backtest, batch scorer, edge audit. |
 | `teo/` | Python sidecar: Kronos forecasting, parameter sweeps, self-heal. |
-| `tests/`, `core/__tests__/`, `server/__tests__/` | 249 TypeScript + 89 Python tests. |
+| `tests/`, `core/__tests__/`, `server/__tests__/` | 294 TypeScript + 89 Python tests. |
 
 ---
 
@@ -215,6 +216,7 @@ Served on the same origin as the UI. No authentication: the server binds to
 | `GET` | `/api/journal/counts` | Row counts by event type (a SQL aggregate, not a table read). |
 | `GET` | `/api/performance?asset` | Per-asset stats: win rate, expectancy, streaks, profit factor — each with a `significance` block stating whether the record beats chance. |
 | `GET` | `/api/portfolio` | Open book as one number: effective risk, concentration, net exposure, every pairwise correlation with its sample count, and the record discounted for correlated positions. |
+| `GET` | `/api/selfheal?asset&limit` | Self-heal decision history, including the holds, plus what has been learned per regime. |
 | `GET` | `/api/candles?asset&interval&limit` | Stored OHLCV from the database. |
 | `GET` | `/api/klines?symbol&interval&limit` | Live OHLCV proxied from the venue. Serves intervals the engine does not persist (1m, 3m); the browser cannot call the venue directly because of CORS. |
 | `GET` | `/api/prices?symbols` | Batched 24h ticker. One upstream request for all symbols. |
@@ -317,6 +319,62 @@ So costs shrink every win and enlarge every loss. On gold a stop-out costs
 **2.6× what the chart shows**. Rates are per asset — gold quotes wider than BTC,
 and TAO wider still; a blended rate flatters exactly the illiquid assets where
 costs decide the outcome.
+
+---
+
+## Self-healing
+
+`server/selfheal.ts`, on a 6-hour cycle. Per asset: pull 1,000 bars, tag the
+regime, sweep the parameter grid with a 70/30 out-of-sample split, and ask
+whether the running config is degraded and whether anything demonstrably beats
+it.
+
+**It proposes; it never applies.** Nothing in this loop writes a config. A
+system that silently rewrites its own trading parameters cannot be reasoned
+about after the fact.
+
+Three gates stand between "a candidate scored higher" and a proposal:
+
+1. **Out-of-sample** — the candidate must hold up on bars it was not selected on.
+2. **Improvement margin** — a hair's-width gain is not a reason to change anything.
+3. **The live veto** — a config whose *real* record beats its breakeven by more
+   than chance explains is not replaced on the strength of a backtest. The first
+   two gates are computed from history, and history is what a sweep overfits;
+   the live record is the only evidence that was not selected on.
+
+The veto uses the same significance test as everything else, so a merely
+*positive* live record does not block a swap — 8 wins from 12 looks convincing
+and is not evidence.
+
+**Every cycle is recorded, including the holds.** A loop that logs only the
+times it wanted to change something reads, afterwards, as though it were
+changing things constantly. Records are regime-tagged, because a config that
+worked in a quiet uptrend says nothing about a choppy, volatile one, and
+`core/memory.ts` recalls per regime rather than globally.
+
+```
+  PAXGUSDT   chop/normal_vol   hold   insufficient_data
+             only 4 trades (< 10); not enough to judge
+```
+
+### What actually stops a bad swap
+
+Worth being precise, because it is not the gate you would guess. On a pure
+random walk the loop holds — but it holds because **the real strategy fires 4–5
+trades per 1,000 noise bars**, so every swept score lands under `minTrades` and
+the verdict is `insufficient_data`. Nothing reaches the out-of-sample gate to be
+gated.
+
+That is a stronger defence than the gate, not a weaker one. It is also a
+correction: the "14× improvement on noise" result that motivated the gate was
+measured against Teo's Python EMA-crossover proxy, which fired 34 trades on a
+window where the real strategy fires none. The gate is unit-tested against
+fixtures; it is not exercised end-to-end by the random-walk test, and no fixture
+was bent until it produced the desired verdict.
+
+`GET /api/selfheal?asset&limit` serves the decision history and what has been
+learned per regime. `TEO_SELFHEAL=off` disables the loop; `TEO_SELFHEAL_MS`
+changes the cadence.
 
 ---
 
@@ -490,6 +548,113 @@ do not publish real volume.
 
 Only the spread is measured. Fees and stop slippage cannot be read from a quote,
 so they remain assumptions and are labelled as such in the output.
+
+### Trend and mean-reversion are scored separately
+
+The original model sums trend-following and mean-reversion evidence into one
+bull/bear pair. They fire in opposite conditions, so they cancel. Through a
+clean synthetic uptrend the combined model signals **SHORT on 300 of 300 bars**:
+the bullish EMA structure is worth 40 points, and the upper-band touch, RSI > 70
+and Stoch > 80 that necessarily accompany an uptrend are worth 43 to the other
+side.
+
+That caps how high `max(bullScore, bearScore)` can ever climb. On 4,940 bars of
+XAUUSD M5 the highest strength observed was **63**, against a grade A threshold
+of 70 — grade A did not occur once, and could not have.
+
+`core/families.ts` scores each half on its own evidence, with its own grade
+thresholds, normalised to 0-100 against what that family can actually reach.
+`core/strategy.ts` is untouched; its behaviour is pinned by a parity fixture and
+the live engine still runs it.
+
+```bash
+bun run compare -- --asset MT5:XAUUSD --interval 5m
+```
+
+Runs all three models on the same bars and costs, and reports whether each
+result is distinguishable from chance. Individual models:
+
+```bash
+bun run backtest -- --source db --asset MT5:XAUUSD --model trend
+bun run backtest -- --source db --asset MT5:XAUUSD --model reversion --sweep
+```
+
+**A high win rate here is a warning, not a result.** Backtesting a
+trend-following model on a series that happens to trend will produce one. The
+number that matters is whether it survives out-of-sample and forward.
+
+### Does it hold up across time?
+
+```bash
+bun run compare -- --asset MT5:XAUUSD --interval 15m --walk-forward 6 --model trend
+```
+
+Splits the history into consecutive non-overlapping windows and reports the edge
+in each. Windows are replayed with the full preceding history, so indicators are
+warm and each window still measures only its own bars.
+
+One backtest over one window cannot tell a persistent edge from a single
+profitable stretch — and once you have compared several models on several
+timeframes, the best-looking combination is the one most likely to *be* that
+stretch. Read the "windows with a positive edge" line first: a real edge shows
+up in most of them.
+
+Validated against series with known answers. On a pure random walk it reports
+0 of 6 windows positive; on a momentum-autocorrelated series with a genuine
+trend edge, 6 of 6. It does not manufacture edges and does not miss them.
+
+Significance is the exact binomial from `core/significance.ts`, not a normal
+approximation — the latter is unreliable at the low win rates this exit geometry
+produces.
+
+### Why did the strategy not fire?
+
+```bash
+bun run diagnose -- --asset MT5:XAUUSD --interval 5m
+```
+
+Reports where every bar went: session gaps, how many bars failed to score at
+all, how many were killed by the neutral-bias filter, how many were graded
+NO_TRADE, and the strength distribution against the thresholds in force.
+
+Read the strength distribution before touching a threshold. If bars clear the
+strength bar but few are graded, the extreme-indicator count is binding and
+lowering strength changes nothing. If the 95th percentile sits below it, the
+model is not finding the instrument's setups — and lowering the bar to force
+trades selects noise rather than discovering an edge.
+
+### Backtesting on broker data
+
+Once synced, the bars are stored under `MT5:<SYMBOL>` and the backtester can
+replay them instead of fetching from Binance:
+
+```bash
+bun run mt5:backtest      # one backtest on the default config
+bun run mt5:sweep         # rank configs by risk-adjusted score
+```
+
+Costs come from the sync — your measured spread, not the registry estimate — so
+the result describes your account. Fees default to zero, which is right for a
+commission-free CFD account and wrong for anything else; stop slippage is
+assumed at one spread.
+
+Any symbol and timeframe the exporter wrote works:
+
+```bash
+bun run backtest -- --source db --asset MT5:XAUUSD --interval 15m --sweep
+```
+
+**Reading the sweep.** Configs are selected on the leading 70% of bars and
+scored again on the held-out 30%. The in-sample columns are the ones that
+flatter; the OOS column is the one that discriminates. A config that tops the
+ranking with a negative OOS score was selected by luck on that window. `too few`
+means the config did not trade enough on the held-out slice to be judged at all
+— not a bad score, the absence of one.
+
+The sweep **prints and stops**. Nothing is written to the running config, by
+design: a system that silently rewrites its own trading parameters is one you
+cannot reason about afterwards. To adopt a config, paste it into `core/assets.ts`
+yourself.
 
 ---
 
