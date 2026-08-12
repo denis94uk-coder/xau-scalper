@@ -19,7 +19,7 @@ jobs:
       - name: Biome
         run: ./node_modules/.bin/biome ci .
       - name: Unit tests
-        run: bun test core server
+        run: bun run test
       - name: JS dep audit
         run: bun audit
 
