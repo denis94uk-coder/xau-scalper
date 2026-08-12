@@ -10,12 +10,13 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AppConfig, defaultConfig, newAsset } from "../../core/config";
 import { Db, type TradingIdea } from "../db";
 import { executeIdea } from "../execution";
+import { lastAck, pendingOrders } from "../mt5bridge";
 
 let db: Db;
 let dir: string;
@@ -185,6 +186,48 @@ describe("placing an order", () => {
   test("a short is sent as a short", () => {
     executeIdea(db, armed(), { ...idea(), direction: "SHORT" });
     expect(ordersOnDisk()[0].direction).toBe("SHORT");
+  });
+
+  test("a disarmed engine writes nothing to disk at all", () => {
+    // Stronger than "returns not placed": a refusal that still created the
+    // orders directory, or a zero-byte file, could be picked up by an EA
+    // watching that path. Nothing may appear.
+    const cfg = armed();
+    const disarmed = {
+      ...cfg,
+      mt5: { ...cfg.mt5, executionEnabled: false },
+    };
+
+    expect(executeIdea(db, disarmed, idea()).placed).toBe(false);
+    expect(existsSync(join(dir, "orders"))).toBe(false);
+  });
+
+  test("an acknowledgement written by the terminal is read back", () => {
+    // The other half of the protocol: the EA deletes the order it took and
+    // writes an ack. Without this the app could never tell a filled order from
+    // one the terminal never saw.
+    const i = idea();
+    executeIdea(db, armed(), i);
+    const [order] = ordersOnDisk();
+
+    rmSync(join(dir, "orders", `${order.id}.json`));
+    mkdirSync(join(dir, "acks"), { recursive: true });
+    writeFileSync(
+      join(dir, "acks", `${order.id}.json`),
+      JSON.stringify({
+        id: order.id,
+        ok: true,
+        ticket: 12345,
+        price: 2400.2,
+        at: Date.now(),
+      }),
+      "utf8",
+    );
+
+    expect(pendingOrders(dir)).toHaveLength(0);
+    const ack = lastAck(dir);
+    expect(ack?.id).toBe(String(order.id));
+    expect(ack?.ticket).toBe(12345);
   });
 
   test("two ideas produce two distinct order files", () => {
