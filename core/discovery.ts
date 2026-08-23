@@ -179,6 +179,7 @@ export type CandidateVerdict =
   | "unprofitable_in_sample"
   | "failed_validation"
   | "failed_test"
+  | "failed_walk_forward"
   | "not_significant"
   | "below_breakeven";
 
@@ -198,6 +199,13 @@ export interface Candidate {
   significance: SignificanceReport;
   /** p-value after the multiple-comparisons correction. */
   adjustedPValue: number;
+  /**
+   * Walk-forward folds: net points per equal slice of the whole history,
+   * computed only for candidates that survived the three-way split. A
+   * configuration whose profit lives in one lucky stretch fails here even
+   * when the static split let it through.
+   */
+  walkForward?: { foldNetPoints: number[]; profitableFolds: number };
   verdict: CandidateVerdict;
   /** One sentence an operator can act on. */
   summary: string;
@@ -274,6 +282,52 @@ function metricsFor(
 export function adjustPValue(p: number, n: number): number {
   if (n <= 1) return p;
   return 1 - (1 - p) ** n;
+}
+
+/**
+ * Walk-forward check: replay the configuration across equal chronological
+ * folds of the whole history and count how many were profitable.
+ *
+ * The static three-way split answers "did it survive one particular
+ * arrangement of time?"; this asks "does its profit repeat across the whole
+ * timeline, or does it live in a single stretch?". A strategy whose entire
+ * edge came from one trending quarter passes the split and fails here, which
+ * is precisely the failure mode that drains accounts months later.
+ *
+ * Requiring a majority (all but one fold) rather than unanimity: even real
+ * edges have losing regimes, and demanding perfection would keep only fits
+ * to quiet histories.
+ */
+function walkForward(
+  candles: Candle[],
+  config: StrategyConfig,
+  asset: AssetDefinition,
+  folds = 4,
+): { foldNetPoints: number[]; profitableFolds: number } {
+  const warmup = 60;
+  const tradable = candles.length - warmup;
+  const width = Math.floor(tradable / folds);
+  const foldNetPoints: number[] = [];
+
+  for (let f = 0; f < folds; f++) {
+    const start = warmup + f * width;
+    const end = f === folds - 1 ? candles.length : start + width;
+    const m = computeMetrics(
+      runBacktest(
+        candles.slice(0, end),
+        config,
+        asset.pricePrecision,
+        start,
+        asset.costs,
+      ),
+    );
+    foldNetPoints.push(m.netPoints);
+  }
+
+  return {
+    foldNetPoints,
+    profitableFolds: foldNetPoints.filter(p => p > 0).length,
+  };
 }
 
 /**
@@ -388,6 +442,7 @@ export function discover(
 
     let verdict: CandidateVerdict = "qualified";
     let summary = "";
+    let walkForwardResult: Candidate["walkForward"] | undefined;
 
     if (validation.netPoints <= 0) {
       verdict = "failed_validation";
@@ -400,16 +455,29 @@ export function discover(
     } else if (overall.winRate <= breakeven) {
       verdict = "below_breakeven";
       summary = `Won ${overall.winRate.toFixed(1)}% against a ${breakeven.toFixed(1)}% cost-adjusted breakeven.`;
-    } else if (adjustedPValue > 0.05) {
-      verdict = "not_significant";
-      summary =
-        `Profitable in all three windows, but after correcting for ${iterations} attempts ` +
-        `the record is still consistent with luck (p = ${adjustedPValue.toFixed(3)}).`;
     } else {
-      summary =
-        `Profitable in training, validation AND the untouched test window; ` +
-        `${overall.winRate.toFixed(1)}% win rate against a ${breakeven.toFixed(1)}% breakeven, ` +
-        `p = ${adjustedPValue.toFixed(4)} after correcting for ${iterations} attempts.`;
+      // The final gate: does the profit repeat across the timeline? Computed
+      // only for candidates that passed everything above, so it costs nothing
+      // on the rejects that make up most of the search.
+      const wf = walkForward(candles, config, asset);
+      if (wf.profitableFolds < wf.foldNetPoints.length - 1) {
+        verdict = "failed_walk_forward";
+        summary =
+          `Profitable in all three windows, but only ${wf.profitableFolds} of ` +
+          `${wf.foldNetPoints.length} walk-forward folds made money — the edge lives in one stretch of history, not across it.`;
+      } else if (adjustedPValue > 0.05) {
+        verdict = "not_significant";
+        summary =
+          `Profitable in all three windows and ${wf.profitableFolds}/${wf.foldNetPoints.length} walk-forward folds, but after correcting for ${iterations} attempts ` +
+          `the record is still consistent with luck (p = ${adjustedPValue.toFixed(3)}).`;
+      } else {
+        summary =
+          `Profitable in training, validation AND the untouched test window, plus ` +
+          `${wf.profitableFolds}/${wf.foldNetPoints.length} walk-forward folds; ` +
+          `${overall.winRate.toFixed(1)}% win rate against a ${breakeven.toFixed(1)}% breakeven, ` +
+          `p = ${adjustedPValue.toFixed(4)} after correcting for ${iterations} attempts.`;
+      }
+      walkForwardResult = wf;
     }
 
     evaluated.push({
@@ -421,6 +489,7 @@ export function discover(
       score,
       significance,
       adjustedPValue,
+      walkForward: walkForwardResult,
       verdict,
       summary,
     });

@@ -660,9 +660,15 @@ export async function handleApi(
       // refusing. It arrives disabled: discovering a strategy and trading it
       // are separate decisions, and collapsing them would put an untested
       // instrument into the live engine on one click.
+      //
+      // Merged over the target's own config for the same reason as the
+      // carpet-adopt route: a report from an older build may lack a knob the
+      // validator now requires, and the instrument's current value is the
+      // right fallback.
+      const merged = target ? { ...target.config, ...strategy } : strategy;
       const assets = target
         ? cfg.assets.map(a =>
-            a.id === targetId ? { ...a, config: strategy } : a,
+            a.id === targetId ? { ...a, config: merged } : a,
           )
         : [
             ...cfg.assets,
@@ -672,7 +678,7 @@ export async function handleApi(
                 dataSourceSymbol: run.symbol,
                 dataSource: "mt5",
                 enabled: false,
-                config: strategy,
+                config: merged,
               }),
             },
           ];
@@ -816,6 +822,78 @@ export async function handleApi(
     if (!risk) return bad("Risk manager not configured.", 503);
     risk.resume();
     return json({ ok: true });
+  }
+
+  // ─── Strategy Carpet: persisted qualified discoveries ───
+  if (path === "/api/discovered" && req.method === "GET") {
+    return json({ strategies: db.listDiscovered() });
+  }
+
+  if (path.startsWith("/api/discovered/")) {
+    const rest = path.slice("/api/discovered/".length);
+
+    // Adopt a carpeted strategy onto an asset, reusing the run-adopt rule:
+    // the target asset is updated in place when it exists and added disabled
+    // when it does not — discovery and trading stay separate decisions.
+    if (rest.endsWith("/adopt") && req.method === "POST") {
+      const id = Number(rest.slice(0, -"/adopt".length));
+      const found = db.listDiscovered().find(s => s.id === id);
+      if (!found) return bad("no such strategy", 404);
+
+      const body = await readOptionalBody(req);
+      if (body instanceof Response) return body;
+      const targetId = String(body?.assetId || found.assetId);
+      const target = cfg.assets.find(a => a.id === targetId);
+
+      // Merge over the target's own config rather than replacing wholesale:
+      // the pinned snapshot may predate a knob the validator now requires,
+      // and falling back to what the instrument already ran keeps adoption
+      // total instead of bouncing a 422 off a partially-known history.
+      const merged = target
+        ? { ...target.config, ...found.config }
+        : found.config;
+
+      const assets = target
+        ? cfg.assets.map(a =>
+            a.id === targetId ? { ...a, config: merged } : a,
+          )
+        : [
+            ...cfg.assets,
+            {
+              ...newAsset(targetId, {
+                displaySymbol: found.symbol,
+                dataSourceSymbol: found.symbol,
+                dataSource: "mt5",
+                enabled: false,
+                config: merged,
+              }),
+            },
+          ];
+
+      try {
+        store.save({ ...cfg, assets });
+      } catch (e) {
+        if (e instanceof ConfigError) {
+          return json({ error: e.message, issues: e.issues }, 422);
+        }
+        throw e;
+      }
+      return json({
+        adopted: true,
+        assetId: targetId,
+        added: target === undefined,
+      });
+    }
+
+    if (req.method === "DELETE") {
+      const id = Number(rest);
+      if (!Number.isFinite(id)) return bad("bad strategy id");
+      const exists = db.listDiscovered().some(s => s.id === id);
+      if (!exists) return bad("no such strategy", 404);
+      db.deleteDiscovered(id);
+      publish("research");
+      return json({ ok: true });
+    }
   }
 
   // Any other /api/* path is a mistake, not a client-side route. Falling

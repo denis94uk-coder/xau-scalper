@@ -208,11 +208,39 @@ async function execute(
 
   report.interval = input.interval;
 
+  // Pin every survivor to the Strategy Carpet. The carpet is the point of the
+  // whole feature: a qualified strategy that exists only inside an ephemeral
+  // in-memory report is lost on restart, which is exactly when the operator
+  // comes back to look at it.
+  let pinned = 0;
+  for (const c of report.candidates.filter(c => c.verdict === "qualified")) {
+    try {
+      db.pinDiscovered({
+        assetId: input.assetId,
+        symbol: input.symbol,
+        interval: input.interval,
+        config: c.config,
+        testMetrics: c.test,
+        overallMetrics: c.overall,
+        adjustedP: c.adjustedPValue,
+        walkForward: c.walkForward,
+        runId: run.id,
+      });
+      pinned++;
+    } catch {
+      // A pin failure must not fail a finished search; the report is still
+      // readable and the run can be re-pinned by re-running.
+    }
+  }
+
   update(run, {
     status: "done",
     progress: 1,
     report,
-    message: report.conclusion,
+    message:
+      pinned > 0
+        ? `${report.conclusion} ${pinned} pinned to the Strategy Carpet.`
+        : report.conclusion,
     finishedAt: Date.now(),
   });
 }

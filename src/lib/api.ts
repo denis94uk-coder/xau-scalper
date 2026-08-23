@@ -422,6 +422,7 @@ export type CandidateVerdict =
   | "unprofitable_in_sample"
   | "failed_validation"
   | "failed_test"
+  | "failed_walk_forward"
   | "not_significant"
   | "below_breakeven";
 
@@ -433,6 +434,10 @@ export interface DiscoveryCandidate {
   overall: BacktestMetrics;
   score: number;
   adjustedPValue: number;
+  walkForward?: {
+    foldNetPoints: number[];
+    profitableFolds: number;
+  };
   verdict: CandidateVerdict;
   summary: string;
 }
@@ -476,6 +481,21 @@ export interface ResearchRun {
   bars: number;
   report: DiscoveryReport | null;
   error: string | null;
+}
+
+/** A qualified discovery pinned to the Strategy Carpet. */
+export interface DiscoveredStrategy {
+  id: number;
+  assetId: string;
+  symbol: string;
+  interval: string;
+  config: StrategyConfig;
+  testMetrics: BacktestMetrics;
+  overallMetrics: BacktestMetrics;
+  adjustedP: number;
+  walkForward: { foldNetPoints: number[]; profitableFolds: number } | null;
+  runId: string | null;
+  pinnedAt: number;
 }
 
 export interface StartRunInput {
@@ -556,6 +576,16 @@ export const api = {
       `/api/research/runs/${encodeURIComponent(id)}/adopt`,
       { assetId },
     ),
+
+  /** The Strategy Carpet: qualified discoveries persisted across restarts. */
+  discoveredStrategies: () =>
+    get<{ strategies: DiscoveredStrategy[] }>("/api/discovered"),
+  adoptDiscovered: (id: number, assetId?: string) =>
+    post<{ adopted: boolean; assetId: string; added: boolean }>(
+      `/api/discovered/${id}/adopt`,
+      { assetId },
+    ),
+  deleteDiscovered: (id: number) => del<{ ok: true }>(`/api/discovered/${id}`),
 
   health: () =>
     get<{

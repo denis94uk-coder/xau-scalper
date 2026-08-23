@@ -87,6 +87,7 @@ const VERDICT_LABEL: Record<DiscoveryCandidate["verdict"], string> = {
   unprofitable_in_sample: "Lost in training",
   failed_validation: "Failed validation",
   failed_test: "Failed the test window",
+  failed_walk_forward: "Edge only in one stretch of history",
   not_significant: "Indistinguishable from luck",
   below_breakeven: "Below the cost breakeven",
 };

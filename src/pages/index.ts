@@ -5,4 +5,5 @@ export { ResearchPage } from "./ResearchPage";
 export { RiskManagerPage } from "./RiskManagerPage";
 export { SettingsPage } from "./SettingsPage";
 export { SignalJournalPage } from "./SignalJournalPage";
+export { StrategyCarpetPage } from "./StrategyCarpetPage";
 export { TradingIdeasPage } from "./TradingIdeasPage";

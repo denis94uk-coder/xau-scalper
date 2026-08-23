@@ -12,6 +12,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import type { BacktestMetrics } from "../core/backtest";
 import type { Candle, StrategyConfig } from "../core/strategy";
 import { SCHEMA_SQL } from "./schema";
 
@@ -827,6 +828,95 @@ export class Db {
       metadata: r.metadata === null ? null : JSON.parse(String(r.metadata)),
       at: Number(r.created_at),
     }));
+  }
+
+  // ─── Discovered strategies (the Strategy Carpet) ───
+
+  pinDiscovered(s: {
+    assetId: string;
+    symbol: string;
+    interval: string;
+    config: StrategyConfig;
+    testMetrics: BacktestMetrics;
+    overallMetrics: BacktestMetrics;
+    adjustedP: number;
+    walkForward?: { foldNetPoints: number[]; profitableFolds: number };
+    runId?: string;
+  }): number {
+    const result = this.raw.run(
+      `INSERT INTO discovered_strategies
+       (asset_id, symbol, interval, config, test_metrics, overall_metrics,
+        adjusted_p, walk_forward, run_id, pinned_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        s.assetId,
+        s.symbol,
+        s.interval,
+        JSON.stringify(s.config),
+        JSON.stringify(s.testMetrics),
+        JSON.stringify(s.overallMetrics),
+        s.adjustedP,
+        s.walkForward ? JSON.stringify(s.walkForward) : null,
+        s.runId ?? null,
+        Date.now(),
+      ],
+    );
+    return Number(result.lastInsertRowid);
+  }
+
+  listDiscovered(): Array<{
+    id: number;
+    assetId: string;
+    symbol: string;
+    interval: string;
+    config: StrategyConfig;
+    testMetrics: BacktestMetrics;
+    overallMetrics: BacktestMetrics;
+    adjustedP: number;
+    walkForward: { foldNetPoints: number[]; profitableFolds: number } | null;
+    runId: string | null;
+    pinnedAt: number;
+  }> {
+    const rows = this.raw
+      .query<Record<string, string | number | null>, []>(
+        `SELECT * FROM discovered_strategies ORDER BY pinned_at DESC`,
+      )
+      .all();
+    return rows
+      .map(r => {
+        let wf: { foldNetPoints: number[]; profitableFolds: number } | null =
+          null;
+        try {
+          wf = r.walk_forward
+            ? (JSON.parse(String(r.walk_forward)) as {
+                foldNetPoints: number[];
+                profitableFolds: number;
+              })
+            : null;
+        } catch {
+          wf = null;
+        }
+        return {
+          id: Number(r.id),
+          assetId: String(r.asset_id),
+          symbol: String(r.symbol),
+          interval: String(r.interval),
+          config: JSON.parse(String(r.config)) as StrategyConfig,
+          testMetrics: JSON.parse(String(r.test_metrics)) as BacktestMetrics,
+          overallMetrics: JSON.parse(
+            String(r.overall_metrics),
+          ) as BacktestMetrics,
+          adjustedP: Number(r.adjusted_p),
+          walkForward: wf,
+          runId: r.run_id === null ? null : String(r.run_id),
+          pinnedAt: Number(r.pinned_at),
+        };
+      })
+      .sort((a, b) => b.testMetrics.netPoints - a.testMetrics.netPoints);
+  }
+
+  deleteDiscovered(id: number): void {
+    this.raw.run("DELETE FROM discovered_strategies WHERE id = ?", [id]);
   }
 }
 

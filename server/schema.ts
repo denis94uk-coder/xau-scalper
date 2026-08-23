@@ -181,4 +181,25 @@ CREATE INDEX IF NOT EXISTS idx_outcomes_asset_regime
 
 CREATE INDEX IF NOT EXISTS idx_outcomes_recent
   ON strategy_outcomes (created_at DESC);
+
+-- ─── The Strategy Carpet: validated discoveries worth keeping ───
+-- One row per qualified candidate that survived the full gauntlet (three-way
+-- split, walk-forward folds, search-size correction). Written automatically
+-- when a research run finishes; removed only by an explicit operator action.
+CREATE TABLE IF NOT EXISTS discovered_strategies (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  asset_id       TEXT    NOT NULL,
+  symbol         TEXT    NOT NULL,
+  interval       TEXT    NOT NULL,
+  config         TEXT    NOT NULL,        -- JSON StrategyConfig
+  test_metrics   TEXT    NOT NULL,        -- JSON BacktestMetrics of the untouched window
+  overall_metrics TEXT   NOT NULL,        -- JSON BacktestMetrics across all windows
+  adjusted_p     REAL    NOT NULL,
+  walk_forward   TEXT,                    -- JSON { foldNetPoints, profitableFolds }
+  run_id         TEXT,                    -- which search produced it
+  pinned_at      INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_discovered_recent
+  ON discovered_strategies (pinned_at DESC);
 `;

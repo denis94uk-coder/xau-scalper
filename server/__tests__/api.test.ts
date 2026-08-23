@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AppConfig } from "../../core/config";
 import { defaultConfig, validateConfig } from "../../core/config";
+import { DEFAULT_STRATEGY_CONFIG } from "../../core/strategy";
 import { handleApi } from "../api";
 import { Db, type NewIdea } from "../db";
 import { putRun } from "../research";
@@ -965,5 +966,101 @@ describe("research routes", () => {
         call(`/api/research/runs/${encodeURIComponent(run.id)}/adopt`, "POST"),
       ),
     ).toBe(409);
+  });
+});
+
+// ─── Strategy Carpet (discovered strategies) ───
+
+describe("strategy carpet", () => {
+  const pinOne = () =>
+    db.pinDiscovered({
+      assetId: "MT5:XAUUSD",
+      symbol: "XAUUSD",
+      interval: "1h",
+      config: DEFAULT_STRATEGY_CONFIG,
+      testMetrics: {
+        trades: 12,
+        wins: 8,
+        losses: 4,
+        winRate: 66.7,
+        netPoints: 120.5,
+        grossPoints: 180,
+        costPoints: 59.5,
+        avgWin: 22,
+        avgLoss: 14,
+        maxDrawdown: 40,
+        profitFactor: 2.5,
+        expectancyPerTrade: 10,
+        breakevenWinRate: 38.9,
+      },
+      overallMetrics: {
+        trades: 30,
+        wins: 20,
+        losses: 10,
+        winRate: 66.7,
+        netPoints: 300,
+        grossPoints: 450,
+        costPoints: 150,
+        avgWin: 22,
+        avgLoss: 14,
+        maxDrawdown: 60,
+        profitFactor: 3,
+        expectancyPerTrade: 10,
+        breakevenWinRate: 38.9,
+      },
+      adjustedP: 0.01,
+      walkForward: { foldNetPoints: [50, -10, 80, 60], profitableFolds: 3 },
+    });
+
+  test("starts empty and pins survive", async () => {
+    expect((await body<{ strategies: unknown[] }>(call("/api/discovered"))).strategies).toEqual([]);
+    const id = pinOne();
+    expect(id).toBeGreaterThan(0);
+    const { strategies } = await body<{ strategies: Array<Record<string, unknown>> }>(
+      call("/api/discovered"),
+    );
+    expect(strategies).toHaveLength(1);
+    expect(strategies[0].symbol).toBe("XAUUSD");
+    // Round-trips through JSON with structure intact.
+    expect((strategies[0].walkForward as { profitableFolds: number }).profitableFolds).toBe(3);
+    expect((strategies[0].testMetrics as { netPoints: number }).netPoints).toBeCloseTo(120.5);
+  });
+
+  test("delete removes a pinned strategy and unknown ids are a 404", async () => {
+    const id = pinOne();
+    expect(await status(call(`/api/discovered/${id}`, "DELETE"))).toBe(200);
+    expect((await body<{ strategies: unknown[] }>(call("/api/discovered"))).strategies).toEqual([]);
+    expect(await status(call("/api/discovered/999", "DELETE"))).toBe(404);
+  });
+
+  test("adopt applies the pinned config to an existing asset", async () => {
+    const id = pinOne();
+    const before = await body<AppConfig>(call("/api/config"));
+    // Move the live config away from the default first, so the adoption has
+    // something visible to overwrite.
+    const changed: AppConfig = {
+      ...before,
+      assets: before.assets.map((a, i) =>
+        i === 0 ? { ...a, config: { ...a.config, tp1R: 2.25 } } : a,
+      ),
+    };
+    expect(await status(call("/api/config", "PUT", changed))).toBe(200);
+
+    const res = call("/api/discovered/" + id + "/adopt", "POST", {
+      assetId: before.assets[0].id,
+    });
+    expect(await status(res)).toBe(200);
+
+    const after = await body<AppConfig>(call("/api/config"));
+    expect(after.assets[0].config).toEqual({
+      ...before.assets[0].config,
+      ...DEFAULT_STRATEGY_CONFIG,
+    });
+  });
+
+  test("adopt of an unknown strategy is a 404", async () => {
+    expect(
+      await status(call("/api/discovered/999/adopt", "POST", {})),
+    ).toBe(404);
   });
 });

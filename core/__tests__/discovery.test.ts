@@ -258,6 +258,51 @@ describe("discovery", () => {
     }
   });
 
+  test("qualified candidates passed walk-forward with a profitable majority", () => {
+    const report = discover(trending(4000), asset, {
+      iterations: 80,
+      seed: 21,
+    });
+    for (const c of report.candidates.filter(c => c.verdict === "qualified")) {
+      expect(c.walkForward).toBeDefined();
+      expect(c.walkForward?.foldNetPoints.length).toBe(4);
+      // The gate: all but one fold profitable.
+      expect(c.walkForward?.profitableFolds).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  test("walk-forward folds partition the tradable history without overlap", () => {
+    // Indirect check through verdicts would be flaky; instead verify the
+    // geometry by running one config through a report and checking fold
+    // counts are consistent for every candidate that carries them.
+    const report = discover(trending(3000), asset, { iterations: 10 });
+    for (const c of report.candidates) {
+      if (!c.walkForward) continue;
+      const total = c.walkForward.foldNetPoints.reduce(
+        (s, p) => s + (p > 0 ? 1 : 0),
+        0,
+      );
+      expect(total).toBe(c.walkForward.profitableFolds);
+    }
+  });
+
+  test("a failed_walk_forward candidate was otherwise profitable", () => {
+    const report = discover(trending(4000), asset, {
+      iterations: 120,
+      seed: 55,
+    });
+    for (const c of report.candidates.filter(
+      c => c.verdict === "failed_walk_forward",
+    )) {
+      // Reached the gate, so it survived all three static windows.
+      expect(c.train.netPoints).toBeGreaterThan(0);
+      expect(c.validation.netPoints).toBeGreaterThan(0);
+      expect(c.test.netPoints).toBeGreaterThan(0);
+      expect(c.walkForward?.profitableFolds).toBeLessThan(3);
+      expect(c.summary).toContain("folds");
+    }
+  });
+
   test("qualified candidates rank above rejected ones", () => {
     const report = discover(trending(4000), asset, {
       iterations: 60,

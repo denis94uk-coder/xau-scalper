@@ -15,4 +15,5 @@ export type EventKind =
   | "config"
   | "candles"
   | "mt5"
+  | "research"
   | "hello";
