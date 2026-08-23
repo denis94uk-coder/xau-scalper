@@ -209,13 +209,11 @@ export async function scanLiquiditySweeps(
     const sweeps = detectSweeps(candles, levels);
 
     db.setSetting(KEY, {
-      sweeps: JSON.stringify(sweeps),
-      supportLevels: JSON.stringify(
-        levels.supports.map(l => Math.round(l * 100) / 100),
-      ),
-      resistanceLevels: JSON.stringify(
-        levels.resistances.map(l => Math.round(l * 100) / 100),
-      ),
+      // Native arrays — setSetting serializes the object as a whole, and the
+      // dashboard maps over these fields directly.
+      sweeps,
+      supportLevels: levels.supports.map(l => Math.round(l * 100) / 100),
+      resistanceLevels: levels.resistances.map(l => Math.round(l * 100) / 100),
       totalSweepsDetected: sweeps.length,
       actionableSweeps: sweeps.filter((s: any) => s.actionable).length,
     });

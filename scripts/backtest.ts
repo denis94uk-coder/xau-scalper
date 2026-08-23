@@ -280,7 +280,7 @@ async function main() {
 
   console.log(
     `\nBacktest ${asset.displaySymbol} (${asset.dataSourceSymbol}) ` +
-      `${cli.interval} | ${cli.from} → ${cli.to}\n`,
+      `${cli.interval} [${cli.model}] | ${cli.from} → ${cli.to}\n`,
   );
 
   console.log("Fetching historical klines (free Binance feed)...");
@@ -303,6 +303,7 @@ async function main() {
     asset.pricePrecision,
     60,
     asset.costs,
+    cli.model,
   );
   const m = computeMetrics(trades);
 

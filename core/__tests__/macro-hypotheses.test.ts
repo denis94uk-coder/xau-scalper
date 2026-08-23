@@ -11,7 +11,7 @@ import {
 import type { Candle } from "../strategy";
 
 function makeCandle(date: string, close = 2000): Candle {
-  const time = Math.floor(new Date(date + "T12:00:00Z").getTime() / 1000);
+  const time = Math.floor(new Date(`${date}T12:00:00Z`).getTime() / 1000);
   return {
     time,
     open: close,

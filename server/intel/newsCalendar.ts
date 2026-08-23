@@ -240,12 +240,12 @@ export async function updateCalendar(
     const shield = calculateShieldStatus(events);
 
     db.setSetting(KEY, {
-      events: JSON.stringify(events),
+      // Native array/object — setSetting serializes the object as a whole,
+      // and the dashboard iterates these fields directly.
+      events,
       isShieldActive: shield.isShieldActive,
       shieldReason: shield.shieldReason,
-      nextHighImpactEvent: shield.nextHighImpactEvent
-        ? JSON.stringify(shield.nextHighImpactEvent)
-        : "",
+      nextHighImpactEvent: shield.nextHighImpactEvent ?? null,
       minutesToNextEvent: shield.minutesToNextEvent,
       shieldStartsAt: shield.shieldStartsAt,
       shieldEndsAt: shield.shieldEndsAt,

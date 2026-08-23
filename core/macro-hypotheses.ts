@@ -28,7 +28,7 @@ function toDate(ts: number): string {
 
 /** Previous calendar day from an ISO date string. */
 function prevDate(date: string): string {
-  const d = new Date(date + "T00:00:00Z");
+  const d = new Date(`${date}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() - 1);
   return d.toISOString().slice(0, 10);
 }
