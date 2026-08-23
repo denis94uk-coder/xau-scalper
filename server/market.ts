@@ -151,6 +151,66 @@ export function intervalMs(interval: string): number {
   return qty * mult;
 }
 
+/**
+ * Broker symbols the free exchange feed can stand in for.
+ *
+ * Researching gold should not require a running Windows terminal: PAXG is
+ * tokenized physical gold and tracks XAUUSD closely enough for strategy
+ * discovery, and the crypto pairs are exact. Normalised so broker spellings
+ * like "XAUUSD.x" or "GOLDmicro" still map.
+ */
+const EXCHANGE_ALIASES: Array<[RegExp, string]> = [
+  // No silver spot on Binance, so XAGUSD is deliberately unmapped.
+  [/^(XAUUSD|GOLD)/i, "PAXGUSDT"],
+  [/^BTCUSD/i, "BTCUSDT"],
+  [/^ETHUSD/i, "ETHUSDT"],
+];
+
+export function exchangeSymbolFor(brokerSymbol: string): string | null {
+  const norm = brokerSymbol.replace(/[.\-_ ].*$/, "").toUpperCase();
+  for (const [pattern, venue] of EXCHANGE_ALIASES) {
+    if (!venue) continue;
+    if (pattern.test(norm)) return venue;
+  }
+  return null;
+}
+
+/**
+ * Paginated kline history between two epoch-second bounds.
+ *
+ * The venue returns at most 1000 bars per call, so a two-year window pages
+ * forward with startTime until it is covered. Gaps (weekends on crypto aside)
+ * are simply absent from the result, matching what the venue has.
+ */
+export async function fetchCandleRange(
+  symbol: string,
+  interval: string,
+  from: number,
+  to: number,
+  opts: MarketOptions = {},
+): Promise<Candle[]> {
+  const doFetch = opts.fetcher ?? fetch;
+  const out: Candle[] = [];
+  let cursor = from * 1000;
+  const endMs = to * 1000;
+
+  while (cursor < endMs) {
+    const url =
+      `${BINANCE_API}/klines?symbol=${symbol}&interval=${interval}` +
+      `&startTime=${cursor}&endTime=${endMs}&limit=1000`;
+    const res = await doFetch(url);
+    if (!res.ok) throw new Error(`Binance klines ${res.status} for ${symbol}`);
+    const rows = (await res.json()) as unknown[][];
+    if (rows.length === 0) break;
+    for (const r of rows) out.push(toCandle(r));
+    const lastOpen = Number(rows[rows.length - 1][0]);
+    cursor = lastOpen + 1;
+    if (rows.length < 1000) break;
+  }
+
+  return out;
+}
+
 /** The venue symbols for a set of assets, deduplicated. */
 export function venueSymbols(assets: AssetDefinition[]): string[] {
   return [...new Set(assets.map(a => a.dataSourceSymbol))];

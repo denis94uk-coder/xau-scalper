@@ -1013,23 +1013,34 @@ describe("strategy carpet", () => {
     });
 
   test("starts empty and pins survive", async () => {
-    expect((await body<{ strategies: unknown[] }>(call("/api/discovered"))).strategies).toEqual([]);
+    expect(
+      (await body<{ strategies: unknown[] }>(call("/api/discovered")))
+        .strategies,
+    ).toEqual([]);
     const id = pinOne();
     expect(id).toBeGreaterThan(0);
-    const { strategies } = await body<{ strategies: Array<Record<string, unknown>> }>(
-      call("/api/discovered"),
-    );
+    const { strategies } = await body<{
+      strategies: Array<Record<string, unknown>>;
+    }>(call("/api/discovered"));
     expect(strategies).toHaveLength(1);
     expect(strategies[0].symbol).toBe("XAUUSD");
     // Round-trips through JSON with structure intact.
-    expect((strategies[0].walkForward as { profitableFolds: number }).profitableFolds).toBe(3);
-    expect((strategies[0].testMetrics as { netPoints: number }).netPoints).toBeCloseTo(120.5);
+    expect(
+      (strategies[0].walkForward as { profitableFolds: number })
+        .profitableFolds,
+    ).toBe(3);
+    expect(
+      (strategies[0].testMetrics as { netPoints: number }).netPoints,
+    ).toBeCloseTo(120.5);
   });
 
   test("delete removes a pinned strategy and unknown ids are a 404", async () => {
     const id = pinOne();
     expect(await status(call(`/api/discovered/${id}`, "DELETE"))).toBe(200);
-    expect((await body<{ strategies: unknown[] }>(call("/api/discovered"))).strategies).toEqual([]);
+    expect(
+      (await body<{ strategies: unknown[] }>(call("/api/discovered")))
+        .strategies,
+    ).toEqual([]);
     expect(await status(call("/api/discovered/999", "DELETE"))).toBe(404);
   });
 
@@ -1046,7 +1057,7 @@ describe("strategy carpet", () => {
     };
     expect(await status(call("/api/config", "PUT", changed))).toBe(200);
 
-    const res = call("/api/discovered/" + id + "/adopt", "POST", {
+    const res = call(`/api/discovered/${id}/adopt`, "POST", {
       assetId: before.assets[0].id,
     });
     expect(await status(res)).toBe(200);
@@ -1059,8 +1070,8 @@ describe("strategy carpet", () => {
   });
 
   test("adopt of an unknown strategy is a 404", async () => {
-    expect(
-      await status(call("/api/discovered/999/adopt", "POST", {})),
-    ).toBe(404);
+    expect(await status(call("/api/discovered/999/adopt", "POST", {}))).toBe(
+      404,
+    );
   });
 });

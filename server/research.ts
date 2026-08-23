@@ -37,6 +37,7 @@ import {
 import type { Candle } from "../core/strategy";
 import type { Db } from "./db";
 import { publish } from "./events";
+import { exchangeSymbolFor, fetchCandleRange } from "./market";
 import { resolveDirectory } from "./mt5bridge";
 import {
   clearHistory,
@@ -276,6 +277,52 @@ async function gatherCandles(
       message: `Using ${stored.length} bars already stored locally.`,
     });
     return stored;
+  }
+
+  // ─── Exchange feed first ───
+  // A broker terminal should not be a prerequisite for researching gold or
+  // crypto: the free public feed covers those, needs no EA watching a folder,
+  // and cannot silently stall for ten minutes the way an unanswered MT5
+  // request does. The terminal remains the source for everything else
+  // (indices, forex, metals without a venue proxy).
+  const venue = exchangeSymbolFor(input.symbol);
+  if (venue) {
+    update(run, {
+      status: "downloading",
+      progress: 0.05,
+      message: `Downloading ${venue} from the free exchange feed — no MetaTrader needed…`,
+    });
+
+    const candles = await fetchCandleRange(
+      venue,
+      input.interval,
+      input.from,
+      input.to,
+    );
+
+    if (cancelled.has(run.id)) {
+      update(run, {
+        status: "cancelled",
+        message: "Cancelled.",
+        finishedAt: Date.now(),
+      });
+      return [];
+    }
+
+    if (candles.length === 0) {
+      throw new Error(
+        `The exchange feed returned no ${venue} bars for that range. Check the date range.`,
+      );
+    }
+
+    db.saveCandles(input.assetId, input.interval, candles);
+    publish("candles");
+
+    update(run, {
+      progress: 0.42,
+      message: `Received ${candles.length} bars from the exchange feed.`,
+    });
+    return candles;
   }
 
   const dir = resolveDirectory(cfg);
