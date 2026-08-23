@@ -7,7 +7,12 @@
  * out-of-sample split.
  */
 import { describe, expect, test } from "bun:test";
-import { type ClosedTrade, computeMetrics, runBacktest } from "../backtest";
+import {
+  type ClosedTrade,
+  computeMetrics,
+  runBacktest,
+  toBacktestModel,
+} from "../backtest";
 import { type Candle, DEFAULT_STRATEGY_CONFIG } from "../strategy";
 
 function trade(pnlPoints: number): ClosedTrade {
@@ -52,6 +57,26 @@ function osc(n: number, seed = 7, amp = 6, period = 90): Candle[] {
   }
   return out;
 }
+
+describe("model coercion", () => {
+  test("every scoring family passes through under its own name", () => {
+    for (const m of [
+      "combined",
+      "trend",
+      "reversion",
+      "breakout",
+      "momentum",
+    ] as const) {
+      expect(toBacktestModel(m)).toBe(m);
+    }
+  });
+
+  test("quiet-trend and undefined fall back to combined, as before", () => {
+    expect(toBacktestModel("quiet-trend")).toBe("combined");
+    expect(toBacktestModel(undefined)).toBe("combined");
+    expect(toBacktestModel("nonsense")).toBe("combined");
+  });
+});
 
 describe("computeMetrics", () => {
   test("aggregates wins, losses and net points", () => {

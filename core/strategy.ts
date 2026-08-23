@@ -73,6 +73,22 @@ export interface StrategyConfig {
   biasNeutralThreshold: number;
   /** Minimum spacing between same-direction signals (was 10 min). */
   cooldownMs: number;
+  /**
+   * Breakout-channel length in bars: how much history the Donchian high/low
+   * spans before a close outside it counts as a break.
+   *
+   * Read only by the "breakout" scoring family. Defaults sit here so a saved
+   * config predating the family still validates; other models ignore it.
+   */
+  breakoutPeriod: number;
+  /**
+   * Rate-of-change lookback in bars for the "momentum" scoring family, whose
+   * conviction test ranks |close − close[lookback]| against its own recent
+   * history.
+   *
+   * Read only by the "momentum" family; ignored everywhere else.
+   */
+  momentumLookback: number;
 }
 
 export const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
@@ -104,6 +120,8 @@ export const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
   confidenceCap: 95,
   biasNeutralThreshold: 15,
   cooldownMs: 10 * 60 * 1000,
+  breakoutPeriod: 20,
+  momentumLookback: 24,
 };
 
 // ─── Rounding ───

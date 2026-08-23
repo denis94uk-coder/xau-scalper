@@ -10,9 +10,13 @@ import { mt5Asset } from "../assets";
 import {
   analyzeFamilyAt,
   analyzeFamilyCandles,
+  BREAKOUT_MAX_POINTS,
   DEFAULT_FAMILY_THRESHOLDS,
   type FamilyRejection,
+  MOMENTUM_MAX_POINTS,
   REVERSION_MAX_POINTS,
+  scoreBreakout,
+  scoreMomentum,
   scoreReversion,
   scoreTrend,
   TREND_MAX_POINTS,
@@ -62,6 +66,44 @@ function ranging(n = 400): Candle[] {
     t += 300;
   }
   out.push(...out2);
+  return out;
+}
+
+/**
+ * A compressed range that then breaks out upward with two wide bars.
+ *
+ * The compression matters: it is what the breakout family's squeeze evidence
+ * looks for, so this fixture exercises the whole score, not just the event.
+ */
+function squeezeThenBreakUp(n = 200): Candle[] {
+  const out: Candle[] = [];
+  let t = 1700000000;
+  // 150 bars in a tight band around 3300.
+  for (let i = 0; i < n - 2; i++) {
+    const p = 3300 + Math.sin(i / 5) * 1.5;
+    out.push({
+      time: t,
+      open: p,
+      high: p + 0.4,
+      low: p - 0.4,
+      close: p,
+      volume: 100,
+    });
+    t += 300;
+  }
+  // Two wide bars punching above the band.
+  for (const step of [6, 6]) {
+    const prev = out.at(-1)!.close;
+    out.push({
+      time: t,
+      open: prev,
+      high: prev + step + 3,
+      low: prev - 0.5,
+      close: prev + step,
+      volume: 100,
+    });
+    t += 300;
+  }
   return out;
 }
 
@@ -142,7 +184,7 @@ describe("family separation — the defect this fixes", () => {
 });
 
 describe("score bounds", () => {
-  test("neither family can exceed its declared maximum", () => {
+  test("no family can exceed its declared maximum", () => {
     for (const candles of [uptrend(), ranging()]) {
       const ind = precomputeIndicators(candles, DEFAULT_STRATEGY_CONFIG);
       for (let i = 100; i < candles.length; i++) {
@@ -154,23 +196,43 @@ describe("score bounds", () => {
         );
       }
     }
+    for (const candles of [squeezeThenBreakUp(), uptrend()]) {
+      const ind = precomputeIndicators(candles, DEFAULT_STRATEGY_CONFIG);
+      for (let i = 100; i < candles.length; i++) {
+        const bo = scoreBreakout(candles, ind, i, DEFAULT_STRATEGY_CONFIG);
+        const mo = scoreMomentum(ind, i, DEFAULT_STRATEGY_CONFIG);
+        expect(Math.max(bo.bull, bo.bear)).toBeLessThanOrEqual(
+          BREAKOUT_MAX_POINTS,
+        );
+        expect(Math.max(mo.bull, mo.bear)).toBeLessThanOrEqual(
+          MOMENTUM_MAX_POINTS,
+        );
+      }
+    }
   });
 
   test("normalised strength stays within 0-100", () => {
-    const candles = uptrend();
-    const ind = precomputeIndicators(candles, DEFAULT_STRATEGY_CONFIG);
-    for (const family of ["trend", "reversion"] as const) {
-      for (let i = 100; i < candles.length; i++) {
-        const a = analyzeFamilyAt(
-          candles,
-          ind,
-          i,
-          family,
-          DEFAULT_STRATEGY_CONFIG,
-        );
-        if (!a) continue;
-        expect(a.strength).toBeGreaterThanOrEqual(0);
-        expect(a.strength).toBeLessThanOrEqual(100);
+    const fixtures = [uptrend(), ranging(), squeezeThenBreakUp()];
+    for (const family of [
+      "trend",
+      "reversion",
+      "breakout",
+      "momentum",
+    ] as const) {
+      for (const candles of fixtures) {
+        const ind = precomputeIndicators(candles, DEFAULT_STRATEGY_CONFIG);
+        for (let i = 100; i < candles.length; i++) {
+          const a = analyzeFamilyAt(
+            candles,
+            ind,
+            i,
+            family,
+            DEFAULT_STRATEGY_CONFIG,
+          );
+          if (!a) continue;
+          expect(a.strength).toBeGreaterThanOrEqual(0);
+          expect(a.strength).toBeLessThanOrEqual(100);
+        }
       }
     }
   });
@@ -202,6 +264,136 @@ describe("grade A is reachable", () => {
     expect(best).toBeGreaterThanOrEqual(
       DEFAULT_FAMILY_THRESHOLDS.trend.bStrength,
     );
+  });
+});
+
+describe("breakout family", () => {
+  test("a range escape after compression scores LONG with the channel break as evidence", () => {
+    const candles = squeezeThenBreakUp();
+    const ind = precomputeIndicators(candles, DEFAULT_STRATEGY_CONFIG);
+    const last = candles.length - 1;
+
+    const s = scoreBreakout(candles, ind, last, DEFAULT_STRATEGY_CONFIG);
+    expect(s.bull).toBeGreaterThan(0);
+    expect(s.bear).toBe(0);
+    expect(s.extremeBull).toBeGreaterThanOrEqual(1);
+    expect(s.reasons.some(r => r.includes("Donchian"))).toBe(true);
+
+    // Graded, not merely scored: a compressed-range break is exactly the
+    // setup the family exists to catch.
+    const a = analyzeFamilyAt(
+      candles,
+      ind,
+      last,
+      "breakout",
+      DEFAULT_STRATEGY_CONFIG,
+    );
+    expect(a).not.toBeNull();
+    expect(a!.direction).toBe("LONG");
+    expect(["A", "B"]).toContain(a!.grade);
+  });
+
+  test("bars inside the channel produce no score at all", () => {
+    const candles = squeezeThenBreakUp();
+    const ind = precomputeIndicators(candles, DEFAULT_STRATEGY_CONFIG);
+    let scored = 0;
+    for (let i = 100; i < candles.length - 2; i++) {
+      const s = scoreBreakout(candles, ind, i, DEFAULT_STRATEGY_CONFIG);
+      if (s.bull + s.bear > 0) scored++;
+    }
+    // The fixture ranges tightly for ~150 bars: interior bars must stay flat.
+    expect(scored).toBeLessThanOrEqual(2);
+  });
+
+  test("grade A asks for two extremes — the break plus a second confirmation", () => {
+    expect(DEFAULT_FAMILY_THRESHOLDS.breakout.aExtreme).toBe(2);
+    expect(DEFAULT_FAMILY_THRESHOLDS.breakout.aStrength).toBeLessThanOrEqual(
+      BREAKOUT_MAX_POINTS,
+    );
+  });
+
+  test("warm-up covers the full channel", () => {
+    const candles = squeezeThenBreakUp();
+    const ind = precomputeIndicators(candles, DEFAULT_STRATEGY_CONFIG);
+    const cfg = { ...DEFAULT_STRATEGY_CONFIG, breakoutPeriod: 100 };
+    // Warm-up is max(59, period+1) = 101.
+    expect(analyzeFamilyAt(candles, ind, 99, "breakout", cfg)).toBeNull();
+    expect(analyzeFamilyAt(candles, ind, 101, "breakout", cfg)).toBeDefined;
+  });
+});
+
+describe("momentum family", () => {
+  test("a clean trend reads LONG throughout; flat noise reads nothing", () => {
+    const ind = precomputeIndicators(uptrend(), DEFAULT_STRATEGY_CONFIG);
+    let longs = 0;
+    let shorts = 0;
+    for (let i = 120; i < 400; i++) {
+      const s = scoreMomentum(ind, i, DEFAULT_STRATEGY_CONFIG);
+      if (s.bull > s.bear) longs++;
+      if (s.bear > s.bull) shorts++;
+    }
+    expect(longs).toBeGreaterThan(200);
+    expect(shorts).toBe(0);
+
+    // A constant-rate uptrend makes every |ROC| equal, so today's velocity
+    // sits AT the p80 mark and conviction holds. Flat oscillation is the
+    // opposite case: pace never clears the 60th percentile for long.
+    const flatInd = precomputeIndicators(ranging(), DEFAULT_STRATEGY_CONFIG);
+    let quiet = 0;
+    let total = 0;
+    for (let i = 120; i < 400; i++) {
+      total++;
+      if (
+        scoreMomentum(flatInd, i, DEFAULT_STRATEGY_CONFIG).bull +
+          scoreMomentum(flatInd, i, DEFAULT_STRATEGY_CONFIG).bear ===
+        0
+      ) {
+        quiet++;
+      }
+    }
+    expect(quiet / total).toBeGreaterThan(0.5);
+  });
+
+  test("below-median velocity returns no score rather than a weak one", () => {
+    // Directly: a bar whose ROC is tiny relative to its own history must be
+    // empty, not a low-strength signal.
+    const candles = ranging();
+    const ind = precomputeIndicators(candles, DEFAULT_STRATEGY_CONFIG);
+    for (let i = 150; i < 300; i++) {
+      const roc = Math.abs(ind.closes[i] - ind.closes[i - 24]);
+      const recent: number[] = [];
+      for (let k = Math.max(25, i - 199); k <= i; k += 2) {
+        recent.push(Math.abs(ind.closes[k] - ind.closes[k - 24]));
+      }
+      recent.sort((a, b) => a - b);
+      if (
+        recent.length >= 25 &&
+        roc < recent[Math.floor(recent.length * 0.6)]
+      ) {
+        const s = scoreMomentum(ind, i, DEFAULT_STRATEGY_CONFIG);
+        expect(s.bull).toBe(0);
+        expect(s.bear).toBe(0);
+      }
+    }
+  });
+
+  test("momentum scoring stays in its lane: no oscillator-extreme reads", () => {
+    const ind = precomputeIndicators(uptrend(), DEFAULT_STRATEGY_CONFIG);
+    for (let i = 120; i < 400; i++) {
+      const s = scoreMomentum(ind, i, DEFAULT_STRATEGY_CONFIG);
+      // Its only extreme is velocity conviction — one per side, ever.
+      expect(s.extremeBull).toBeLessThanOrEqual(1);
+      expect(s.extremeBear).toBeLessThanOrEqual(1);
+    }
+  });
+
+  test("warm-up covers lookback plus the velocity baseline", () => {
+    const candles = uptrend();
+    const ind = precomputeIndicators(candles, DEFAULT_STRATEGY_CONFIG);
+    const cfg = { ...DEFAULT_STRATEGY_CONFIG, momentumLookback: 90 };
+    // Warm-up is max(59, lookback+51) = 141.
+    expect(analyzeFamilyAt(candles, ind, 139, "momentum", cfg)).toBeNull();
+    expect(analyzeFamilyAt(candles, ind, 141, "momentum", cfg)).toBeDefined;
   });
 });
 
@@ -261,9 +453,14 @@ describe("contract parity with analyzeAt", () => {
   });
 
   test("TP/SL ordering is correct for both directions", () => {
-    for (const candles of [uptrend(), ranging()]) {
+    for (const candles of [uptrend(), ranging(), squeezeThenBreakUp()]) {
       const ind = precomputeIndicators(candles, DEFAULT_STRATEGY_CONFIG);
-      for (const family of ["trend", "reversion"] as const) {
+      for (const family of [
+        "trend",
+        "reversion",
+        "breakout",
+        "momentum",
+      ] as const) {
         for (let i = 100; i < candles.length; i++) {
           const a = analyzeFamilyAt(
             candles,
@@ -290,18 +487,24 @@ describe("contract parity with analyzeAt", () => {
 
 describe("live wiring", () => {
   test("analyzeFamilyCandles matches analyzeFamilyAt on the last bar", () => {
-    const candles = uptrend();
-    const ind = precomputeIndicators(candles, DEFAULT_STRATEGY_CONFIG);
-    for (const family of ["trend", "reversion"] as const) {
-      expect(analyzeFamilyCandles(candles, family)).toEqual(
-        analyzeFamilyAt(
-          candles,
-          ind,
-          candles.length - 1,
-          family,
-          DEFAULT_STRATEGY_CONFIG,
-        ),
-      );
+    for (const candles of [uptrend(), squeezeThenBreakUp()]) {
+      const ind = precomputeIndicators(candles, DEFAULT_STRATEGY_CONFIG);
+      for (const family of [
+        "trend",
+        "reversion",
+        "breakout",
+        "momentum",
+      ] as const) {
+        expect(analyzeFamilyCandles(candles, family)).toEqual(
+          analyzeFamilyAt(
+            candles,
+            ind,
+            candles.length - 1,
+            family,
+            DEFAULT_STRATEGY_CONFIG,
+          ),
+        );
+      }
     }
   });
 

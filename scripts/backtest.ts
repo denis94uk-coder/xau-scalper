@@ -41,7 +41,15 @@ interface CliArgs {
  * measure a broker's data with.
  */
 function parseModel(v: string | undefined): BacktestModel {
-  if (v === "trend" || v === "reversion" || v === "combined") return v;
+  if (
+    v === "trend" ||
+    v === "reversion" ||
+    v === "breakout" ||
+    v === "momentum" ||
+    v === "combined"
+  ) {
+    return v;
+  }
   return "trend";
 }
 

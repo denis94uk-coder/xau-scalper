@@ -90,6 +90,30 @@ describe("structural validation", () => {
 });
 
 describe("cross-field rules", () => {
+  test("every scoring model the engine can route is accepted", () => {
+    for (const model of [
+      "combined",
+      "trend",
+      "reversion",
+      "breakout",
+      "momentum",
+      "quiet-trend",
+    ] as const) {
+      const cfg = mutate(c => {
+        c.assets[0].model = model;
+      });
+      expect(validateConfig(cfg)).toEqual([]);
+    }
+  });
+
+  test("an unknown model is rejected with every alternative named", () => {
+    const cfg = mutate(c => {
+      (c.assets[0] as unknown as Record<string, unknown>).model = "astrology";
+    });
+    const issues = validateConfig(cfg);
+    expect(issues.some(i => i.path === "assets[0].model")).toBe(true);
+  });
+
   test("TP1 must sit inside TP2", () => {
     const issues = validateConfig(
       mutate(c => {
@@ -240,6 +264,32 @@ describe("withDefaults", () => {
 
   test("produces a valid document from nothing at all", () => {
     expect(validateConfig(withDefaults({}))).toEqual([]);
+  });
+
+  test("repairs stored assets that predate a new strategy knob", () => {
+    // A document saved before breakoutPeriod/momentumLookback existed must
+    // load with those knobs defaulted, NOT invalidate and reset every asset.
+    const cfg = defaultConfig();
+    const legacyAsset = {
+      ...cfg.assets[0],
+      config: Object.fromEntries(
+        Object.entries(cfg.assets[0].config).filter(
+          ([k]) => k !== "breakoutPeriod" && k !== "momentumLookback",
+        ),
+      ),
+    } as (typeof cfg.assets)[0];
+    const merged = withDefaults({ assets: [legacyAsset] });
+    expect(merged.assets[0].config.breakoutPeriod).toBe(
+      cfg.assets[0].config.breakoutPeriod,
+    );
+    expect(merged.assets[0].config.momentumLookback).toBe(
+      cfg.assets[0].config.momentumLookback,
+    );
+    // The operator's own values survive untouched.
+    expect(merged.assets[0].config.atrSlMultiplier).toBe(
+      legacyAsset.config.atrSlMultiplier,
+    );
+    expect(validateConfig(merged)).toEqual([]);
   });
 });
 

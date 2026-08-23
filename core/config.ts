@@ -26,7 +26,7 @@
  * the CLI tools and the tests all share one definition of "valid".
  */
 
-import type { AssetDefinition } from "./assets";
+import type { AssetDefinition, ScoringModel } from "./assets";
 import { ASSETS } from "./assets";
 import type { CostModel } from "./costs";
 import { DEFAULT_STRATEGY_CONFIG, type StrategyConfig } from "./strategy";
@@ -50,6 +50,14 @@ export interface AssetConfig {
   enabled: boolean;
   config: StrategyConfig;
   costs: CostModel;
+  /**
+   * Which scoring model generates this asset's signals.
+   *
+   * Optional and defaulting to "combined" so every asset configured before
+   * models existed keeps its behaviour. Discovery can adopt a different model
+   * when the data says one family fits better than the blend.
+   */
+  model?: ScoringModel;
   /**
    * Replace `costs` with the broker's measured spread when an MT5 export for
    * this symbol is present.
@@ -169,10 +177,10 @@ function assetToConfig(a: AssetDefinition): AssetConfig {
     enabled: a.enabled,
     config: { ...a.config },
     costs: { ...a.costs },
+    ...(a.model ? { model: a.model } : {}),
     useMt5Costs: true,
   };
 }
-
 /**
  * An AssetConfig as the strategy core wants it.
  *
@@ -189,6 +197,7 @@ export function toAssetDefinition(a: AssetConfig): AssetDefinition {
     pricePrecision: a.pricePrecision,
     config: a.config,
     costs: a.costs,
+    ...(a.model ? { model: a.model } : {}),
     enabled: a.enabled,
   };
 }
@@ -244,6 +253,8 @@ const STRATEGY_BOUNDS: Record<keyof StrategyConfig, Bound> = {
   confidenceCap: { min: 1, max: 100 },
   biasNeutralThreshold: { min: 0, max: 100 },
   cooldownMs: { min: 0, max: 86_400_000, integer: true },
+  breakoutPeriod: { min: 5, max: 150, integer: true },
+  momentumLookback: { min: 2, max: 96, integer: true },
 };
 
 const COST_BOUNDS: Record<keyof CostModel, Bound> = {
@@ -374,6 +385,23 @@ export function validateConfig(input: unknown): ValidationIssue[] {
           path: `${p}.dataSource`,
           message: 'must be "binance" or "mt5"',
         });
+      }
+      if (a.model !== undefined) {
+        const allowedModels = [
+          "combined",
+          "trend",
+          "reversion",
+          "breakout",
+          "momentum",
+          "quiet-trend",
+        ];
+        if (typeof a.model !== "string" || !allowedModels.includes(a.model)) {
+          issues.push({
+            path: `${p}.model`,
+            message:
+              'must be "combined", "trend", "reversion", "breakout", "momentum" or "quiet-trend"',
+          });
+        }
       }
       checkNumber(
         a.pricePrecision,
@@ -552,9 +580,21 @@ export function validateConfig(input: unknown): ValidationIssue[] {
  */
 export function withDefaults(partial: Partial<AppConfig>): AppConfig {
   const base = defaultConfig();
+  const baseStrategy = DEFAULT_STRATEGY_CONFIG;
   return {
     version: CONFIG_VERSION,
-    assets: partial.assets ?? base.assets,
+    assets: partial.assets
+      ? // Repair each asset's strategy knobs from the defaults rather than
+        // letting one missing key invalidate the document. A stored config
+        // predating a new knob (breakoutPeriod, momentumLookback) must load
+        // and validate with the knob at its default — falling back to the
+        // whole-document default here would reset every asset the operator
+        // has tuned.
+        partial.assets.map(a => ({
+          ...a,
+          config: { ...baseStrategy, ...(a.config ?? {}) },
+        }))
+      : base.assets,
     risk: { ...base.risk, ...partial.risk },
     engine: { ...base.engine, ...partial.engine },
     mt5: { ...base.mt5, ...partial.mt5 },

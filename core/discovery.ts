@@ -39,7 +39,12 @@
  */
 
 import type { AssetDefinition } from "./assets";
-import { type BacktestMetrics, computeMetrics, runBacktest } from "./backtest";
+import {
+  type BacktestMetrics,
+  type BacktestModel,
+  computeMetrics,
+  runBacktest,
+} from "./backtest";
 import { assessSignificance, type SignificanceReport } from "./significance";
 import {
   type Candle,
@@ -84,6 +89,13 @@ export const DEFAULT_SEARCH_SPACE: SearchSpace = {
   gradeAStrength: { min: 55, max: 85 },
   gradeBStrength: { min: 45, max: 75 },
   biasNeutralThreshold: { min: 5, max: 35 },
+  // Breakout/momentum family knobs. NOTE: adding entries here changes the
+  // sequence a seeded search draws (the PRNG is shared across knobs), so a
+  // run re-executed after this change explores slightly different configs
+  // than the same seed did before. Reproducibility within a build holds;
+  // across builds it holds only for identical search spaces.
+  breakoutPeriod: { min: 8, max: 80, integer: true },
+  momentumLookback: { min: 6, max: 96, integer: true },
 };
 
 /**
@@ -185,6 +197,12 @@ export type CandidateVerdict =
 
 export interface Candidate {
   config: StrategyConfig;
+  /**
+   * Which scoring model produced the signals. Searching across models lets
+   * the data choose the family, not a hunch — an edge that only exists in
+   * pure trend-following is invisible to a search that never tries it.
+   */
+  model: BacktestModel;
   /** Selection window. */
   train: BacktestMetrics;
   /** Filtering window. */
@@ -217,6 +235,12 @@ export interface DiscoveryOptions {
   space?: SearchSpace;
   base?: StrategyConfig;
   seed?: number;
+  /**
+   * Scoring models to search across. One is drawn per iteration, so a run
+   * with several models splits its budget between them and the Šidák
+   * correction still sees the true total.
+   */
+  models?: BacktestModel[];
   /** Minimum trades in each window before a candidate is believed. */
   minTrades?: number;
   /** Candidates to return. */
@@ -255,6 +279,7 @@ function metricsFor(
   asset: AssetDefinition,
   startIndex: number,
   endIndex: number,
+  model: BacktestModel,
 ): BacktestMetrics {
   // The replay is given every bar up to `endIndex` so indicators are warm, but
   // only trades from `startIndex`. Slicing the window out instead would cost
@@ -266,6 +291,7 @@ function metricsFor(
       asset.pricePrecision,
       startIndex,
       asset.costs,
+      model,
     ),
   );
 }
@@ -302,6 +328,7 @@ function walkForward(
   candles: Candle[],
   config: StrategyConfig,
   asset: AssetDefinition,
+  model: BacktestModel,
   folds = 4,
 ): { foldNetPoints: number[]; profitableFolds: number } {
   const warmup = 60;
@@ -319,6 +346,7 @@ function walkForward(
         asset.pricePrecision,
         start,
         asset.costs,
+        model,
       ),
     );
     foldNetPoints.push(m.netPoints);
@@ -388,6 +416,7 @@ export function discover(
   }
 
   const rand = rng(seed);
+  const models = options.models ?? ["combined"];
   const evaluated: Candidate[] = [];
   let count = 0;
 
@@ -395,8 +424,9 @@ export function discover(
     if (options.shouldStop?.()) break;
     count++;
 
+    const model = models[Math.floor(rand() * models.length)];
     const config = sampleConfig(base, space, rand);
-    const train = metricsFor(candles, config, asset, 60, trainEnd);
+    const train = metricsFor(candles, config, asset, 60, trainEnd, model);
 
     // Cheap rejections first: a configuration that did not trade or lost money
     // on the window it was chosen from cannot become interesting later, and
@@ -405,6 +435,7 @@ export function discover(
       evaluated.push(
         reject(
           config,
+          model,
           train,
           "too_few_trades",
           `Only ${train.trades} trades in training — too few to judge.`,
@@ -416,6 +447,7 @@ export function discover(
       evaluated.push(
         reject(
           config,
+          model,
           train,
           "unprofitable_in_sample",
           "Lost money on its own training window, after costs.",
@@ -430,9 +462,10 @@ export function discover(
       asset,
       trainEnd,
       validationEnd,
+      model,
     );
-    const test = metricsFor(candles, config, asset, validationEnd, n);
-    const overall = metricsFor(candles, config, asset, 60, n);
+    const test = metricsFor(candles, config, asset, validationEnd, n, model);
+    const overall = metricsFor(candles, config, asset, 60, n, model);
 
     const score = scoreMetrics(train, minTrades);
     const decided = overall.wins + overall.losses;
@@ -459,7 +492,7 @@ export function discover(
       // The final gate: does the profit repeat across the timeline? Computed
       // only for candidates that passed everything above, so it costs nothing
       // on the rejects that make up most of the search.
-      const wf = walkForward(candles, config, asset);
+      const wf = walkForward(candles, config, asset, model);
       if (wf.profitableFolds < wf.foldNetPoints.length - 1) {
         verdict = "failed_walk_forward";
         summary =
@@ -482,6 +515,7 @@ export function discover(
 
     evaluated.push({
       config,
+      model,
       train,
       validation,
       test,
@@ -537,6 +571,7 @@ export function discover(
 /** A candidate rejected before its later windows were worth computing. */
 function reject(
   config: StrategyConfig,
+  model: BacktestModel,
   train: BacktestMetrics,
   verdict: CandidateVerdict,
   summary: string,
@@ -544,6 +579,7 @@ function reject(
   const empty = computeMetrics([]);
   return {
     config,
+    model,
     train,
     validation: empty,
     test: empty,

@@ -192,6 +192,7 @@ CREATE TABLE IF NOT EXISTS discovered_strategies (
   symbol         TEXT    NOT NULL,
   interval       TEXT    NOT NULL,
   config         TEXT    NOT NULL,        -- JSON StrategyConfig
+  model          TEXT,                    -- which scoring model the search used
   test_metrics   TEXT    NOT NULL,        -- JSON BacktestMetrics of the untouched window
   overall_metrics TEXT   NOT NULL,        -- JSON BacktestMetrics across all windows
   adjusted_p     REAL    NOT NULL,

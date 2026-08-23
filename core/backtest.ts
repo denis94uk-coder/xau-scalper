@@ -141,16 +141,21 @@ export function computeMetrics(trades: ClosedTrade[]): BacktestMetrics {
 /**
  * Which scoring model generates entries.
  *
- * "combined" is strategy.ts — the original, still what the live engine runs.
- * "trend" and "reversion" score only their own half (core/families.ts), because
- * summed together they cancel: over a clean uptrend the reversion half scores
- * 43 points BEAR while the trend half scores 40 BULL.
+ * "combined" is strategy.ts. The families are core/families.ts: "trend" and
+ * "reversion" score only their own half (because summed they cancel),
+ * "breakout" trades channel escapes and "momentum" trades ranked velocity.
  */
 export type BacktestModel = "combined" | StrategyFamily;
 
 /** Coerce a ScoringModel (which may include "quiet-trend") to a BacktestModel. */
 export function toBacktestModel(model: string | undefined): BacktestModel {
-  if (model === "combined" || model === "trend" || model === "reversion") {
+  if (
+    model === "combined" ||
+    model === "trend" ||
+    model === "reversion" ||
+    model === "breakout" ||
+    model === "momentum"
+  ) {
     return model;
   }
   // "quiet-trend" and undefined both fall back to "combined" so existing

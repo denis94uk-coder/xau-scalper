@@ -168,6 +168,10 @@ const EXCHANGE_ALIASES: Array<[RegExp, string]> = [
 
 export function exchangeSymbolFor(brokerSymbol: string): string | null {
   const norm = brokerSymbol.replace(/[.\-_ ].*$/, "").toUpperCase();
+  // A venue-native symbol ("SOLUSDT", "PEPEUSDT") is its own alias: the free
+  // feed quotes every USDT pair, so the whole research picker must resolve
+  // here instead of falling through to a terminal that may not exist.
+  if (/^[A-Z0-9]{2,15}USDT$/.test(norm)) return norm;
   for (const [pattern, venue] of EXCHANGE_ALIASES) {
     if (!venue) continue;
     if (pattern.test(norm)) return venue;
@@ -181,13 +185,17 @@ export function exchangeSymbolFor(brokerSymbol: string): string | null {
  * The venue returns at most 1000 bars per call, so a two-year window pages
  * forward with startTime until it is covered. Gaps (weekends on crypto aside)
  * are simply absent from the result, matching what the venue has.
+ *
+ * `pageDelayMs` spaces the pages out: a batch job sweeping many symbols would
+ * otherwise spend the feed's rate budget in one burst and get 429s halfway
+ * through. Interactive callers leave it unset; long sweeps set it.
  */
 export async function fetchCandleRange(
   symbol: string,
   interval: string,
   from: number,
   to: number,
-  opts: MarketOptions = {},
+  opts: MarketOptions & { pageDelayMs?: number } = {},
 ): Promise<Candle[]> {
   const doFetch = opts.fetcher ?? fetch;
   const out: Candle[] = [];
@@ -195,6 +203,9 @@ export async function fetchCandleRange(
   const endMs = to * 1000;
 
   while (cursor < endMs) {
+    if (out.length > 0 && opts.pageDelayMs && opts.pageDelayMs > 0) {
+      await new Promise(r => setTimeout(r, opts.pageDelayMs));
+    }
     const url =
       `${BINANCE_API}/klines?symbol=${symbol}&interval=${interval}` +
       `&startTime=${cursor}&endTime=${endMs}&limit=1000`;

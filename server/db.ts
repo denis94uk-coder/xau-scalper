@@ -133,6 +133,19 @@ export class Db {
   /** Apply the schema. Every statement is CREATE ... IF NOT EXISTS, so this is idempotent. */
   migrate(): void {
     this.raw.exec(SCHEMA_SQL);
+    // Columns added after a table first shipped: CREATE IF NOT EXISTS cannot
+    // add them to an existing database, so ALTER here, guarded by the
+    // duplicate-column error an already-migrated database throws.
+    for (const [table, column, ddl] of [
+      ["discovered_strategies", "model", "TEXT"],
+    ] as const) {
+      const cols = this.raw
+        .query<Record<string, unknown>, []>(`PRAGMA table_info(${table})`)
+        .all();
+      if (!cols.some(c => c.name === column)) {
+        this.raw.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+      }
+    }
   }
 
   close(): void {
@@ -837,6 +850,7 @@ export class Db {
     symbol: string;
     interval: string;
     config: StrategyConfig;
+    model?: string;
     testMetrics: BacktestMetrics;
     overallMetrics: BacktestMetrics;
     adjustedP: number;
@@ -845,14 +859,15 @@ export class Db {
   }): number {
     const result = this.raw.run(
       `INSERT INTO discovered_strategies
-       (asset_id, symbol, interval, config, test_metrics, overall_metrics,
+       (asset_id, symbol, interval, config, model, test_metrics, overall_metrics,
         adjusted_p, walk_forward, run_id, pinned_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         s.assetId,
         s.symbol,
         s.interval,
         JSON.stringify(s.config),
+        s.model ?? null,
         JSON.stringify(s.testMetrics),
         JSON.stringify(s.overallMetrics),
         s.adjustedP,
@@ -870,6 +885,7 @@ export class Db {
     symbol: string;
     interval: string;
     config: StrategyConfig;
+    model: string | null;
     testMetrics: BacktestMetrics;
     overallMetrics: BacktestMetrics;
     adjustedP: number;
@@ -902,6 +918,8 @@ export class Db {
           symbol: String(r.symbol),
           interval: String(r.interval),
           config: JSON.parse(String(r.config)) as StrategyConfig,
+          model:
+            r.model === null || r.model === undefined ? null : String(r.model),
           testMetrics: JSON.parse(String(r.test_metrics)) as BacktestMetrics,
           overallMetrics: JSON.parse(
             String(r.overall_metrics),

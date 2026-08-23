@@ -33,7 +33,7 @@ import {
   type StrategyConfig,
 } from "./strategy";
 
-export type StrategyFamily = "trend" | "reversion";
+export type StrategyFamily = "trend" | "reversion" | "breakout" | "momentum";
 
 /**
  * Grade thresholds for one family.
@@ -58,6 +58,42 @@ export interface FamilyThresholds {
  */
 export const TREND_MAX_POINTS = 60; // 25 EMA stack + 10 price/EMA21 + 20 MACD cross + 5 RSI tilt
 export const REVERSION_MAX_POINTS = 53; // 20 RSI + 15 Stoch + 18 BB touch
+export const BREAKOUT_MAX_POINTS = 70; // 30 channel break + 15 squeeze + 10 expansion bar + 10 EMA21 follow-through + 5 RSI tilt
+export const MOMENTUM_MAX_POINTS = 75; // 25 velocity conviction + 15 persistence + 15 MACD agreement + 10 EMA50 side + 10 RSI conviction
+
+function maxPointsFor(family: StrategyFamily): number {
+  switch (family) {
+    case "trend":
+      return TREND_MAX_POINTS;
+    case "reversion":
+      return REVERSION_MAX_POINTS;
+    case "breakout":
+      return BREAKOUT_MAX_POINTS;
+    case "momentum":
+      return MOMENTUM_MAX_POINTS;
+  }
+}
+
+/**
+ * Bars of history each family needs before it can score at all.
+ *
+ * trend/reversion keep the historical 59. breakout needs its full channel
+ * behind the candidate bar; momentum needs its ROC lookback plus enough
+ * sampled history to rank today's velocity against (25 baseline samples).
+ */
+export function familyWarmup(
+  family: StrategyFamily,
+  config: StrategyConfig,
+): number {
+  switch (family) {
+    case "breakout":
+      return Math.max(59, Math.floor(config.breakoutPeriod) + 1);
+    case "momentum":
+      return Math.max(59, Math.floor(config.momentumLookback) + 51);
+    default:
+      return 59;
+  }
+}
 
 export const DEFAULT_FAMILY_THRESHOLDS: Record<
   StrategyFamily,
@@ -77,6 +113,25 @@ export const DEFAULT_FAMILY_THRESHOLDS: Record<
     aExtreme: 3,
     bStrength: 55,
     bExtreme: 2,
+    cStrength: 40,
+  },
+  // The channel break is an extreme by construction and every breakout signal
+  // has one, so A asks for a second (the expansion bar) rather than for
+  // evidence B cannot reach.
+  breakout: {
+    aStrength: 70,
+    aExtreme: 2,
+    bStrength: 55,
+    bExtreme: 0,
+    cStrength: 40,
+  },
+  // Velocity conviction is the family's one extreme; without it there is no
+  // signal at all, so B does not ask for what A already requires.
+  momentum: {
+    aStrength: 70,
+    aExtreme: 1,
+    bStrength: 55,
+    bExtreme: 0,
     cStrength: 40,
   },
 };
@@ -230,6 +285,241 @@ export function scoreReversion(
   return s;
 }
 
+/**
+ * Breakout evidence only: a close outside the channel left by the previous
+ * `config.breakoutPeriod` bars, scored on the quality of the release.
+ *
+ * WHY THIS FAMILY EXISTS
+ * trend reads structure (where the EMAs sit) and reversion reads extremes
+ * (where the oscillators sit); neither has an opinion about a range EXIT,
+ * which is its own event — price leaving a compressed range tends to keep
+ * going, because the stops resting beyond the range become the fuel. That is
+ * a mechanism, not a parameter tweak, which is the bar a new family has to
+ * clear.
+ *
+ * EVENT-DRIVEN BY CONSTRUCTION
+ * Without a fresh channel break the score is zero and the bar returns null.
+ * A breakout family that fired between breakouts would be the trend family
+ * under another name.
+ */
+export function scoreBreakout(
+  candles: Candle[],
+  ind: IndicatorSeries,
+  last: number,
+  config: StrategyConfig,
+): FamilyScore {
+  const { closes, rsi, ema21, atr } = ind;
+  const price = closes[last];
+  const s: FamilyScore = {
+    bull: 0,
+    bear: 0,
+    extremeBull: 0,
+    extremeBear: 0,
+    reasons: [],
+  };
+
+  // The channel spans the bars BEFORE this one — the breakout bar cannot be
+  // part of the range it is escaping.
+  const n = Math.max(2, Math.floor(config.breakoutPeriod));
+  if (last < n) return s;
+
+  let hi = Number.NEGATIVE_INFINITY;
+  let lo = Number.POSITIVE_INFINITY;
+  for (let k = last - n; k <= last - 1; k++) {
+    if (candles[k].high > hi) hi = candles[k].high;
+    if (candles[k].low < lo) lo = candles[k].low;
+  }
+
+  const brokeUp = price > hi;
+  const brokeDown = price < lo;
+  // No fresh break, no opinion.
+  if (!brokeUp && !brokeDown) return s;
+
+  if (brokeUp) {
+    s.bull += 30;
+    s.extremeBull++;
+    s.reasons.push(`Donchian(${n}) high break`);
+  } else {
+    s.bear += 30;
+    s.extremeBear++;
+    s.reasons.push(`Donchian(${n}) low break`);
+  }
+  const dir = brokeUp ? 1 : -1;
+
+  // Squeeze into the break: the band width across the channel window was
+  // materially tighter than the window behind it, so the range being escaped
+  // was compressed rather than already wide. Skipped silently when the bands
+  // have not enough history — context quality must not gate the event itself.
+  let preSum = 0;
+  let preCount = 0;
+  let baseSum = 0;
+  let baseCount = 0;
+  const from = Math.max(0, last - 100);
+  for (let k = from; k < last; k++) {
+    const u = ind.bbUpper[k];
+    const l = ind.bbLower[k];
+    const c = closes[k];
+    if (u === undefined || l === undefined || c <= 0) continue;
+    const w = (u - l) / c;
+    if (k >= last - n) {
+      preSum += w;
+      preCount++;
+    } else {
+      baseSum += w;
+      baseCount++;
+    }
+  }
+  if (preCount > 0 && baseCount > 0) {
+    const pre = preSum / preCount;
+    const base = baseSum / baseCount;
+    if (pre > 0 && base > 0 && pre < base * 0.85) {
+      if (dir > 0) s.bull += 15;
+      else s.bear += 15;
+      s.reasons.push("squeeze into break");
+    }
+  }
+
+  // Expansion bar: the breaking bar's own range against recent volatility.
+  const currentATR = atr[last];
+  if (currentATR !== undefined && currentATR > 0) {
+    const range = candles[last].high - candles[last].low;
+    if (range >= currentATR * 1.5) {
+      if (dir > 0) {
+        s.bull += 10;
+        s.extremeBull++;
+      } else {
+        s.bear += 10;
+        s.extremeBear++;
+      }
+      s.reasons.push("range expansion");
+    }
+  }
+
+  // Follow-through: close on the breakout side of EMA21.
+  if (ema21[last] !== undefined) {
+    if (dir > 0 && price > ema21[last]) {
+      s.bull += 10;
+      s.reasons.push("close above EMA21");
+    } else if (dir < 0 && price < ema21[last]) {
+      s.bear += 10;
+      s.reasons.push("close below EMA21");
+    }
+  }
+
+  // Directional tilt, same reading as the trend family uses.
+  const lastRSI = rsi[last];
+  if (lastRSI !== undefined) {
+    if (dir > 0 && lastRSI > 50) s.bull += 5;
+    else if (dir < 0 && lastRSI < 50) s.bear += 5;
+  }
+
+  return s;
+}
+
+/**
+ * Momentum evidence only: sustained velocity, ranked against the instrument's
+ * own recent speed.
+ *
+ * WHY THIS FAMILY EXISTS
+ * Time-series momentum is the oldest documented anomaly and this system never
+ * scored it: trend infers direction from EMA structure regardless of how fast
+ * price is moving, so a crawl of 0.01%/bar stacks the EMAs exactly like a
+ * 2%/bar run does. Here the size of the move decides whether there is a trade
+ * at all — below the 60th percentile of recent |ROC| the family stays flat,
+ * because slow drift is the trend family's job, not a diluted copy of it.
+ */
+export function scoreMomentum(
+  ind: IndicatorSeries,
+  last: number,
+  config: StrategyConfig,
+): FamilyScore {
+  const { closes, rsi, histogram, ema50 } = ind;
+  const s: FamilyScore = {
+    bull: 0,
+    bear: 0,
+    extremeBull: 0,
+    extremeBear: 0,
+    reasons: [],
+  };
+
+  const lookback = Math.max(2, Math.floor(config.momentumLookback));
+  if (last < lookback + 1) return s;
+
+  const roc = closes[last] - closes[last - lookback];
+  if (roc === 0) return s;
+  const dir = roc > 0 ? 1 : -1;
+
+  // Velocity conviction: rank |ROC| among the recent distribution of |ROC|s
+  // over the same lookback (sampled every other bar). Below the 60th
+  // percentile there is no trade — momentum without velocity is not this
+  // family's signal.
+  const mags: number[] = [];
+  const sampleStart = Math.max(lookback + 1, last - 199);
+  for (let k = sampleStart; k <= last; k += 2) {
+    mags.push(Math.abs(closes[k] - closes[k - lookback]));
+  }
+  if (mags.length < 25) return s;
+  mags.sort((a, b) => a - b);
+  const p60 = mags[Math.floor(mags.length * 0.6)];
+  const p80 = mags[Math.floor(mags.length * 0.8)];
+  const mag = Math.abs(roc);
+  if (mag >= p80) {
+    if (dir > 0) {
+      s.bull += 25;
+      s.extremeBull++;
+    } else {
+      s.bear += 25;
+      s.extremeBear++;
+    }
+    s.reasons.push(`ROC top-20% velocity (${lookback}-bar)`);
+  } else if (mag >= p60) {
+    if (dir > 0) s.bull += 18;
+    else s.bear += 18;
+    s.reasons.push(`ROC elevated velocity (${lookback}-bar)`);
+  } else {
+    return s; // ordinary pace — nothing to trade
+  }
+
+  // Persistence: three consecutive closes stepping in the move's direction.
+  if (
+    closes[last - 2] !== undefined &&
+    ((dir > 0 &&
+      closes[last] > closes[last - 1] &&
+      closes[last - 1] > closes[last - 2]) ||
+      (dir < 0 &&
+        closes[last] < closes[last - 1] &&
+        closes[last - 1] < closes[last - 2]))
+  ) {
+    if (dir > 0) s.bull += 15;
+    else s.bear += 15;
+    s.reasons.push("3-bar persistence");
+  }
+
+  // MACD agrees with the move's direction.
+  const h = histogram[last];
+  if (h !== undefined) {
+    if (dir > 0 && h > 0) s.bull += 15;
+    else if (dir < 0 && h < 0) s.bear += 15;
+    s.reasons.push("MACD agrees");
+  }
+
+  // Structural side of EMA50.
+  if (ema50[last] !== undefined) {
+    if (dir > 0 && closes[last] > ema50[last]) s.bull += 10;
+    else if (dir < 0 && closes[last] < ema50[last]) s.bear += 10;
+  }
+
+  // RSI conviction: past midline in the move's direction, not at an extreme —
+  // an extreme belongs to the reversion family.
+  const lastRSI = rsi[last];
+  if (lastRSI !== undefined) {
+    if (dir > 0 && lastRSI >= 55) s.bull += 10;
+    else if (dir < 0 && lastRSI <= 45) s.bear += 10;
+  }
+
+  return s;
+}
+
 export interface FamilyAnalysis {
   family: StrategyFamily;
   bias: Bias;
@@ -295,7 +585,8 @@ export function analyzeFamilyAt(
     sink.extremeCount = 0;
     sink.grade = null;
   }
-  if (last < 59 || last >= candles.length) return null;
+  if (last < familyWarmup(family, config) || last >= candles.length)
+    return null;
 
   const r = (n: number) => roundTo(n, pricePrecision);
   const price = ind.closes[last];
@@ -304,9 +595,12 @@ export function analyzeFamilyAt(
   const raw =
     family === "trend"
       ? scoreTrend(ind, last, config)
-      : scoreReversion(ind, last, config);
-  const maxPoints =
-    family === "trend" ? TREND_MAX_POINTS : REVERSION_MAX_POINTS;
+      : family === "reversion"
+        ? scoreReversion(ind, last, config)
+        : family === "breakout"
+          ? scoreBreakout(candles, ind, last, config)
+          : scoreMomentum(ind, last, config);
+  const maxPoints = maxPointsFor(family);
 
   const total = raw.bull + raw.bear;
   if (sink) sink.reason = "no_score";
@@ -393,7 +687,7 @@ export function analyzeFamilyCandles(
   config: StrategyConfig = DEFAULT_STRATEGY_CONFIG,
   pricePrecision = 2,
 ): FamilyAnalysis | null {
-  if (candles.length < 60) return null;
+  if (candles.length < familyWarmup(family, config) + 1) return null;
   return analyzeFamilyAt(
     candles,
     precomputeIndicators(candles, config),
