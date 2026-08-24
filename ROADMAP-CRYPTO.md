@@ -23,7 +23,29 @@ mechanisms are instrument-generic), so each cell tests all 27 hypotheses.
 
 ## Scan record
 
-### Round 4 — 2026-08-24, latest: the cost-sensitivity pass
+### Round 5 — 2026-08-24, latest: momentum-48 meets a real exit
+
+`bun run momentum48-test` backtested the round-4 pattern with the live
+engine's actual exit geometry (ATR stop, TP1 limit at 1.2R, breakeven move,
+trail) over three chronological windows on both assets, with lookback 24 as
+control and pooled binomial significance against each result's own
+breakeven. Guards were stated before the run.
+
+    BTCUSDT H1: lb48 net NEGATIVE in all three windows (−5.8k / −12.7k / −3.0k);
+                pooled p = 0.78
+    ETHUSDT H1: +614 / −1053 / +431 — incoherent; pooled p = 0.54
+    control lb24 on both: nothing significant either
+
+**The line is closed.** The fixed-bar scan flattered momentum-48 precisely
+the way core/edgescan.ts's header warned it might: without a stop, holds
+that would have been stopped out keep their open loss off the books, and a
+fixed-hold mean cannot see that shape. Given real exits, the pattern dies.
+PRICE-ONLY ENTRY EDGES ON MAJORS ARE NOW MEASURED TO EXHAUSTION AND CLOSED:
+five rounds, ~700 corrected scan tests plus this exit test, zero survivors.
+
+What remains open is in §"Where opportunity can still be" below.
+
+### Round 4 — 2026-08-24: the cost-sensitivity pass
 
 Question: how much of the catalogue's apparent death is the exit's price
 tag rather than absent information? `bun run cost-sensitivity` runs every
@@ -136,26 +158,23 @@ failure of imagination.
 
 ## Where opportunity can still be — next steps, in order
 
-1. **Give momentum-48 a real exit.** The only cross-asset positive pattern
-   left standing (see round 4). Backtest it with the live engine's actual
-   exit geometry — ATR stop, TP1 limit at 1.2R, breakeven move, trail —
-   on BTC and ETH H1, three windows, honest costs. If it dies there too,
-   price-only entries are fully closed.
-2. **OI archive maturation.** Recording since 2026-08-24; at ~2 months of
+1. **OI archive maturation.** Recording since 2026-08-24; at ~2 months of
    history `bun run edgescan:positioning` measures the oi-* hypotheses for
-   the first time. No action needed except letting the server run.
-3. **Longer horizons on lower-liquidity assets.** Costs scale with bps;
-   edges scale with inefficiency. ZEC-type books move further between
-   fixes than BTC does.
-4. **Cross-asset lead-lag** (BTC → alts) needs injected series support;
+   the first time. No action needed except letting the server run. This is
+   now the only live line on liquid majors.
+2. **Lower-liquidity books, longer horizons.** Costs scale with bps; edges
+   scale with inefficiency. ZEC-type books move further between fixes than
+   BTC does — the batch scanner already covers them (`--top 20`), and the
+   same three-window + real-exit gauntlet applies to anything that shows.
+3. **Cross-asset lead-lag** (BTC → alts) needs injected series support;
    the positioning factories already show the closure pattern to copy.
-5. Whatever survives then graduates to a scoring family via the
+4. Whatever survives then graduates to a scoring family via the
    quiet-trend path (argue mechanism → normalize points → thresholds →
    discovery search space → three-window validation).
 
-Funding-rate hypotheses are measured and closed for now; re-test only with
-a materially different mechanism (e.g., funding *change velocity*, not
-level) and register it before scanning.
+Closed for good unless a NEW mechanism arrives: price-only entries on
+liquid majors (rounds 1–5), funding-level fades (round 3). Re-opening any
+of these requires registering the new claim BEFORE scanning it.
 
 ## Rerun commands
 
@@ -164,6 +183,7 @@ bun run edgescan -- --asset ETHUSDT --interval 1h --days 180   # single asset
 bun run edgescan:batch -- --out tmp/edgescan-batch.json        # price matrix
 bun run edgescan:positioning -- --asset BTCUSDT --interval 1h  # + funding/OI
 bun run cost-sensitivity -- --asset BTCUSDT --interval 1h      # exit-cost lenses
+bun run momentum48-test                                        # real-exit gauntlet
 bun test core/__tests__/hypotheses-crypto.test.ts              # catalogue tests
 bun test core/__tests__/hypotheses-positioning.test.ts         # positioning tests
 ```

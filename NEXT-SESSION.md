@@ -60,9 +60,15 @@ touching hypotheses or scans. Short version:
 - Round 4 (cost sensitivity, `bun run cost-sensitivity`): maker-exit vs
   full-cost lenses over the whole catalogue. Nothing survives significance
   under any lens, but **momentum-48** is positive after a maker exit on
-  BOTH BTC and ETH H1 (5/6 and 4/6 windows). It is the single remaining
-  price-only lead: next step is a runBacktest pass with real exits — see
-  ROADMAP-CRYPTO.md §"Where opportunity can still be".
+  BOTH BTC and ETH H1 (5/6 and 4/6 windows). It was the single remaining
+  price-only lead.
+- Round 5 (`bun run momentum48-test`): momentum-48 with REAL exits —
+  dead. BTC negative in all three windows; ETH incoherent; pooled p=0.78 /
+  0.54; control lookback also nothing. The fixed-bar scan had flattered it
+  exactly as core/edgescan.ts's header warned. PRICE-ONLY ENTRIES ON MAJORS
+  ARE CLOSED. The only live line on liquid majors is the OI archive
+  maturing (~2 months); then lower-liquidity books and lead-lag. Full
+  record: ROADMAP-CRYPTO.md.
 
 ## NEW GOTCHA — the dev server runs with --watch
 

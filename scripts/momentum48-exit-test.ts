@@ -30,8 +30,8 @@ import {
   computeMetrics,
   runBacktest,
 } from "../core/backtest";
-import { DEFAULT_STRATEGY_CONFIG } from "../core/strategy";
 import { assessSignificance } from "../core/significance";
+import { DEFAULT_STRATEGY_CONFIG } from "../core/strategy";
 import { exchangeSymbolFor, fetchCandleRange } from "../server/market";
 
 function flag(name: string): string | undefined {
@@ -92,7 +92,10 @@ async function main() {
     string,
     {
       windows: Array<{ name: string; lb: number; m: BacktestMetrics }>;
-      pooled: Record<number, { sig: ReturnType<typeof assessSignificance>; net: number }>;
+      pooled: Record<
+        number,
+        { sig: ReturnType<typeof assessSignificance>; net: number }
+      >;
     }
   >();
 
@@ -126,7 +129,10 @@ async function main() {
 
     const entry = { windows: [], pooled: {} } as {
       windows: Array<{ name: string; lb: number; m: BacktestMetrics }>;
-      pooled: Record<number, { sig: ReturnType<typeof assessSignificance>; net: number }>;
+      pooled: Record<
+        number,
+        { sig: ReturnType<typeof assessSignificance>; net: number }
+      >;
     };
 
     for (const lb of [lookback, 24]) {
@@ -225,7 +231,9 @@ async function main() {
 
   if (survivedAll) {
     console.log(
-      "\nmomentum-" + lookback + " SURVIVED every stated guard on every asset.\n" +
+      "\nmomentum-" +
+        lookback +
+        " SURVIVED every stated guard on every asset.\n" +
         "Next: registration as a scoring-model default for these assets goes\n" +
         "through the quiet-trend path — and through forward trading on demo\n" +
         "before any size.",
