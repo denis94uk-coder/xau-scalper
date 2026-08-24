@@ -14,7 +14,7 @@ import type {
   FundingEvent,
   OpenInterestPoint,
 } from "../../server/market-futures";
-import type { Candle } from "../../strategy";
+import type { Candle } from "../strategy";
 import {
   fundingExtreme,
   oiConfirmedBreakout,
