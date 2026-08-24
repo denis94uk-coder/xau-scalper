@@ -5,6 +5,7 @@ import {
   FlaskConical,
   GitBranch,
   Layers,
+  Lightbulb,
   Minus,
   Radio,
   Target,
@@ -25,8 +26,8 @@ import { MiniChart } from "@/components/dashboard/MultiTimeframeView";
 import { PriceTicker } from "@/components/dashboard/PriceTicker";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useMutation } from "@/hooks/useLive";
-import { api } from "@/lib/api";
+import { useLive, useMutation } from "@/hooks/useLive";
+import { api, type Idea } from "@/lib/api";
 import {
   analyzeExperimental,
   type ExperimentalAnalysis,
@@ -243,6 +244,9 @@ function ExperimentalContent() {
           biasStrength={activeExp.biasStrength}
         />
       )}
+
+      {/* Trading Ideas — server-generated XAU/USD signals */}
+      <ExperimentalTradingIdeas />
 
       {/* Multi-TF Charts */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -606,6 +610,8 @@ function ExperimentalEntries({
   const handleLog = async (entry: ScalpEntry) => {
     try {
       await logIdea({
+        asset: "PAXGUSDT",
+        source: "experimental",
         direction: entry.direction,
         entryPrice: entry.entryPrice,
         stopLoss: entry.stopLoss,
@@ -728,6 +734,144 @@ function ExperimentalEntries({
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Trading Ideas — server-generated XAU/USD signals
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// Tokenised gold is the XAU/USD proxy and the asset the server's experimental
+// signal source trades (see generateExperimentalSignal in server/engine.ts).
+const SIGNAL_ASSET = "PAXGUSDT";
+
+function ExperimentalTradingIdeas() {
+  const ideas = useLive(
+    () => api.ideas({ asset: SIGNAL_ASSET, limit: 30 }).then(r => r.ideas),
+    ["ideas"],
+  );
+
+  const expIdeas = useMemo(
+    () => (ideas ?? []).filter(i => i.source === "experimental"),
+    [ideas],
+  );
+
+  return (
+    <div className="rounded-xl border border-[#AB47BC]/20 bg-[#AB47BC]/[0.03] p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <Lightbulb className="w-4 h-4 text-[#AB47BC]" />
+        <span className="text-sm font-semibold">Trading Ideas — XAU/USD</span>
+        <span className="text-[10px] text-muted-foreground">
+          Server-generated from the 8-tool 5m confluence · tokenised gold
+          (PAXGUSDT) · tracked even with this page closed
+        </span>
+      </div>
+
+      {expIdeas.length === 0 ? (
+        <div className="text-[11px] text-muted-foreground/60 py-3 text-center">
+          No experimental signals yet — one appears here when the server's
+          8-tool confluence agrees.
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {expIdeas.slice(0, 8).map(idea => (
+            <IdeaRow key={idea.id} idea={idea} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const STATUS_COLORS: Record<Idea["status"], string> = {
+  ACTIVE: "#AB47BC",
+  TP1_HIT: "#00E676",
+  TP2_HIT: "#00E676",
+  STOPPED: "#FF1744",
+  EXPIRED: "#6B7280",
+};
+
+function IdeaRow({ idea }: { idea: Idea }) {
+  const dirColor = idea.direction === "LONG" ? "#00E676" : "#FF1744";
+  const statusColor = STATUS_COLORS[idea.status] ?? "#6B7280";
+  // % of entry — raw points are unreadable on sub-cent assets.
+  const pnlPct =
+    idea.pnlPoints !== null && idea.entryPrice !== 0
+      ? ((idea.pnlPoints / idea.entryPrice) * 100).toFixed(2)
+      : null;
+  const rr =
+    Math.abs(idea.entryPrice - idea.stopLoss) > 0
+      ? (
+          Math.abs(idea.tp2 - idea.entryPrice) /
+          Math.abs(idea.entryPrice - idea.stopLoss)
+        ).toFixed(1)
+      : "—";
+
+  return (
+    <div
+      className="flex items-center gap-3 rounded-lg border px-3 py-2 bg-card/60"
+      style={{ borderColor: `${dirColor}25` }}
+    >
+      <span
+        className="text-[10px] font-bold font-mono px-2 py-0.5 rounded shrink-0"
+        style={{ color: dirColor, backgroundColor: `${dirColor}15` }}
+      >
+        {idea.direction}
+      </span>
+      <span className="text-xs font-mono font-bold text-[#D4A843] shrink-0">
+        XAU/USD
+      </span>
+      <div className="flex flex-col shrink-0">
+        <span className="text-[9px] text-muted-foreground">ENTRY</span>
+        <span className="text-xs font-mono tabular-nums">
+          {idea.entryPrice.toFixed(2)}
+        </span>
+      </div>
+      <div className="flex flex-col shrink-0">
+        <span className="text-[9px] text-muted-foreground">SL</span>
+        <span className="text-xs font-mono tabular-nums text-[#FF1744]">
+          {idea.stopLoss.toFixed(2)}
+        </span>
+      </div>
+      <div className="flex flex-col shrink-0">
+        <span className="text-[9px] text-muted-foreground">TP2</span>
+        <span className="text-xs font-mono tabular-nums text-[#00E676]">
+          {idea.tp2.toFixed(2)}
+        </span>
+      </div>
+      <span className="text-[9px] font-mono text-muted-foreground/60 shrink-0 hidden sm:inline">
+        R:R {rr}
+      </span>
+      <div className="flex-1 min-w-0 hidden md:block">
+        <span className="text-[10px] text-muted-foreground line-clamp-1">
+          {idea.reason}
+        </span>
+      </div>
+      <div className="flex items-center gap-2 ml-auto shrink-0">
+        <span className="text-[10px] font-mono text-muted-foreground hidden sm:inline">
+          {idea.confidence}%
+        </span>
+        <span
+          className="text-[9px] font-bold font-mono px-1.5 py-0.5 rounded"
+          style={{ color: statusColor, backgroundColor: `${statusColor}15` }}
+        >
+          {idea.status.replace("_", " ")}
+        </span>
+        {pnlPct !== null && idea.pnlPoints !== null && (
+          <span
+            className="text-[10px] font-mono font-bold tabular-nums"
+            title={`${idea.pnlPoints >= 0 ? "+" : ""}${idea.pnlPoints} pts`}
+            style={{ color: idea.pnlPoints >= 0 ? "#00E676" : "#FF1744" }}
+          >
+            {idea.pnlPoints >= 0 ? "+" : ""}
+            {pnlPct}%
+          </span>
+        )}
+        <span className="text-[9px] font-mono text-muted-foreground/50 hidden lg:inline">
+          {new Date(idea.createdAt).toLocaleTimeString()}
+        </span>
       </div>
     </div>
   );

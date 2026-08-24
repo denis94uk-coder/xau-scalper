@@ -10,7 +10,7 @@ import {
 import { useState } from "react";
 import { toast } from "sonner";
 import { useLive, useMutation } from "@/hooks/useLive";
-import { api } from "@/lib/api";
+import { api, type Idea } from "@/lib/api";
 
 const STATUS_COLORS: Record<string, string> = {
   ACTIVE: "bg-blue-500/20 text-blue-400 border-blue-500/30",
@@ -19,6 +19,17 @@ const STATUS_COLORS: Record<string, string> = {
   STOPPED: "bg-red-500/20 text-red-400 border-red-500/30",
   EXPIRED: "bg-gray-500/20 text-gray-400 border-gray-500/30",
 };
+
+/**
+ * P&L as % of entry — the only unit comparable across assets. Raw price
+ * points span orders of magnitude between BTC and a sub-cent altcoin, so a
+ * honest 0.0003-point win on SEI and a 140-point win on BTC are the same
+ * trade quality; points stay available per-trade in the journey details.
+ */
+function pnlPct(idea: Idea): number | null {
+  if (idea.pnlPoints === null || idea.entryPrice === 0) return null;
+  return (idea.pnlPoints / idea.entryPrice) * 100;
+}
 
 const SOURCE_ICONS: Record<
   string,
@@ -115,7 +126,7 @@ export function TradingIdeasPage() {
   // Sort
   if (sortField === "pnl") {
     filtered = [...filtered].sort(
-      (a, b) => (b.pnlPoints ?? 0) - (a.pnlPoints ?? 0),
+      (a, b) => (pnlPct(b) ?? 0) - (pnlPct(a) ?? 0),
     );
   } else if (sortField === "confidence") {
     filtered = [...filtered].sort((a, b) => b.confidence - a.confidence);
@@ -131,7 +142,9 @@ export function TradingIdeasPage() {
   const losses = ideas.filter(
     i => i.pnlPoints !== null && i.pnlPoints <= 0,
   ).length;
-  const totalPnl = ideas.reduce((s, i) => s + (i.pnlPoints ?? 0), 0);
+  // Equal-weight sum of per-trade % — raw points cannot be summed across
+  // assets priced orders of magnitude apart.
+  const totalPnl = ideas.reduce((s, i) => s + (pnlPct(i) ?? 0), 0);
   const engineCount = ideas.filter(i => i.source === "engine").length;
 
   return (
@@ -156,7 +169,7 @@ export function TradingIdeasPage() {
         <StatCard label="Losses" value={losses} color="text-red-400" />
         <StatCard
           label="Total P&L"
-          value={`${totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(1)} pts`}
+          value={`${totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)}%`}
           color={totalPnl >= 0 ? "text-emerald-400" : "text-red-400"}
         />
         <StatCard
@@ -298,7 +311,7 @@ export function TradingIdeasPage() {
                       : idea.status.replace("_", " ")}
                   </span>
 
-                  {/* P&L */}
+                  {/* P&L — % of entry; points in the tooltip */}
                   <span
                     className={`text-sm font-mono w-20 text-right ${
                       (idea.pnlPoints ?? 0) > 0
@@ -307,9 +320,14 @@ export function TradingIdeasPage() {
                           ? "text-red-400"
                           : "text-muted-foreground"
                     }`}
+                    title={
+                      idea.pnlPoints !== null
+                        ? `${idea.pnlPoints >= 0 ? "+" : ""}${idea.pnlPoints} pts`
+                        : undefined
+                    }
                   >
-                    {(idea.pnlPoints ?? 0) !== undefined
-                      ? `${(idea.pnlPoints ?? 0) >= 0 ? "+" : ""}${(idea.pnlPoints ?? 0).toFixed(1)}`
+                    {pnlPct(idea) !== null
+                      ? `${pnlPct(idea)! >= 0 ? "+" : ""}${pnlPct(idea)!.toFixed(2)}%`
                       : "—"}
                   </span>
 

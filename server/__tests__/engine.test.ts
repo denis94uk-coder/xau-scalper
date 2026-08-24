@@ -12,6 +12,7 @@ import { type Candle, DEFAULT_STRATEGY_CONFIG } from "../../core/strategy";
 import { Db, type NewIdea } from "../db";
 import {
   applyPrice,
+  generateExperimentalSignal,
   generateForAsset,
   recoverGap,
   syncCandles,
@@ -538,9 +539,17 @@ describe("regime overlay", () => {
     const id = await generateForAsset(feed, ASSET);
     expect(id).not.toBeNull();
     const idea = feed.db.getIdea(id!)!;
-    expect(idea.stop_loss).toBeCloseTo(base.stop_loss * 1.5);
-    expect(idea.tp1).toBeCloseTo(base.tp1 * 1.3);
-    expect(idea.tp2).toBeCloseTo(base.tp2 * 1.3);
+    // Multipliers scale the DISTANCE from entry, not the price level.
+    const e = base.entry_price;
+    expect(idea.stop_loss).toBeCloseTo(e + (base.stop_loss - e) * 1.5, 1);
+    expect(idea.tp1).toBeCloseTo(e + (base.tp1 - e) * 1.3, 1);
+    expect(idea.tp2).toBeCloseTo(e + (base.tp2 - e) * 1.3, 1);
+    // Direction sanity must survive the multipliers: for a LONG the stop
+    // stays below entry and targets stay above it (regression guard against
+    // scaling the levels themselves, which inverted LONG targets).
+    expect(idea.stop_loss).toBeLessThan(idea.entry_price);
+    expect(idea.tp1).toBeGreaterThan(idea.entry_price);
+    expect(idea.tp2).toBeGreaterThan(idea.tp1);
     expect(idea.reason).toContain("regime VOLATILE");
   });
 
@@ -550,5 +559,83 @@ describe("regime overlay", () => {
     const id = await generateForAsset(feed, ASSET);
     expect(id).toBeNull();
     expect(feed.db.listIdeas()).toHaveLength(0);
+  });
+});
+
+// ─── Experimental signal source (XAU/USD 8-tool confluence) ───
+
+const GOLD: AssetDefinition = {
+  ...ASSET,
+  id: "PAXGUSDT",
+  displaySymbol: "XAU/USD",
+  dataSourceSymbol: "PAXGUSDT",
+};
+
+/**
+ * A steady uptrend with a small pullback every sixth bar — enough agreement
+ * across the 8 tools (Supertrend, Heikin Ashi, Squeeze, Ribbon, Order Blocks)
+ * to clear the 60% confluence gate.
+ */
+function goldTrend(bars: number): Candle[] {
+  const out: Candle[] = [];
+  let price = 100;
+  for (let i = 0; i < bars; i++) {
+    const pullback = i % 6 === 4;
+    const open = price;
+    const close = price + (pullback ? -0.2 : 0.5);
+    const gap = pullback ? 0 : 0.15;
+    out.push({
+      time: 1_700_000_000 + i * 300,
+      open,
+      close,
+      high: Math.max(open, close) + 0.05 + gap,
+      low: Math.min(open, close) - 0.05 + gap,
+      volume: 10,
+    });
+    price = close;
+  }
+  return out;
+}
+
+describe("experimental signal source", () => {
+  test("a strong trend logs an experimental idea with sane levels", async () => {
+    const id = await generateExperimentalSignal(
+      { db, fetcher: klineFetcher(goldTrend(120)) },
+      GOLD,
+    );
+    expect(id).not.toBeNull();
+    const idea = db.getIdea(id!)!;
+    expect(idea.source).toBe("experimental");
+    expect(idea.direction).toBe("LONG");
+    expect(idea.stop_loss).toBeLessThan(idea.entry_price);
+    expect(idea.tp1).toBeGreaterThan(idea.entry_price);
+    expect(idea.tp2).toBeGreaterThan(idea.tp1);
+    expect(idea.reason).toContain("[EXP ENGINE]");
+  });
+
+  test("an immediate second signal in the same direction is cooled down", async () => {
+    const deps = { db, fetcher: klineFetcher(goldTrend(120)) };
+    const first = await generateExperimentalSignal(deps, GOLD);
+    expect(first).not.toBeNull();
+    const second = await generateExperimentalSignal(deps, GOLD);
+    expect(second).toBeNull();
+  });
+
+  test("flat candles generate nothing", async () => {
+    // Genuinely featureless: no trend, no gaps, no pullbacks to build zones from.
+    const flat: Candle[] = Array.from({ length: 120 }, (_, i) => ({
+      time: 1_700_000_000 + i * 300,
+      open: 100,
+      close: 100,
+      high: 100.01,
+      low: 99.99,
+      volume: 10,
+    }));
+    const id = await generateExperimentalSignal(
+      { db, fetcher: klineFetcher(flat) },
+      GOLD,
+    );
+    expect(id).toBeNull();
+    expect(db.listIdeas()).toHaveLength(0);
   });
 });

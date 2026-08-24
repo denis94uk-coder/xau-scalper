@@ -38,6 +38,7 @@ import {
   calcATR,
   roundTo,
 } from "../core/strategy";
+import { analyzeExperimental } from "../src/lib/experimentalIndicators";
 import type { Db, TradingIdea } from "./db";
 import { publish } from "./events";
 import {
@@ -316,11 +317,22 @@ export async function generateForAsset(
 
   // Regime SL/TP multipliers widen stops and targets in volatile regimes,
   // tighten them in ranges. Multipliers are 1 when no regime is set yet.
+  // They scale the DISTANCE from entry, not the price level itself —
+  // multiplying the level would drag a long's targets below its entry.
   const slMult = regime?.slMultiplier ?? 1;
   const tpMult = regime?.tpMultiplier ?? 1;
-  const stopLoss = roundTo(a5.stopLoss * slMult, asset.pricePrecision);
-  const tp1 = roundTo(a5.tp1 * tpMult, asset.pricePrecision);
-  const tp2 = roundTo(a5.tp2 * tpMult, asset.pricePrecision);
+  const stopLoss = roundTo(
+    a5.entryPrice + (a5.stopLoss - a5.entryPrice) * slMult,
+    asset.pricePrecision,
+  );
+  const tp1 = roundTo(
+    a5.entryPrice + (a5.tp1 - a5.entryPrice) * tpMult,
+    asset.pricePrecision,
+  );
+  const tp2 = roundTo(
+    a5.entryPrice + (a5.tp2 - a5.entryPrice) * tpMult,
+    asset.pricePrecision,
+  );
   const regimeTag = regime
     ? ` · regime ${regime.regime} (SL ${slMult}× TP ${tpMult}×)`
     : "";
@@ -385,8 +397,102 @@ export async function generateSignals(deps: EngineDeps): Promise<void> {
       console.error(`[engine] ${asset.id}:`, msg);
     }
   }
+
+  // Experimental source: the 8-tool XAU/USD scalper runs server-side on
+  // tokenised gold so its signals exist even with no dashboard open. It is a
+  // quarantine strategy — graded ideas, not MT5-executed ones — so it stays
+  // out of the per-asset model path above.
+  const gold = assets.find(a => a.id === EXPERIMENTAL_ASSET_ID);
+  if (gold) {
+    try {
+      const id = await generateExperimentalSignal(deps, gold);
+      if (id !== null) publish("ideas");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      deps.db.recordRun(`signals:experimental`, false, msg);
+      console.error(`[engine] experimental:`, msg);
+    }
+  }
   deps.db.recordRun("signals", true);
   publish("engine");
+}
+
+// ─── Experimental signal source (XAU/USD 8-tool confluence) ───
+
+const EXPERIMENTAL_ASSET_ID = "PAXGUSDT";
+/** One signal per direction per window, matching the dashboard's old cadence. */
+const EXPERIMENTAL_COOLDOWN_MS = 15 * 60 * 1000;
+/** Below this the confluence is a coin flip, not a signal. */
+const EXPERIMENTAL_MIN_CONFIDENCE = 60;
+
+/**
+ * Generate an experimental XAU/USD idea from the 8-tool confluence.
+ *
+ * Deliberately independent of the per-asset model gates (grade, portfolio,
+ * regime): this is a research source whose ideas are tracked and measured, not
+ * executed. It does respect a shared per-direction cooldown with the engine
+ * source, so both sources can never stack the same bet at once.
+ */
+export async function generateExperimentalSignal(
+  deps: EngineDeps,
+  asset: AssetDefinition,
+): Promise<number | null> {
+  const { db } = deps;
+  const now = deps.now?.() ?? Date.now();
+
+  const candles = await syncCandles(deps, asset, SIGNAL_INTERVAL);
+  const analysis = analyzeExperimental(candles);
+  if (!analysis) return null;
+  const sig = analysis.experimentalSignal;
+  if (
+    sig.direction === "NEUTRAL" ||
+    sig.confidence < EXPERIMENTAL_MIN_CONFIDENCE
+  )
+    return null;
+  const entry = analysis.entries.find(e => e.direction === sig.direction);
+  if (!entry) return null;
+
+  // Never stack: an open experimental idea in the same direction is still
+  // working, and a fresh same-direction idea from ANY source means the bet is
+  // already on.
+  if (
+    db
+      .openIdeas(asset.id)
+      .some(i => i.direction === sig.direction && i.source === "experimental")
+  )
+    return null;
+  const last = db.lastIdeaAt(asset.id, sig.direction);
+  if (last !== null && now - last < EXPERIMENTAL_COOLDOWN_MS) return null;
+
+  const id = db.createIdea({
+    asset: asset.id,
+    direction: sig.direction,
+    source: "experimental",
+    entryPrice: entry.entryPrice,
+    stopLoss: entry.stopLoss,
+    tp1: entry.tp1,
+    tp2: entry.tp2,
+    confidence: sig.confidence,
+    reason: `[EXP ENGINE] ${entry.reason}`,
+    timeframe: "5m",
+    bias: analysis.bias,
+    biasStrength: analysis.biasStrength,
+    spotPrice: entry.entryPrice,
+  });
+
+  db.logJournal({
+    eventType: "SIGNAL_GENERATED",
+    asset: asset.id,
+    source: "experimental",
+    ideaId: id,
+    direction: sig.direction,
+    price: entry.entryPrice,
+    details:
+      `[${asset.displaySymbol}] EXP ${sig.direction} @ ${entry.entryPrice} | ` +
+      `SL ${entry.stopLoss} | TP1 ${entry.tp1} | TP2 ${entry.tp2} | ${sig.confidence}% | ` +
+      `confluence ${sig.combinedScore}%`,
+  });
+  return id;
 }
 
 // ─── Exit evaluation ───
