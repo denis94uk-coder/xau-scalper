@@ -14,9 +14,20 @@ interface PriceData {
 interface PriceTickerProps {
   data: PriceData | null;
   loading?: boolean;
+  /**
+   * Display symbol for the asset being shown. The ticker is generic — it
+   * renders whatever price it is handed — so the label must come from the
+   * caller's selection rather than a name baked in here. Defaults to the
+   * MT5 gold page's instrument for callers that have no selector.
+   */
+  symbol?: string;
 }
 
-export function PriceTicker({ data, loading }: PriceTickerProps) {
+export function PriceTicker({
+  data,
+  loading,
+  symbol = "XAU/USD",
+}: PriceTickerProps) {
   const [flashClass, setFlashClass] = useState("");
   const prevPrice = useRef<number | null>(null);
 
@@ -54,7 +65,7 @@ export function PriceTicker({ data, loading }: PriceTickerProps) {
         <div className="flex items-center gap-2 shrink-0">
           <div className="w-2 h-2 rounded-full bg-[#D4A843] animate-pulse-dot" />
           <span className="text-xs font-medium text-muted-foreground tracking-wider uppercase">
-            XAU/USD
+            {symbol}
           </span>
         </div>
         <span className="text-2xl sm:text-3xl md:text-4xl font-bold tabular-nums font-mono tracking-tight">

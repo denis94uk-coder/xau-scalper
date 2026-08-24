@@ -446,7 +446,10 @@ function DashboardContent() {
           </select>
         </div>
         <div className="flex-1 min-w-0 overflow-hidden">
-          <PriceTicker data={priceData} />
+          <PriceTicker
+            data={priceData}
+            symbol={assets.find(a => a.id === symbol)?.symbol ?? symbol}
+          />
         </div>
         <div className="flex items-center gap-2 self-end sm:self-center flex-wrap min-w-0 ml-auto">
           {dataSource && (
