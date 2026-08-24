@@ -23,6 +23,39 @@ mechanisms are instrument-generic), so each cell tests all 27 hypotheses.
 
 ## Scan record
 
+### Round 4 — 2026-08-24, latest: the cost-sensitivity pass
+
+Question: how much of the catalogue's apparent death is the exit's price
+tag rather than absent information? `bun run cost-sensitivity` runs every
+hypothesis over identical bars at three lenses — zero cost (gross signal),
+maker exit (entry crosses, exit fills as a resting limit, the live TP1's
+treatment), and the standing full-cost pessimism. Same tests each time, so
+no extra testing budget is spent; each lens corrects for its own set.
+
+BTCUSDT H1 (400d) and ETHUSDT H1:
+
+    BTC: 21 of 27 judged → 6 positive after a maker exit · 3 gross-positive
+         but dead even at maker costs · 12 carry nothing at all
+    ETH: similar shape; nothing survives significance under any lens
+
+The one pattern worth carrying forward is **momentum-48** (48-bar momentum
+continuation):
+
+    BTC  maker +25.5/hold  n=794  windows 5/6   gross +81.5/hold
+    ETH  maker +2.1/hold   n=794  windows 4/6   gross +4.0/hold
+
+Positive expectancy after realistic best-case exits on both assets, majority
+of windows positive on both — but it does NOT clear the Šidák bar under any
+lens, so it is a candidate for the next measurement, not a finding. The
+honest next step is the one the scanner always names: give momentum-48 a
+real exit (runBacktest with ATR stop + limit take-profits) and see whether
+the edge survives contact with an actual trade shape. That test costs
+nothing in discovery budget because it is not another scan.
+
+Also confirmed: the maker-vs-full gap on these tiers is small (~0.5 bps);
+the decisive gap is between zero and any cost (~5–7 bps). Exit engineering
+matters less than entry selection here — which is why the nulls above stand.
+
 ### Round 3 — 2026-08-24, later: positioning data
 
 Built the feed the price-only nulls were pointing at:
@@ -103,18 +136,14 @@ failure of imagination.
 
 ## Where opportunity can still be — next steps, in order
 
-1. ~~**Build our own open-interest archive.**~~ **DONE, 2026-08-24.** The
-   engine now samples perp OI every 15 minutes into `oi_snapshots`
-   (`server/intel/oiRecorder.ts`, on by default; `TEO_OI_RECORDER=off` to
-   stop it). First tick already archived 42 symbols × 500 observations.
-   The positioning scanner unions the archive with the venue feed
-   automatically. At ~2 months of history the `oi-*` rows reach
-   MIN_OCCURRENCES and become measurable for the first time — no action
-   needed except letting the server run.
-2. **Model maker exits before condemning strategies.** The scanner's exit
-   pays full crossing costs; the live strategy's TP1 is a resting limit
-   (maker). A candidate killed by 13 bps may survive 5–7 bps — worth a
-   cost-sensitivity pass before any family is written.
+1. **Give momentum-48 a real exit.** The only cross-asset positive pattern
+   left standing (see round 4). Backtest it with the live engine's actual
+   exit geometry — ATR stop, TP1 limit at 1.2R, breakeven move, trail —
+   on BTC and ETH H1, three windows, honest costs. If it dies there too,
+   price-only entries are fully closed.
+2. **OI archive maturation.** Recording since 2026-08-24; at ~2 months of
+   history `bun run edgescan:positioning` measures the oi-* hypotheses for
+   the first time. No action needed except letting the server run.
 3. **Longer horizons on lower-liquidity assets.** Costs scale with bps;
    edges scale with inefficiency. ZEC-type books move further between
    fixes than BTC does.
@@ -134,6 +163,7 @@ level) and register it before scanning.
 bun run edgescan -- --asset ETHUSDT --interval 1h --days 180   # single asset
 bun run edgescan:batch -- --out tmp/edgescan-batch.json        # price matrix
 bun run edgescan:positioning -- --asset BTCUSDT --interval 1h  # + funding/OI
+bun run cost-sensitivity -- --asset BTCUSDT --interval 1h      # exit-cost lenses
 bun test core/__tests__/hypotheses-crypto.test.ts              # catalogue tests
 bun test core/__tests__/hypotheses-positioning.test.ts         # positioning tests
 ```

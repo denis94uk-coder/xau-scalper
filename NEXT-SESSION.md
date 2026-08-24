@@ -57,6 +57,12 @@ touching hypotheses or scans. Short version:
   `oi_snapshots` for all enabled binance assets. First tick archived
   42 × 500 rows. In ~2 months `bun run edgescan:positioning` measures the
   oi-* hypotheses for the first time. Nothing to do but let it run.
+- Round 4 (cost sensitivity, `bun run cost-sensitivity`): maker-exit vs
+  full-cost lenses over the whole catalogue. Nothing survives significance
+  under any lens, but **momentum-48** is positive after a maker exit on
+  BOTH BTC and ETH H1 (5/6 and 4/6 windows). It is the single remaining
+  price-only lead: next step is a runBacktest pass with real exits — see
+  ROADMAP-CRYPTO.md §"Where opportunity can still be".
 
 ## NEW GOTCHA — the dev server runs with --watch
 
