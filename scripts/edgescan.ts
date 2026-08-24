@@ -1,20 +1,32 @@
 /**
- * Scan the hypothesis catalogue against your broker's bars.
+ * Scan the hypothesis catalogue against real bars.
  *
  * Every model in this system so far has been an exit strategy wrapped around an
  * entry nobody had shown predicts anything. This asks the prior question: hold
  * a fixed number of bars, pay a round trip, and see whether any of the claims
- * in core/hypotheses.ts moves the mean away from zero by more than the number
- * of claims tested can explain.
+ * in core/hypotheses.ts and core/hypotheses-crypto.ts moves the mean away from
+ * zero by more than the number of claims tested can explain.
+ *
+ * Two data paths:
+ *   MT5:<SYMBOL>  broker bars already synced by 'mt5:sync', measured spread.
+ *   <VENUE>       any Binance USDT pair (BTCUSDT, ETHUSDT, …), fetched live
+ *                 from the free feed, tier-estimated costs.
  *
  * Usage:
- *   bun run edgescan -- --asset MT5:XAUUSD --interval 5m --horizon 12
+ *   bun run edgescan -- --asset MT5:XAUUSD --interval 5m
+ *   bun run edgescan -- --asset BTCUSDT --interval 1h --days 180
  */
 
-import { mt5Asset } from "../core/assets";
+import { getAsset, mt5Asset, unconfiguredExchangeAsset } from "../core/assets";
+import type { CostModel } from "../core/costs";
 import { MIN_OCCURRENCES, scanEdges, survives } from "../core/edgescan";
 import { HYPOTHESES } from "../core/hypotheses";
+import { CRYPTO_HYPOTHESES } from "../core/hypotheses-crypto";
+import type { Candle } from "../core/strategy";
 import { db as openDb } from "../server/db";
+import { exchangeSymbolFor, fetchCandleRange } from "../server/market";
+
+const ALL_HYPOTHESES = [...HYPOTHESES, ...CRYPTO_HYPOTHESES];
 
 function parseArgs(argv: string[]) {
   const a: Record<string, string> = {};
@@ -33,45 +45,100 @@ function parseArgs(argv: string[]) {
     interval: a.interval ?? "5m",
     horizon: a.horizon ? Number(a.horizon) : 12,
     windows: a.windows ? Number(a.windows) : 6,
+    days: a.days ? Number(a.days) : 120,
   };
 }
 
-function main() {
+interface PreparedScan {
+  label: string;
+  costNote: string;
+  candles: Candle[];
+  costs: CostModel;
+}
+
+async function main() {
   const cli = parseArgs(process.argv.slice(2));
   const database = openDb();
-  const sym = cli.asset.replace(/^MT5:/, "");
-  const meta = database.getSetting<{
-    symbol: string;
-    digits: number;
-    assetId: string;
-    spreadBps: number;
-  }>(`mt5:${sym}`);
 
-  if (!meta) {
-    console.error(`No MT5 data for "${sym}". Run 'bun run mt5:sync' first.`);
-    process.exit(1);
+  let prepared: PreparedScan;
+
+  if (/^MT5:/i.test(cli.asset)) {
+    // ─── Broker bars: unchanged legacy path ───
+    const sym = cli.asset.replace(/^MT5:/i, "");
+    const meta = database.getSetting<{
+      symbol: string;
+      digits: number;
+      assetId: string;
+      spreadBps: number;
+    }>(`mt5:${sym}`);
+
+    if (!meta) {
+      console.error(`No MT5 data for "${sym}". Run 'bun run mt5:sync' first.`);
+      process.exit(1);
+    }
+
+    const asset = mt5Asset(meta);
+    const candles = database.getCandles(meta.assetId, cli.interval, 100_000);
+    if (candles.length < 500) {
+      console.error(
+        `Only ${candles.length} bars — a scan below ~500 measures noise.`,
+      );
+      process.exit(1);
+    }
+    prepared = {
+      label: `${meta.symbol} ${cli.interval} | ${candles.length} bars`,
+      costNote: `Spread ${meta.spreadBps.toFixed(2)} bps (measured)`,
+      candles,
+      costs: asset.costs,
+    };
+  } else {
+    // ─── Exchange feed: any venue USDT pair ───
+    const venue = exchangeSymbolFor(cli.asset.toUpperCase());
+    if (!venue) {
+      console.error(
+        `"${cli.asset}" does not map to a Binance feed symbol. Use a ` +
+          `USDT pair (BTCUSDT) or an MT5 symbol (MT5:XAUUSD).`,
+      );
+      process.exit(1);
+    }
+    const asset = getAsset(venue) ?? unconfiguredExchangeAsset(venue);
+
+    const to = Math.floor(Date.now() / 1000);
+    const from = to - cli.days * 86_400;
+    console.log(`Fetching ${venue} ${cli.interval} for ${cli.days} days…`);
+    const candles = await fetchCandleRange(venue, cli.interval, from, to);
+
+    if (candles.length < 500) {
+      console.error(
+        `Only ${candles.length} bars from the exchange feed — a scan below ~500 measures noise.`,
+      );
+      process.exit(1);
+    }
+    const c = asset.costs;
+    const roundTrip = (
+      2 * c.halfSpreadBps +
+      c.takerFeeBps +
+      c.makerFeeBps +
+      c.stopSlippageBps
+    ).toFixed(1);
+    prepared = {
+      label: `${venue} ${cli.interval} | ${candles.length} bars | last ${cli.days}d`,
+      costNote:
+        `Tier costs ≈${roundTrip} bps round trip` +
+        (getAsset(venue) ? "" : " (pessimistic: asset not configured)"),
+      candles,
+      costs: asset.costs,
+    };
   }
 
-  const asset = mt5Asset(meta);
-  const candles = database.getCandles(meta.assetId, cli.interval, 100_000);
-  if (candles.length < 500) {
-    console.error(
-      `Only ${candles.length} bars — a scan below ~500 measures noise.`,
-    );
-    process.exit(1);
-  }
-
-  const report = scanEdges(candles, HYPOTHESES, asset.costs, {
+  const report = scanEdges(prepared.candles, ALL_HYPOTHESES, prepared.costs, {
     horizonBars: cli.horizon,
     windows: cli.windows,
   });
 
+  console.log(`\nEdge scan: ${prepared.label} | hold ${cli.horizon} bars`);
   console.log(
-    `\nEdge scan: ${meta.symbol} ${cli.interval} | ${candles.length} bars | ` +
-      `hold ${cli.horizon} bars`,
-  );
-  console.log(
-    `Spread ${meta.spreadBps.toFixed(2)} bps (measured) · ` +
+    `${prepared.costNote} · ` +
       `${report.hypothesesTested} hypotheses · ` +
       `each must beat p < ${report.adjustedAlpha.toFixed(5)} ` +
       `for the set to hold at ${report.familyAlpha}\n`,
@@ -108,7 +175,7 @@ function main() {
     console.log(
       `${unmeasured.length} of ${report.results.length} hypotheses fired fewer than ` +
         `${MIN_OCCURRENCES} times and are not judged either way. That is a\n` +
-        "statement about how much history you synced, not about gold.",
+        "statement about how much history you synced, not about the market.",
     );
   }
 
