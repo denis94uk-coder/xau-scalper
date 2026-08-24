@@ -17,6 +17,7 @@
     "start": "bun run server/index.ts",
     "serve": "bun run --watch server/index.ts",
     "edge-audit": "bun run --bun scripts/edge-audit.ts",
+    "discover": "bun run --bun scripts/batch-discovery.ts",
     "kronos:fetch": "python -m teo.forecasting.fetch_weights",
     "test": "bun test core server src",
     "package": "bun run --bun scripts/package-app.ts",

@@ -48,8 +48,10 @@ function JourneyTimeline({
   return (
     <div className="flex items-center gap-1 flex-wrap">
       {log.map((entry, i) => {
+        // TRAIL_SL_HIT is neutral: after TP1 the stop sits at breakeven or
+        // better, so the exit can be a win or a scratch — the dot stays blue.
         const isWin = entry.event === "TP1_HIT" || entry.event === "TP2_HIT";
-        const isLoss = entry.event === "SL_HIT" || entry.event === "STOPPED";
+        const isLoss = entry.event === "SL_HIT";
         const color = isWin
           ? "bg-emerald-500"
           : isLoss
@@ -119,14 +121,16 @@ export function TradingIdeasPage() {
     filtered = [...filtered].sort((a, b) => b.confidence - a.confidence);
   }
 
-  // Stats
+  // Stats — classified by realized P&L, not status: a trailing-stop exit
+  // (STOPPED) can book a profit after TP1 moves the SL to breakeven, and the
+  // server's own performance counts (`pnl_points > 0`) use the same rule.
   const active = ideas.filter(
     i => i.status === "ACTIVE" || i.status === "TP1_HIT",
   ).length;
-  const wins = ideas.filter(
-    i => i.status === "TP1_HIT" || i.status === "TP2_HIT",
+  const wins = ideas.filter(i => (i.pnlPoints ?? 0) > 0).length;
+  const losses = ideas.filter(
+    i => i.pnlPoints !== null && i.pnlPoints <= 0,
   ).length;
-  const losses = ideas.filter(i => i.status === "STOPPED").length;
   const totalPnl = ideas.reduce((s, i) => s + (i.pnlPoints ?? 0), 0);
   const engineCount = ideas.filter(i => i.source === "engine").length;
 
@@ -253,6 +257,11 @@ export function TradingIdeasPage() {
                     {idea.direction}
                   </span>
 
+                  {/* Asset */}
+                  <span className="text-xs font-mono font-semibold text-[#D4A843] shrink-0">
+                    {idea.asset}
+                  </span>
+
                   {/* Source */}
                   <SrcIcon className={`w-3.5 h-3.5 ${src.color} shrink-0`} />
 
@@ -275,13 +284,18 @@ export function TradingIdeasPage() {
                     <JourneyTimeline log={idea.events ?? []} />
                   </div>
 
-                  {/* Status badge */}
+                  {/* Status badge — a STOPPED exit with positive P&L is a
+                      trailed win (SL was at breakeven or better after TP1) */}
                   <span
                     className={`text-[10px] font-medium px-2 py-0.5 rounded border ${
-                      STATUS_COLORS[idea.status]
+                      idea.status === "STOPPED" && (idea.pnlPoints ?? 0) > 0
+                        ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+                        : STATUS_COLORS[idea.status]
                     }`}
                   >
-                    {idea.status.replace("_", " ")}
+                    {idea.status === "STOPPED" && (idea.pnlPoints ?? 0) > 0
+                      ? "TRAIL WIN"
+                      : idea.status.replace("_", " ")}
                   </span>
 
                   {/* P&L */}
@@ -385,6 +399,7 @@ export function TradingIdeasPage() {
                     <div className="text-xs space-y-1">
                       <div className="text-muted-foreground">{idea.reason}</div>
                       <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+                        <span>{idea.asset}</span>
                         <span>TF: {idea.timeframe}</span>
                         <span>
                           Bias: {idea.bias} ({idea.biasStrength}%)

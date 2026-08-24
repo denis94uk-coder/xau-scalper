@@ -23,7 +23,11 @@
  */
 
 import { existsSync } from "node:fs";
-import type { AssetDefinition } from "../core/assets";
+import {
+  type AssetDefinition,
+  getAsset,
+  unconfiguredExchangeAsset,
+} from "../core/assets";
 import type { AppConfig } from "../core/config";
 import { toAssetDefinition } from "../core/config";
 import {
@@ -221,6 +225,7 @@ async function execute(
         symbol: input.symbol,
         interval: input.interval,
         config: c.config,
+        model: c.model,
         testMetrics: c.test,
         overallMetrics: c.overall,
         adjustedP: c.adjustedPValue,
@@ -290,7 +295,7 @@ async function gatherCandles(
     update(run, {
       status: "downloading",
       progress: 0.05,
-      message: `Downloading ${venue} from the free exchange feed — no MetaTrader needed…`,
+      message: `Downloading ${venue} history…`,
     });
 
     const candles = await fetchCandleRange(
@@ -559,10 +564,13 @@ function finalise(
 /**
  * The asset definition to score against.
  *
- * A configured asset brings the operator's own precision and measured costs.
- * An unconfigured symbol — someone exploring NAS100 before adding it — gets a
- * default definition, because refusing to research anything not already
- * configured would put a chicken-and-egg step in front of the feature.
+ * Order of preference: the operator's configured instrument (their own
+ * precision and measured costs), then a curated registry entry, then an
+ * exchange-native stand-in, and only then the broker template. An unconfigured
+ * symbol — someone exploring an asset before adding it — must still be
+ * researchable, because refusing would put a chicken-and-egg step in front of
+ * the feature; but it must not silently inherit the FIRST configured asset's
+ * gold costs, which would misprice every scalp on every other market.
  */
 function findAssetDefinition(
   cfg: AppConfig,
@@ -573,6 +581,9 @@ function findAssetDefinition(
     a => a.id === assetId || a.dataSourceSymbol === symbol,
   );
   if (configured) return toAssetDefinition(configured);
+
+  const venue = exchangeSymbolFor(symbol);
+  if (venue) return getAsset(venue) ?? unconfiguredExchangeAsset(venue);
 
   const template = cfg.assets[0];
   return toAssetDefinition({

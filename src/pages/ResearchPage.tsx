@@ -1,6 +1,6 @@
 /**
  * Strategy discovery — pick an instrument, a timeframe and a date range, and
- * the app pulls the history from your terminal and searches for a strategy.
+ * the app pulls the history and searches for a strategy.
  *
  * WHAT THIS PAGE IS CAREFUL ABOUT
  * A screen that says "found a strategy: +4,812 points" is easy to build and
@@ -22,14 +22,16 @@
 
 import {
   AlertTriangle,
+  ArrowRight,
   CheckCircle2,
+  ChevronDown,
   Download,
   Loader2,
   Search,
   Sparkles,
   XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -40,8 +42,21 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
 import {
   Select,
@@ -64,21 +79,54 @@ import {
   api,
   type BacktestMetrics,
   type DiscoveryCandidate,
+  type ResearchableAsset,
   type ResearchRun,
 } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
-const INTERVALS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"];
+const INTERVALS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"] as const;
 
-/** Instruments people usually reach for, as a starting point rather than a limit. */
-const COMMON_SYMBOLS = [
-  "XAUUSD",
-  "NAS100",
-  "US30",
-  "SPX500",
-  "EURUSD",
-  "GBPUSD",
-  "USDJPY",
-  "BTCUSD",
+/** Bar spacing in seconds, for the "how much history is this" estimate. */
+const INTERVAL_SECONDS: Record<string, number> = {
+  "1m": 60,
+  "5m": 300,
+  "15m": 900,
+  "30m": 1800,
+  "1h": 3600,
+  "4h": 14400,
+  "1d": 86400,
+};
+
+/** Shown before the server answers, and if it never does. */
+const FALLBACK_UNIVERSE: ResearchableAsset[] = [
+  {
+    symbol: "BTCUSDT",
+    assetId: "BTCUSDT",
+    display: "BTC/USD",
+    source: "binance",
+    configured: true,
+  },
+  {
+    symbol: "ETHUSDT",
+    assetId: "ETHUSDT",
+    display: "ETH/USD",
+    source: "binance",
+    configured: false,
+  },
+  {
+    symbol: "PAXGUSDT",
+    assetId: "PAXGUSDT",
+    display: "XAU/USD",
+    source: "binance",
+    configured: false,
+  },
+  {
+    symbol: "XAUUSD",
+    assetId: "MT5:XAUUSD",
+    display: "XAUUSD",
+    source: "mt5",
+    configured: false,
+  },
 ];
 
 const VERDICT_LABEL: Record<DiscoveryCandidate["verdict"], string> = {
@@ -99,6 +147,141 @@ function toSeconds(date: string): number {
 function toDateInput(seconds: number): string {
   return new Date(seconds * 1000).toISOString().slice(0, 10);
 }
+
+function daysAgo(days: number): string {
+  return toDateInput(Math.floor(Date.now() / 1000) - days * 86_400);
+}
+
+/**
+ * Expected bar count for the chosen window.
+ *
+ * Crypto trades continuously so nearly every theoretical bar exists; broker
+ * feeds close nights and weekends. The estimate exists so the operator can
+ * tell a deep enough window from one the three-way split cannot use — before
+ * spending minutes on a download.
+ */
+function estimateBars(
+  interval: string,
+  fromDate: string,
+  toDate: string,
+  source: "binance" | "mt5",
+): number | null {
+  const step = INTERVAL_SECONDS[interval];
+  const fromSec = toSeconds(fromDate);
+  const toSec = toSeconds(toDate);
+  if (!step || !Number.isFinite(fromSec) || !Number.isFinite(toSec))
+    return null;
+  const coverage = source === "mt5" ? 0.6 : 0.95;
+  return Math.max(0, Math.floor(((toSec - fromSec) / step) * coverage));
+}
+
+// ─── Instrument picker ───
+
+function SourceBadge({ source }: { source: "binance" | "mt5" }) {
+  return source === "binance" ? (
+    <Badge variant="secondary" className="text-[10px] px-1.5">
+      exchange
+    </Badge>
+  ) : (
+    <Badge
+      variant="outline"
+      className="text-[10px] px-1.5 text-amber-600 dark:text-amber-400"
+    >
+      broker
+    </Badge>
+  );
+}
+
+function AssetPicker({
+  universe,
+  value,
+  onSelect,
+}: {
+  universe: ResearchableAsset[];
+  value: ResearchableAsset;
+  onSelect: (asset: ResearchableAsset) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  // Grouping mirrors the layers the server assembled them in: what you trade,
+  // then everything the free feed covers, then instruments only a terminal has.
+  const yours = useMemo(() => universe.filter(a => a.configured), [universe]);
+  const exchange = useMemo(
+    () =>
+      universe
+        .filter(a => !a.configured && a.source === "binance")
+        .slice(0, 400),
+    [universe],
+  );
+  const broker = useMemo(
+    () => universe.filter(a => !a.configured && a.source === "mt5"),
+    [universe],
+  );
+
+  const row = (a: ResearchableAsset) => (
+    <CommandItem
+      key={a.assetId}
+      value={`${a.symbol} ${a.display}`}
+      onSelect={() => {
+        onSelect(a);
+        setOpen(false);
+      }}
+      className="justify-between"
+    >
+      <span className="flex items-center gap-2">
+        {a.display}
+        {a.assetId !== a.display && (
+          <span className="text-xs text-muted-foreground">{a.symbol}</span>
+        )}
+      </span>
+      <SourceBadge source={a.source} />
+    </CommandItem>
+  );
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="w-full justify-between font-normal"
+        >
+          <span className="flex items-center gap-2 truncate">
+            {value.display}
+            <SourceBadge source={value.source} />
+          </span>
+          <ChevronDown className="h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[340px] p-0" align="start">
+        <Command>
+          <CommandInput placeholder="Search symbol…" />
+          <CommandList className="max-h-[320px]">
+            <CommandEmpty>No instrument matches.</CommandEmpty>
+            {yours.length > 0 && (
+              <CommandGroup heading="Your instruments">
+                {yours.map(row)}
+              </CommandGroup>
+            )}
+            {exchange.length > 0 && (
+              <CommandGroup heading="Crypto — free exchange feed">
+                {exchange.map(row)}
+              </CommandGroup>
+            )}
+            {broker.length > 0 && (
+              <CommandGroup heading="Broker — needs MetaTrader 5">
+                {broker.map(row)}
+              </CommandGroup>
+            )}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+// ─── Results ───
 
 function MetricsColumn({
   title,
@@ -258,14 +441,42 @@ function CandidateCard({
 }
 
 export function ResearchPage() {
-  const [symbol, setSymbol] = useState("NAS100");
+  const [universe, setUniverse] =
+    useState<ResearchableAsset[]>(FALLBACK_UNIVERSE);
+  const [selected, setSelected] = useState<ResearchableAsset>(
+    FALLBACK_UNIVERSE[0],
+  );
   const [interval, setIntervalValue] = useState("15m");
-  const [from, setFrom] = useState("2024-01-01");
+  const [from, setFrom] = useState(daysAgo(365));
   const [to, setTo] = useState(toDateInput(Math.floor(Date.now() / 1000)));
   const [iterations, setIterations] = useState(500);
   const [run, setRun] = useState<ResearchRun | null>(null);
   const [starting, setStarting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // One fetch on mount. A few hundred kilobytes of pair names once a day is
+  // not worth an SSE channel or cache invalidation logic.
+  useEffect(() => {
+    let alive = true;
+    api
+      .researchSymbols()
+      .then(r => {
+        if (!alive) return;
+        setUniverse(r.symbols);
+        // Prefer the real entry for whatever is selected so costs/configured
+        // flags reflect the live configuration.
+        setSelected(prev => {
+          const match = r.symbols.find(s => s.assetId === prev.assetId);
+          return match ?? prev;
+        });
+      })
+      .catch(() => {
+        // The fallback universe keeps the page usable offline.
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // Polled rather than pushed over the event stream. A run reports progress
   // continuously for minutes, and broadcasting each tick to every connected tab
@@ -306,7 +517,8 @@ export function ResearchPage() {
     setStarting(true);
     try {
       const started = await api.startResearch({
-        symbol: symbol.trim(),
+        assetId: selected.assetId,
+        symbol: selected.symbol,
         interval,
         from: fromSec,
         to: toSec,
@@ -343,6 +555,22 @@ export function ResearchPage() {
     run?.status === "downloading" ||
     run?.status === "searching";
 
+  const barsEstimate = estimateBars(interval, from, to, selected.source);
+  const shallow = barsEstimate !== null && barsEstimate < 2000;
+
+  const preset = (days: number, label: string) => (
+    <Button
+      key={label}
+      type="button"
+      variant={from === daysAgo(days) ? "secondary" : "ghost"}
+      size="sm"
+      className="h-7 px-2 text-xs"
+      onClick={() => setFrom(daysAgo(days))}
+    >
+      {label}
+    </Button>
+  );
+
   return (
     <div className="space-y-4 max-w-5xl">
       <div>
@@ -351,9 +579,10 @@ export function ResearchPage() {
           Strategy discovery
         </h1>
         <p className="text-sm text-muted-foreground">
-          Pick an instrument and a period. The app pulls the history from your
-          MetaTrader 5 terminal and searches for a strategy that survives data
-          it never saw.
+          Pick an instrument and a period. History comes from the exchange feed
+          when it covers the symbol, or from your broker terminal for everything
+          else — then the search looks for a strategy that survives data it
+          never saw.
         </p>
       </div>
 
@@ -361,31 +590,39 @@ export function ResearchPage() {
         <CardHeader className="pb-3">
           <CardTitle className="text-base">What to search</CardTitle>
           <CardDescription>
-            Use the symbol exactly as your broker spells it. Two years of 15m
-            bars is about 50,000 — enough for a three-way split to mean
-            something.
+            Two years of 15-minute bars is roughly 45,000 — enough for the
+            three-way split to mean something. Under a couple thousand bars the
+            windows get too small to trust.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="grid gap-4 lg:grid-cols-[minmax(220px,1fr)_130px_150px_150px_140px] sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label className="text-xs font-medium">Instrument</Label>
-              <Input
-                value={symbol}
-                onChange={e => setSymbol(e.target.value.toUpperCase())}
-                list="common-symbols"
+              <AssetPicker
+                universe={universe}
+                value={selected}
+                onSelect={setSelected}
               />
-              <datalist id="common-symbols">
-                {COMMON_SYMBOLS.map(s => (
-                  <option key={s} value={s} />
-                ))}
-              </datalist>
+              <p className="text-xs text-muted-foreground leading-snug flex items-center gap-1">
+                {selected.source === "binance" ? (
+                  <>
+                    <ArrowRight className="h-3 w-3 shrink-0" />
+                    History from the free exchange feed — no terminal needed.
+                  </>
+                ) : (
+                  <>
+                    <AlertTriangle className="h-3 w-3 shrink-0 text-amber-500" />
+                    Needs a running MetaTrader 5 terminal.
+                  </>
+                )}
+              </p>
             </div>
 
             <div className="space-y-1.5">
               <Label className="text-xs font-medium">Timeframe</Label>
               <Select value={interval} onValueChange={setIntervalValue}>
-                <SelectTrigger>
+                <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -427,10 +664,32 @@ export function ResearchPage() {
                 onChange={e => setIterations(Number(e.target.value))}
               />
               <p className="text-xs text-muted-foreground leading-snug">
-                More is not better: every extra attempt raises the bar the
-                winner must clear.
+                More attempts raise the bar the winner must clear.
               </p>
             </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <div className="flex items-center gap-1 rounded-md border p-0.5">
+              {preset(30, "1M")}
+              {preset(91, "3M")}
+              {preset(182, "6M")}
+              {preset(365, "1Y")}
+              {preset(730, "2Y")}
+            </div>
+            {barsEstimate !== null && (
+              <p
+                className={cn(
+                  "text-xs tabular-nums",
+                  shallow
+                    ? "text-amber-600 dark:text-amber-400"
+                    : "text-muted-foreground",
+                )}
+              >
+                ≈{barsEstimate.toLocaleString()} bars expected
+                {shallow && " — thin for a three-way split"}
+              </p>
+            )}
           </div>
 
           <div className="flex items-center gap-2">

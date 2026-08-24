@@ -51,20 +51,50 @@ function makeSnapshot(
   },
 ): PriceData {
   const spread = price * 0.0003;
+  const r = (n: number) => smartRound(n, price);
   return {
-    price: round2(price),
-    bid: round2(price - spread / 2),
-    ask: round2(price + spread / 2),
-    high24h: round2(opts?.high24h ?? price * 1.005),
-    low24h: round2(opts?.low24h ?? price * 0.995),
-    change24h: round2(opts?.change24h ?? 0),
-    changePct24h: round2(opts?.changePct24h ?? 0),
+    price: r(price),
+    bid: r(price - spread / 2),
+    ask: r(price + spread / 2),
+    high24h: r(opts?.high24h ?? price * 1.005),
+    low24h: r(opts?.low24h ?? price * 0.995),
+    change24h: r(opts?.change24h ?? 0),
+    changePct24h: Math.round((opts?.changePct24h ?? 0) * 100) / 100,
     timestamp: Date.now(),
     source,
   };
 }
 
-export async function fetchGoldPrice(asset = "PAXGUSDT"): Promise<PriceData> {
+/**
+ * Decimal places that suit the price's magnitude.
+ *
+ * Two decimals was a gold assumption. On a sub-cent meme coin it rounds the
+ * entire price to zero; on BTC it is right. One rule for every asset in a
+ * top-100 registry has to follow magnitude, not a fixed constant.
+ */
+export function priceDecimals(reference: number): number {
+  const abs = Math.abs(reference);
+  if (abs >= 100) return 2;
+  if (abs >= 1) return 4;
+  if (abs >= 0.01) return 5;
+  return 8;
+}
+
+function smartRound(n: number, reference: number): number {
+  const dp = priceDecimals(reference);
+  return Math.round(n * 10 ** dp) / 10 ** dp;
+}
+
+/**
+ * Format a price-scale number with decimals that suit its magnitude.
+ * Gold's fixed two decimals would render a SHIB price as 0.00.
+ */
+export function fmtPrice(n: number | undefined | null): string {
+  if (n === undefined || n === null || Number.isNaN(n)) return "—";
+  return n.toFixed(priceDecimals(n));
+}
+
+export async function fetchGoldPrice(asset = "BTCUSDT"): Promise<PriceData> {
   const res = await fetch(`${apiBase()}/api/prices?symbols=${asset}`, {
     signal: AbortSignal.timeout(8000),
   });
@@ -103,17 +133,22 @@ const BINANCE_INTERVALS: Record<string, string> = {
   "3m": "3m",
   "5m": "5m",
   "15m": "15m",
+  "30m": "30m",
+  "1h": "1h",
+  "4h": "4h",
+  "1d": "1d",
 };
 
 export async function fetchGoldCandles(
   interval: string,
   limit = 200,
+  symbol = "BTCUSDT",
 ): Promise<Candle[]> {
   const binanceInterval = BINANCE_INTERVALS[interval] || "5m";
   const base = apiBase();
 
   try {
-    const url = `${base}/api/klines?symbol=PAXGUSDT&interval=${binanceInterval}&limit=${limit}`;
+    const url = `${base}/api/klines?symbol=${symbol}&interval=${binanceInterval}&limit=${limit}`;
     const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
 
     if (!res.ok) throw new Error(`API returned ${res.status}`);
@@ -122,11 +157,10 @@ export async function fetchGoldCandles(
     // leak past it.
     return (await res.json()) as Candle[];
   } catch (e: any) {
-    console.error(`Failed to fetch candles (${interval}):`, e.message);
+    console.error(
+      `Failed to fetch candles for ${symbol} (${interval}):`,
+      e.message,
+    );
     throw e;
   }
-}
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
 }

@@ -26,7 +26,6 @@ import {
 
 const mainNav = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/experimental", label: "Experimental Lab", icon: FlaskConical },
 ];
 
 const signalsNav = [
@@ -37,6 +36,13 @@ const signalsNav = [
 const trackingNav = [
   { href: "/performance", label: "Performance", icon: BarChart3 },
   { href: "/risk", label: "Risk Manager", icon: Shield },
+];
+
+// Development focus is crypto-first (BTC, ETH, the liquid top-100). The
+// traditional-asset and MT5-bridge work lives here, kept apart so it cannot
+// pull the main flow sideways.
+const experimentalNav = [
+  { href: "/experimental", label: "Experimental Lab", icon: FlaskConical },
 ];
 
 const systemNav = [
@@ -135,6 +141,25 @@ function SidebarNav() {
 
       <SidebarGroup>
         <SidebarGroupLabel className="text-[10px] text-muted-foreground uppercase tracking-wider">
+          Experimental
+        </SidebarGroupLabel>
+        <SidebarGroupContent>
+          <SidebarMenu>
+            {experimentalNav.map(item => (
+              <NavLink
+                key={item.href}
+                href={item.href}
+                label={item.label}
+                icon={item.icon}
+                isActive={isActive(item.href)}
+              />
+            ))}
+          </SidebarMenu>
+        </SidebarGroupContent>
+      </SidebarGroup>
+
+      <SidebarGroup>
+        <SidebarGroupLabel className="text-[10px] text-muted-foreground uppercase tracking-wider">
           System
         </SidebarGroupLabel>
         <SidebarGroupContent>
@@ -166,7 +191,7 @@ function SidebarHeaderContent() {
         className="flex items-center gap-2.5 px-2 py-1 font-semibold text-lg"
       >
         <div className="size-8 rounded-lg bg-gradient-to-br from-[#D4A843] to-[#9A7A30] flex items-center justify-center">
-          <span className="text-[#0A0C10] font-bold text-sm font-mono">Au</span>
+          <span className="text-[#0A0C10] font-bold text-sm font-mono">T</span>
         </div>
         <span>{APP_NAME}</span>
       </Link>

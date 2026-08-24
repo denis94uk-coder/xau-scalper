@@ -8,7 +8,11 @@ interface ScalpingToolbarProps {
   analysis3m: ScalpAnalysis | null;
   analysis5m: ScalpAnalysis | null;
   analysis15m: ScalpAnalysis | null;
-  activeTimeframe: "1m" | "3m" | "5m" | "15m";
+  analysis30m: ScalpAnalysis | null;
+  analysis1h: ScalpAnalysis | null;
+  analysis4h: ScalpAnalysis | null;
+  analysis1d: ScalpAnalysis | null;
+  activeTimeframe: "1m" | "3m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d";
 }
 
 const BIAS_COLORS = {
@@ -34,6 +38,10 @@ export function ScalpingToolbar({
   analysis3m,
   analysis5m,
   analysis15m,
+  analysis30m,
+  analysis1h,
+  analysis4h,
+  analysis1d,
   activeTimeframe,
 }: ScalpingToolbarProps) {
   const activeAnalysis =
@@ -43,7 +51,15 @@ export function ScalpingToolbar({
         ? analysis3m
         : activeTimeframe === "5m"
           ? analysis5m
-          : analysis15m;
+          : activeTimeframe === "15m"
+            ? analysis15m
+            : activeTimeframe === "30m"
+              ? analysis30m
+              : activeTimeframe === "1h"
+                ? analysis1h
+                : activeTimeframe === "4h"
+                  ? analysis4h
+                  : analysis1d;
 
   if (!activeAnalysis) {
     return (
@@ -62,6 +78,10 @@ export function ScalpingToolbar({
     { label: "3M", analysis: analysis3m },
     { label: "5M", analysis: analysis5m },
     { label: "15M", analysis: analysis15m },
+    { label: "30M", analysis: analysis30m },
+    { label: "1H", analysis: analysis1h },
+    { label: "4H", analysis: analysis4h },
+    { label: "1D", analysis: analysis1d },
   ];
 
   const alignedCount = tfBiases.filter(

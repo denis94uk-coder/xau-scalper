@@ -4,7 +4,14 @@ import { getSession, type SessionInfo } from "@/lib/indicators";
 
 /** Sessions defined in UTC hours — the underlying logic always uses UTC */
 const SESSIONS_UTC = [
-  { name: "ASIAN", label: "Asian", start: 0, end: 8, color: "#6366F1" },
+  {
+    name: "ASIAN",
+    label: "Asian",
+    start: 0,
+    end: 8,
+    color: "#EF4444",
+    noTrade: true,
+  },
   {
     name: "LONDON",
     label: "London",
@@ -127,6 +134,7 @@ export function SessionBar() {
 
   const londonKz = localSessions.find(s => s.name === "LONDON");
   const nyKz = localSessions.find(s => s.name === "NEW_YORK");
+  const asianSess = localSessions.find(s => s.name === "ASIAN");
 
   return (
     <div className="rounded-xl border border-border bg-card p-2 sm:p-3">
@@ -134,19 +142,25 @@ export function SessionBar() {
       <div className="flex flex-wrap items-center justify-between gap-1 mb-2">
         <div className="flex items-center gap-2">
           <span className="text-[10px] font-medium text-muted-foreground tracking-wider uppercase">
-            Market Session
+            Kill Zones
           </span>
-          <span
-            className="text-xs font-bold font-mono px-2 py-0.5 rounded"
-            style={{
-              color: session.isKillZone ? "#FFD600" : "var(--foreground)",
-              backgroundColor: session.isKillZone
-                ? "rgba(255,214,0,0.12)"
-                : "rgba(255,255,255,0.05)",
-            }}
-          >
-            {session.label}
-          </span>
+          {session.isNoTrade ? (
+            <span className="text-xs font-bold font-mono px-2 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/25 animate-pulse-dot">
+              ⛔ NO TRADE — ASIAN
+            </span>
+          ) : (
+            <span
+              className="text-xs font-bold font-mono px-2 py-0.5 rounded"
+              style={{
+                color: session.isKillZone ? "#FFD600" : "var(--foreground)",
+                backgroundColor: session.isKillZone
+                  ? "rgba(255,214,0,0.12)"
+                  : "rgba(255,255,255,0.05)",
+              }}
+            >
+              {session.label}
+            </span>
+          )}
         </div>
         <span className="text-[10px] font-mono text-muted-foreground">
           {formatShortTime(now)} {tzAbbrev}
@@ -157,6 +171,16 @@ export function SessionBar() {
       <div className="relative h-5 rounded-lg overflow-hidden bg-secondary/20 border border-border/30">
         {segments.map(s => {
           const isActive = s.name === session.name;
+          const bg =
+            s.name === "ASIAN"
+              ? `repeating-linear-gradient(45deg, ${s.color}33, ${s.color}33 3px, transparent 3px, transparent 7px)`
+              : `${s.color}${isActive ? "30" : "12"}`;
+          const labelColor =
+            s.name === "ASIAN"
+              ? "#F87171"
+              : isActive
+                ? s.color
+                : `${s.color}80`;
           if (s.end < s.start) {
             const w1 = ((24 - s.start) / 24) * 100;
             const w2 = (s.end / 24) * 100;
@@ -167,13 +191,13 @@ export function SessionBar() {
                   style={{
                     left: `${(s.start / 24) * 100}%`,
                     width: `${w1}%`,
-                    backgroundColor: `${s.color}${isActive ? "30" : "12"}`,
+                    background: bg,
                     borderRight: "1px solid rgba(255,255,255,0.06)",
                   }}
                 >
                   <span
                     className="text-[7px] sm:text-[8px] font-mono font-bold tracking-wider truncate px-0.5"
-                    style={{ color: isActive ? s.color : `${s.color}80` }}
+                    style={{ color: labelColor }}
                   >
                     {s.label}
                   </span>
@@ -183,7 +207,7 @@ export function SessionBar() {
                   style={{
                     left: "0%",
                     width: `${w2}%`,
-                    backgroundColor: `${s.color}${isActive ? "30" : "12"}`,
+                    background: bg,
                     borderRight: "1px solid rgba(255,255,255,0.06)",
                   }}
                 />
@@ -197,13 +221,13 @@ export function SessionBar() {
               style={{
                 left: `${s.left}%`,
                 width: `${s.width}%`,
-                backgroundColor: `${s.color}${isActive ? "30" : "12"}`,
+                background: bg,
                 borderRight: "1px solid rgba(255,255,255,0.06)",
               }}
             >
               <span
                 className="text-[7px] sm:text-[8px] font-mono font-bold tracking-wider truncate px-0.5"
-                style={{ color: isActive ? s.color : `${s.color}80` }}
+                style={{ color: labelColor }}
               >
                 {s.label}
               </span>
@@ -246,21 +270,41 @@ export function SessionBar() {
         <div className="flex items-center gap-1">
           <div
             className="w-2 h-2 rounded-sm"
+            style={{
+              background:
+                "repeating-linear-gradient(45deg, rgba(239,68,68,0.5), rgba(239,68,68,0.5) 2px, transparent 2px, transparent 4px)",
+            }}
+          />
+          <span className="text-[8px] text-muted-foreground">NO TRADE</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <div
+            className="w-2 h-2 rounded-sm"
             style={{ backgroundColor: "rgba(255,214,0,0.4)" }}
           />
           <span className="text-[8px] text-muted-foreground">Kill Zone</span>
         </div>
         <span className="text-[8px] text-muted-foreground">
-          London KZ:{" "}
+          Asian:{" "}
+          {asianSess ? `${fmtH(asianSess.start)}–${fmtH(asianSess.end)}` : "—"}{" "}
+          · London KZ:{" "}
           {londonKz
             ? `${fmtH(londonKz.kzStart!)}–${fmtH(londonKz.kzEnd!)}`
             : "—"}{" "}
           · NY KZ: {nyKz ? `${fmtH(nyKz.kzStart!)}–${fmtH(nyKz.kzEnd!)}` : "—"}{" "}
-          {tzAbbrev}
+          UTC
         </span>
-        {!session.isKillZone && session.name !== "OFF_HOURS" && (
+        {session.isNoTrade ? (
+          <span className="text-[8px] text-red-400/80 sm:ml-auto">
+            ⛔ Asian session — no-trade zone, wait for London open
+          </span>
+        ) : session.isKillZone ? (
+          <span className="text-[8px] text-[#FFD600]/90 sm:ml-auto">
+            ✓ {session.kzLabel} — prime entry window
+          </span>
+        ) : (
           <span className="text-[8px] text-yellow-500/70 sm:ml-auto">
-            ⚠ Outside kill zone — signals may be weaker
+            ⚠ Outside kill zone — best entries at London/NY open
           </span>
         )}
       </div>

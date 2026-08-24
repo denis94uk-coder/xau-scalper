@@ -510,6 +510,15 @@ export interface StartRunInput {
   minTrades?: number;
 }
 
+/** One entry of the research picker universe, served by /api/research/symbols. */
+export interface ResearchableAsset {
+  symbol: string;
+  assetId: string;
+  display: string;
+  source: "binance" | "mt5";
+  configured: boolean;
+}
+
 export const api = {
   assets: () => get<{ assets: AssetInfo[] }>("/api/assets"),
 
@@ -521,8 +530,17 @@ export const api = {
     post<{ ok: true; id: number }>("/api/ideas", body),
   deleteIdea: (id: number) => del<{ ok: true }>(`/api/ideas/${id}`),
 
-  journal: (opts: { asset?: string; limit?: number } = {}) =>
-    get<{ entries: JournalEntry[] }>(`/api/journal${q(opts)}`),
+  journal: (
+    opts: {
+      asset?: string;
+      limit?: number;
+      /** Event types to leave out server-side (e.g. ENGINE_RUN heartbeat). */
+      exclude?: string[];
+    } = {},
+  ) =>
+    get<{ entries: JournalEntry[] }>(
+      `/api/journal${q({ ...opts, exclude: opts.exclude?.join(",") })}`,
+    ),
   journalCounts: () => get<Record<string, number>>("/api/journal/counts"),
 
   performance: (opts: { asset?: string } = {}) =>
@@ -558,6 +576,8 @@ export const api = {
   mt5Sync: () => post<Mt5SyncOutcome>("/api/mt5/sync"),
 
   researchRuns: () => get<{ runs: ResearchRun[] }>("/api/research/runs"),
+  researchSymbols: () =>
+    get<{ symbols: ResearchableAsset[] }>("/api/research/symbols"),
   startResearch: (input: StartRunInput) =>
     post<ResearchRun>("/api/research/runs", input),
   research: (id: string) =>

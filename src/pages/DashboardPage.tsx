@@ -8,7 +8,6 @@ import {
 } from "react";
 import { LiquiditySweepPanel } from "@/components/dashboard/LiquiditySweepPanel";
 import { MacroCorrelation } from "@/components/dashboard/MacroCorrelation";
-import { MarketSessionBar } from "@/components/dashboard/MarketSessionBar";
 import { MiniChart } from "@/components/dashboard/MultiTimeframeView";
 import { NewsShield } from "@/components/dashboard/NewsShield";
 import { PriceTicker } from "@/components/dashboard/PriceTicker";
@@ -17,6 +16,8 @@ import { ScalpingToolbar } from "@/components/dashboard/ScalpingToolbar";
 import { SessionBar } from "@/components/dashboard/SessionBar";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { type AssetInfo, api } from "@/lib/api";
+import { APP_NAME } from "@/lib/constants";
 import {
   analyzeForScalping,
   calcATR,
@@ -30,9 +31,12 @@ import {
   type Candle,
   fetchGoldCandles,
   fetchGoldPrice,
+  fmtPrice,
   type PriceData,
 } from "@/lib/priceApi";
 
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Error Boundary — catches rendering crashes
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Error Boundary — catches rendering crashes
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -73,28 +77,70 @@ class ErrorBoundary extends Component<
   }
 }
 
-type Timeframe = "1m" | "3m" | "5m" | "15m";
+type Timeframe = "1m" | "3m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d";
 
 function DashboardContent() {
+  const [assets, setAssets] = useState<AssetInfo[]>([]);
+  const [symbol, setSymbol] = useState<string>("BTCUSDT");
+  const [strategy, setStrategy] = useState<{
+    atrSlMultiplier: number;
+    tp1R: number;
+    tp2R: number;
+  } | null>(null);
   const [priceData, setPriceData] = useState<PriceData | null>(null);
   const [candles1m, setCandles1m] = useState<Candle[]>([]);
   const [candles3m, setCandles3m] = useState<Candle[]>([]);
   const [candles5m, setCandles5m] = useState<Candle[]>([]);
   const [candles15m, setCandles15m] = useState<Candle[]>([]);
+  const [candles30m, setCandles30m] = useState<Candle[]>([]);
+  const [candles1h, setCandles1h] = useState<Candle[]>([]);
+  const [candles4h, setCandles4h] = useState<Candle[]>([]);
+  const [candles1d, setCandles1d] = useState<Candle[]>([]);
   const [activeTimeframe, setActiveTimeframe] = useState<Timeframe>("5m");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [dataSource, setDataSource] = useState<string>("");
 
+  // The registry of configured assets, for the symbol selector. Defaults to
+  // BTC when present — the dashboard follows the crypto focus now.
+  useEffect(() => {
+    api
+      .assets()
+      .then(r => {
+        const enabled = r.assets.filter(
+          a => a.enabled && a.dataSource === "binance",
+        );
+        setAssets(enabled);
+        if (enabled.length > 0 && !enabled.some(a => a.id === symbol)) {
+          setSymbol(enabled.find(a => a.id === "BTCUSDT")?.id ?? enabled[0].id);
+        }
+      })
+      .catch(e => console.error("asset list failed:", e));
+    api
+      .config()
+      .then(cfg => {
+        const btc = cfg.assets.find(a => a.id === symbol) ?? cfg.assets[0];
+        if (btc) {
+          setStrategy({
+            atrSlMultiplier: btc.config.atrSlMultiplier,
+            tp1R: btc.config.tp1R,
+            tp2R: btc.config.tp2R,
+          });
+        }
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbol]);
+
   // Phase 1: Load price + active timeframe first (fast initial paint)
   const loadCritical = useCallback(
-    async (tf: Timeframe, showRefresh = false) => {
+    async (tf: Timeframe, sym: string, showRefresh = false) => {
       try {
         if (showRefresh) setRefreshing(true);
         const [priceResult, candleResult] = await Promise.allSettled([
-          fetchGoldPrice(),
-          fetchGoldCandles(tf),
+          fetchGoldPrice(sym),
+          fetchGoldCandles(tf, 200, sym),
         ]);
         if (priceResult.status === "fulfilled") {
           setPriceData(priceResult.value);
@@ -106,6 +152,10 @@ function DashboardContent() {
             "3m": setCandles3m,
             "5m": setCandles5m,
             "15m": setCandles15m,
+            "30m": setCandles30m,
+            "1h": setCandles1h,
+            "4h": setCandles4h,
+            "1d": setCandles1d,
           };
           setters[tf](candleResult.value);
         }
@@ -121,36 +171,57 @@ function DashboardContent() {
   );
 
   // Phase 2: Background-load remaining timeframes (non-blocking)
-  const loadRemaining = useCallback(async (activeTf: Timeframe) => {
-    const allTfs: Timeframe[] = ["1m", "3m", "5m", "15m"];
-    const remaining = allTfs.filter(tf => tf !== activeTf);
-    const setters: Record<Timeframe, (c: Candle[]) => void> = {
-      "1m": setCandles1m,
-      "3m": setCandles3m,
-      "5m": setCandles5m,
-      "15m": setCandles15m,
-    };
-    const results = await Promise.allSettled(
-      remaining.map(tf => fetchGoldCandles(tf)),
-    );
-    remaining.forEach((tf, i) => {
-      if (results[i].status === "fulfilled") {
-        setters[tf]((results[i] as PromiseFulfilledResult<Candle[]>).value);
-      }
-    });
-  }, []);
+  const loadRemaining = useCallback(
+    async (activeTf: Timeframe, sym: string) => {
+      const allTfs: Timeframe[] = [
+        "1m",
+        "3m",
+        "5m",
+        "15m",
+        "30m",
+        "1h",
+        "4h",
+        "1d",
+      ];
+      const remaining = allTfs.filter(tf => tf !== activeTf);
+      const setters: Record<Timeframe, (c: Candle[]) => void> = {
+        "1m": setCandles1m,
+        "3m": setCandles3m,
+        "5m": setCandles5m,
+        "15m": setCandles15m,
+        "30m": setCandles30m,
+        "1h": setCandles1h,
+        "4h": setCandles4h,
+        "1d": setCandles1d,
+      };
+      const results = await Promise.allSettled(
+        remaining.map(tf => fetchGoldCandles(tf, 200, sym)),
+      );
+      remaining.forEach((tf, i) => {
+        if (results[i].status === "fulfilled") {
+          setters[tf]((results[i] as PromiseFulfilledResult<Candle[]>).value);
+        }
+      });
+    },
+    [],
+  );
 
   // Full reload (for refresh button & interval)
-  const loadAll = useCallback(async (showRefresh = false) => {
+  const loadAll = useCallback(async (sym: string, showRefresh = false) => {
     try {
       if (showRefresh) setRefreshing(true);
-      const [priceResult, c1, c3, c5, c15] = await Promise.allSettled([
-        fetchGoldPrice(),
-        fetchGoldCandles("1m"),
-        fetchGoldCandles("3m"),
-        fetchGoldCandles("5m"),
-        fetchGoldCandles("15m"),
-      ]);
+      const [priceResult, c1, c3, c5, c15, c30, c1h, c4h, c1d] =
+        await Promise.allSettled([
+          fetchGoldPrice(sym),
+          fetchGoldCandles("1m", 200, sym),
+          fetchGoldCandles("3m", 200, sym),
+          fetchGoldCandles("5m", 200, sym),
+          fetchGoldCandles("15m", 200, sym),
+          fetchGoldCandles("30m", 200, sym),
+          fetchGoldCandles("1h", 200, sym),
+          fetchGoldCandles("4h", 200, sym),
+          fetchGoldCandles("1d", 200, sym),
+        ]);
       if (priceResult.status === "fulfilled") {
         setPriceData(priceResult.value);
         setDataSource(priceResult.value.source);
@@ -159,6 +230,10 @@ function DashboardContent() {
       if (c3.status === "fulfilled") setCandles3m(c3.value);
       if (c5.status === "fulfilled") setCandles5m(c5.value);
       if (c15.status === "fulfilled") setCandles15m(c15.value);
+      if (c30.status === "fulfilled") setCandles30m(c30.value);
+      if (c1h.status === "fulfilled") setCandles1h(c1h.value);
+      if (c4h.status === "fulfilled") setCandles4h(c4h.value);
+      if (c1d.status === "fulfilled") setCandles1d(c1d.value);
       setLastRefresh(new Date());
     } catch (err) {
       console.error("Failed to load data:", err);
@@ -168,13 +243,16 @@ function DashboardContent() {
     }
   }, []);
 
-  // Initial mount: fast critical load, then background rest
+  // Initial mount: fast critical load, then background rest. Re-runs when the
+  // selected asset changes.
   useEffect(() => {
-    loadCritical(activeTimeframe).then(() => loadRemaining(activeTimeframe));
-    const interval = setInterval(() => loadAll(), 30000);
+    loadCritical(activeTimeframe, symbol).then(() =>
+      loadRemaining(activeTimeframe, symbol),
+    );
+    const interval = setInterval(() => loadAll(symbol), 30000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadRemaining, loadCritical, loadAll, activeTimeframe]);
+  }, [loadRemaining, loadCritical, loadAll, activeTimeframe, symbol]);
 
   const activeCandles =
     activeTimeframe === "1m"
@@ -183,7 +261,15 @@ function DashboardContent() {
         ? candles3m
         : activeTimeframe === "5m"
           ? candles5m
-          : candles15m;
+          : activeTimeframe === "15m"
+            ? candles15m
+            : activeTimeframe === "30m"
+              ? candles30m
+              : activeTimeframe === "1h"
+                ? candles1h
+                : activeTimeframe === "4h"
+                  ? candles4h
+                  : candles1d;
 
   // Scalping analysis per timeframe — wrapped in try/catch for safety
   const analysis1m = useMemo(() => {
@@ -214,6 +300,34 @@ function DashboardContent() {
       return null;
     }
   }, [candles15m]);
+  const analysis30m = useMemo(() => {
+    try {
+      return analyzeForScalping(candles30m);
+    } catch {
+      return null;
+    }
+  }, [candles30m]);
+  const analysis1h = useMemo(() => {
+    try {
+      return analyzeForScalping(candles1h);
+    } catch {
+      return null;
+    }
+  }, [candles1h]);
+  const analysis4h = useMemo(() => {
+    try {
+      return analyzeForScalping(candles4h);
+    } catch {
+      return null;
+    }
+  }, [candles4h]);
+  const analysis1d = useMemo(() => {
+    try {
+      return analyzeForScalping(candles1d);
+    } catch {
+      return null;
+    }
+  }, [candles1d]);
 
   const signal = useMemo(() => {
     try {
@@ -247,17 +361,22 @@ function DashboardContent() {
         ? analysis3m
         : activeTimeframe === "5m"
           ? analysis5m
-          : analysis15m;
+          : activeTimeframe === "15m"
+            ? analysis15m
+            : activeTimeframe === "30m"
+              ? analysis30m
+              : activeTimeframe === "1h"
+                ? analysis1h
+                : activeTimeframe === "4h"
+                  ? analysis4h
+                  : analysis1d;
 
   return (
     <div className="flex flex-col gap-3 p-3 sm:p-4 max-w-[1440px] mx-auto w-full min-w-0 overflow-hidden">
       {/* ① Session Bar — Kill Zone timeline */}
       <SessionBar />
 
-      {/* ② Market Sessions — Open/Closed status */}
-      <MarketSessionBar />
-
-      {/* ③ Engine Badge — own row, mobile-responsive */}
+      {/* ② Engine Badge — own row, mobile-responsive */}
       <div
         className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 rounded-xl border transition-all"
         style={{
@@ -270,7 +389,7 @@ function DashboardContent() {
             className="text-base sm:text-lg font-bold font-mono tracking-wide shrink-0"
             style={{ color: "#D4A843" }}
           >
-            XAU Scalper
+            {APP_NAME}
           </span>
           <span
             className="flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-md shrink-0"
@@ -293,14 +412,14 @@ function DashboardContent() {
           <div className="flex items-center gap-1">
             <span className="text-[10px] text-muted-foreground">SL</span>
             <span className="text-[10px] sm:text-[11px] font-mono text-zinc-300">
-              1.5× ATR
+              {strategy ? `${strategy.atrSlMultiplier}× ATR` : "ATR"}
             </span>
           </div>
           <div className="w-px h-4 bg-border hidden sm:block" />
           <div className="flex items-center gap-1">
             <span className="text-[10px] text-muted-foreground">TP</span>
             <span className="text-[10px] sm:text-[11px] font-mono text-zinc-300">
-              1.2R / 2.5R
+              {strategy ? `${strategy.tp1R}R / ${strategy.tp2R}R` : "TP1/TP2"}
             </span>
           </div>
           <div className="w-px h-4 bg-border hidden sm:block" />
@@ -310,12 +429,26 @@ function DashboardContent() {
         </div>
       </div>
 
-      {/* ④ Price Ticker + Refresh */}
-      <div className="flex flex-col sm:flex-row gap-3">
+      {/* ④ Asset Selector + Price Ticker + Refresh */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full">
+        <div className="flex items-center gap-2 flex-wrap min-w-0">
+          <select
+            value={symbol}
+            onChange={e => setSymbol(e.target.value)}
+            className="h-8 text-xs font-mono bg-card border border-border rounded-md px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#D4A843]/50"
+            aria-label="Asset"
+          >
+            {assets.map(a => (
+              <option key={a.id} value={a.id}>
+                {a.symbol || a.id}
+              </option>
+            ))}
+          </select>
+        </div>
         <div className="flex-1 min-w-0 overflow-hidden">
           <PriceTicker data={priceData} />
         </div>
-        <div className="flex items-center gap-2 self-end sm:self-center flex-wrap min-w-0">
+        <div className="flex items-center gap-2 self-end sm:self-center flex-wrap min-w-0 ml-auto">
           {dataSource && (
             <span className="text-[10px] text-muted-foreground/50 font-mono">
               via {dataSource}
@@ -329,7 +462,7 @@ function DashboardContent() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => loadAll(true)}
+            onClick={() => loadAll(symbol, true)}
             disabled={refreshing}
             className="h-8 text-xs border-border bg-card hover:bg-secondary"
           >
@@ -372,10 +505,14 @@ function DashboardContent() {
         analysis3m={analysis3m}
         analysis5m={analysis5m}
         analysis15m={analysis15m}
+        analysis30m={analysis30m}
+        analysis1h={analysis1h}
+        analysis4h={analysis4h}
+        analysis1d={analysis1d}
         activeTimeframe={activeTimeframe}
       />
 
-      {/* ⑤ Multi-TF Charts — 4 columns */}
+      {/* ⑤ Multi-TF Charts — 8 columns (2 rows on mobile, 4 on desktop) */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
           {
@@ -400,6 +537,30 @@ function DashboardContent() {
             tf: "15m" as Timeframe,
             label: "15 MIN",
             candles: candles15m,
+            showBB: true,
+          },
+          {
+            tf: "30m" as Timeframe,
+            label: "30 MIN",
+            candles: candles30m,
+            showBB: false,
+          },
+          {
+            tf: "1h" as Timeframe,
+            label: "1 HOUR",
+            candles: candles1h,
+            showBB: false,
+          },
+          {
+            tf: "4h" as Timeframe,
+            label: "4 HOUR",
+            candles: candles4h,
+            showBB: false,
+          },
+          {
+            tf: "1d" as Timeframe,
+            label: "1 DAY",
+            candles: candles1d,
             showBB: true,
           },
         ].map(({ tf, label, candles, showBB }) => (
@@ -596,10 +757,10 @@ function CompactSignalPanel({
               : undefined
           }
         />
-        <IndicatorPill label="Signal" value={macdSigVal} format={2} />
-        <IndicatorPill label="EMA 9" value={ema9Val} format={2} />
-        <IndicatorPill label="EMA 21" value={ema21Val} format={2} />
-        <IndicatorPill label="ATR" value={atrVal} format={2} color="#D4A843" />
+        <IndicatorPill label="Signal" value={macdSigVal} price />
+        <IndicatorPill label="EMA 9" value={ema9Val} price />
+        <IndicatorPill label="EMA 21" value={ema21Val} price />
+        <IndicatorPill label="ATR" value={atrVal} price color="#D4A843" />
         <div className="flex items-center gap-1 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded bg-secondary/30">
           <span className="text-[9px] sm:text-[10px] text-muted-foreground">
             Trend
@@ -630,10 +791,14 @@ function IndicatorPill({
   value,
   format,
   color,
+  price,
 }: {
   label: string;
   value: number | undefined;
-  format: number;
+  /** Fixed decimals for scale-free indicators (RSI, Stoch). */
+  format?: number;
+  /** Price-scale values follow the asset's magnitude instead. */
+  price?: boolean;
   color?: string;
 }) {
   if (value === undefined || Number.isNaN(value)) return null;
@@ -646,7 +811,7 @@ function IndicatorPill({
         className="text-[10px] sm:text-xs font-mono tabular-nums font-semibold"
         style={{ color: color ?? "var(--foreground)" }}
       >
-        {value.toFixed(format)}
+        {price ? fmtPrice(value) : value.toFixed(format ?? 2)}
       </span>
     </div>
   );
@@ -710,7 +875,7 @@ function PivotPointsRow({
                 {level.label}
               </span>
               <span className="text-[10px] sm:text-xs font-mono tabular-nums text-foreground">
-                {level.value.toFixed(2)}
+                {fmtPrice(level.value)}
               </span>
               {isNear && (
                 <span className="text-[9px] text-[#D4A843] font-medium">◄</span>

@@ -44,13 +44,24 @@ const EVENT_CONFIG: Record<
 };
 
 export function SignalJournalPage() {
-  const journal = useLive(
-    () => api.journal({ limit: 500 }).then(r => r.entries),
-    ["journal", "ideas"],
-  );
-  const counts = useLive(() => api.journalCounts(), ["journal", "ideas"]);
   const [typeFilter, setTypeFilter] = useState<string>("ALL");
   const [showEngine, setShowEngine] = useState(false);
+
+  // The engine writes an ENGINE_RUN row per asset per tick, which drowns every
+  // real event within any reasonable limit — so the heartbeat noise is excluded
+  // server-side by default rather than filtered away after the fetch.
+  const journal = useLive(
+    () =>
+      api
+        .journal({
+          limit: 500,
+          exclude: showEngine ? undefined : ["ENGINE_RUN", "MONITOR_CHECK"],
+        })
+        .then(r => r.entries),
+    ["journal", "ideas"],
+    [showEngine],
+  );
+  const counts = useLive(() => api.journalCounts(), ["journal", "ideas"]);
 
   if (!journal) {
     return (
@@ -63,11 +74,6 @@ export function SignalJournalPage() {
   let filtered = journal;
   if (typeFilter !== "ALL") {
     filtered = filtered.filter(e => e.eventType === typeFilter);
-  }
-  if (!showEngine) {
-    filtered = filtered.filter(
-      e => e.eventType !== "ENGINE_RUN" && e.eventType !== "MONITOR_CHECK",
-    );
   }
 
   return (

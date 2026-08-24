@@ -12,6 +12,7 @@ import {
 import { useEffect, useRef } from "react";
 import type { Candle } from "@/lib/indicators";
 import { calcBollingerBands, calcEMA } from "@/lib/indicators";
+import { priceDecimals } from "@/lib/priceApi";
 
 interface MiniChartProps {
   candles: Candle[];
@@ -19,6 +20,12 @@ interface MiniChartProps {
   height?: number;
   showEMA?: boolean;
   showBB?: boolean;
+}
+
+function fmtPrice(n: number | undefined | null, reference?: number): string {
+  if (n === undefined || n === null || Number.isNaN(n)) return "—";
+  const dp = reference !== undefined ? priceDecimals(reference) : 2;
+  return n.toFixed(dp);
 }
 
 export function MiniChart({
@@ -238,6 +245,7 @@ export function MiniChart({
   const lastCandle = candles.length > 0 ? candles[candles.length - 1] : null;
   const prevCandle = candles.length > 1 ? candles[candles.length - 2] : null;
   const isUp = lastCandle && prevCandle && lastCandle.close >= prevCandle.close;
+  const referencePrice = lastCandle?.close;
 
   return (
     <div className="flex flex-col rounded-xl bg-card border border-border overflow-hidden">
@@ -250,7 +258,7 @@ export function MiniChart({
             <span
               className={`text-xs font-mono tabular-nums ${isUp ? "text-[#00E676]" : "text-[#FF1744]"}`}
             >
-              {lastCandle.close.toFixed(2)}
+              {fmtPrice(lastCandle.close, referencePrice)}
             </span>
           )}
         </div>
@@ -259,7 +267,10 @@ export function MiniChart({
             className={`text-xs font-mono tabular-nums ${isUp ? "text-[#00E676]" : "text-[#FF1744]"}`}
           >
             {isUp ? "▲" : "▼"}{" "}
-            {Math.abs(lastCandle.close - prevCandle.close).toFixed(2)}
+            {fmtPrice(
+              Math.abs(lastCandle.close - prevCandle.close),
+              referencePrice,
+            )}
           </span>
         )}
       </div>

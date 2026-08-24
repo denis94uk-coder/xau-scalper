@@ -2,6 +2,33 @@
 
 Written 2026-08-12. Read this top to bottom before touching anything.
 
+## DIRECTION CHANGE — 2026-08-23
+
+The operator's decision: **all new work targets crypto** (BTC, ETH, and the
+liquid top-100 on Binance's free feed). The traditional/MT5 side is kept
+working but quarantined under the sidebar's "Experimental" group — maintain,
+do not extend. Concretely so far:
+
+- `core/assets.ts` ships ~50 curated crypto assets (tiered cost estimates).
+- `scripts/top-assets.ts` merges the live top-N by 24h quote volume into the
+  stored config; re-run it periodically, rankings drift.
+- MT5 remains the only live-execution path. If live crypto trading is wanted,
+  a Binance execution path must be built first.
+
+## Sweep + adoption — 2026-08-24
+
+- Full batch discovery ran on real Binance data (44 assets × 300 configs ×
+  all 5 models, 15m, 365d, seed 42): **0/44 qualified**. Honest null — the
+  dominant verdict was `failed_validation`; BTC's best passed all three
+  windows plus walk-forward but p=0.94–1.0 after Šidák. The breakout and
+  momentum families trade and reach top-10 but found nothing defensible.
+- The gate is provably passable: the Carpet holds 5 pins (4 unique, all
+  `combined`) from 2026-08-23 pre-commit runs — BTCUSDT, XRPUSDT, RUNEUSDT,
+  GRTUSDT (p 0.017–0.046, 11–30 test trades).
+- Operator chose adoption: all 4 winners merged into the live config with
+  the same semantics as `--adopt` (model=combined, config wholesale per
+  asset; RUNE/GRT remain disabled). DB backup in `tmp/teo.db.backup-*`.
+
 ## Where things stand
 
 The build is finished and green. Do not restart the project or "improve" it broadly.

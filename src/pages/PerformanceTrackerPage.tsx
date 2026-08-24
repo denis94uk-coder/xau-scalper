@@ -81,7 +81,8 @@ export function PerformanceTrackerPage() {
     if (!byDay[d]) byDay[d] = { wins: 0, losses: 0, pnl: 0, count: 0 };
     byDay[d].count++;
     byDay[d].pnl += idea.pnlPoints ?? 0;
-    if (idea.status === "TP1_HIT" || idea.status === "TP2_HIT") byDay[d].wins++;
+    // By realized P&L, not status — a STOPPED exit can still be a trailed win.
+    if ((idea.pnlPoints ?? 0) > 0) byDay[d].wins++;
     else byDay[d].losses++;
   }
 

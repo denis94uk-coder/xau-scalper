@@ -11,7 +11,7 @@
  * token check here first — see the README.
  */
 
-import { DEFAULT_ASSET_ID } from "../core/assets";
+import { ASSETS, DEFAULT_ASSET_ID, type ScoringModel } from "../core/assets";
 import type { AssetConfig } from "../core/config";
 import {
   defaultConfig,
@@ -31,6 +31,7 @@ import { findExportDir } from "./mt5";
 import { status as mt5Status, syncOnce } from "./mt5bridge";
 import { cancelRun, getRun, listRuns, startRun } from "./research";
 import type { RiskManager } from "./risk-manager";
+import { buildSymbolUniverse, fetchUsdtPairs } from "./symbols";
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -179,6 +180,18 @@ export async function handleApi(
     });
   }
 
+  // ─── Research picker universe ───
+  // Configured assets first, then the curated registry, then every spot USDT
+  // pair the free feed quotes, then broker-only spellings. The exchange fetch
+  // is best-effort: with no network the local layers still populate the
+  // picker rather than showing an error.
+  if (path === "/api/research/symbols") {
+    const pairs = await fetchUsdtPairs().catch(() => [] as string[]);
+    return json({
+      symbols: buildSymbolUniverse(cfg.assets, ASSETS, pairs),
+    });
+  }
+
   // ─── Ideas ───
   // Method-guarded: without this the POST handler further down is unreachable,
   // because a POST would match here first and be answered with the list.
@@ -217,9 +230,20 @@ export async function handleApi(
   if (path === "/api/journal") {
     const asset = assetParam(url);
     if (asset instanceof Response) return asset;
+    const excludeParam = url.searchParams.get("exclude");
+    const exclude = excludeParam
+      ? excludeParam
+          .split(",")
+          .map(s => s.trim())
+          .filter(Boolean)
+      : undefined;
     return json({
       entries: camelAll(
-        db.listJournal({ asset, limit: intParam(url, "limit", 200, 1000) }),
+        db.listJournal({
+          asset,
+          limit: intParam(url, "limit", 200, 1000),
+          exclude,
+        }),
       ),
     });
   }
@@ -853,10 +877,19 @@ export async function handleApi(
         ? { ...target.config, ...found.config }
         : found.config;
 
+      // The model travels with the config: a strategy must be traded under
+      // the model it was measured with, exactly as the batch discoverer's
+      // --adopt does. "combined" is stored as absent — it is the default the
+      // engine already applies, and writing it out would pin every future
+      // combined reversion of this asset to a label instead of a behaviour.
+      const model =
+        found.model && found.model !== "combined"
+          ? { model: found.model as ScoringModel }
+          : {};
+      const patch = { ...model, config: merged };
+
       const assets = target
-        ? cfg.assets.map(a =>
-            a.id === targetId ? { ...a, config: merged } : a,
-          )
+        ? cfg.assets.map(a => (a.id === targetId ? { ...a, ...patch } : a))
         : [
             ...cfg.assets,
             {
@@ -867,6 +900,7 @@ export async function handleApi(
                 enabled: false,
                 config: merged,
               }),
+              ...patch,
             },
           ];
 

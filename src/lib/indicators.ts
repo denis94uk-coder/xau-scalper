@@ -8,7 +8,10 @@ export type SessionName = "ASIAN" | "LONDON" | "NEW_YORK" | "OFF_HOURS";
 export interface SessionInfo {
   name: SessionName;
   label: string;
+  /** Prime entry window (London/NY open) */
   isKillZone: boolean;
+  /** No-trade zone — low-volatility Asian hours */
+  isNoTrade: boolean;
   /** Kill-zone description (empty outside kill zones) */
   kzLabel: string;
   /** 0-1 progress through current session */
@@ -24,13 +27,14 @@ export function getSession(timestampMs: number): SessionInfo {
   const m = d.getUTCMinutes();
   const hm = h + m / 60;
 
-  // Asian: 00:00–08:00 UTC
+  // Asian: 00:00–08:00 UTC — no-trade zone (low volatility, ranging)
   if (hm >= 0 && hm < 8) {
     return {
       name: "ASIAN",
       label: "Asian",
       isKillZone: false,
-      kzLabel: "",
+      isNoTrade: true,
+      kzLabel: "No-Trade Zone",
       progress: hm / 8,
       utcHour: h,
     };
@@ -42,6 +46,7 @@ export function getSession(timestampMs: number): SessionInfo {
       name: "LONDON",
       label: "London",
       isKillZone: isKZ,
+      isNoTrade: false,
       kzLabel: isKZ ? "London Open KZ" : "",
       progress: (hm - 8) / 5.5,
       utcHour: h,
@@ -54,6 +59,7 @@ export function getSession(timestampMs: number): SessionInfo {
       name: "NEW_YORK",
       label: "New York",
       isKillZone: isKZ,
+      isNoTrade: false,
       kzLabel: isKZ ? "NY Open KZ" : "",
       progress: (hm - 13.5) / 7.5,
       utcHour: h,
@@ -64,6 +70,7 @@ export function getSession(timestampMs: number): SessionInfo {
     name: "OFF_HOURS",
     label: "Off-Hours",
     isKillZone: false,
+    isNoTrade: false,
     kzLabel: "",
     progress: (hm - 21) / 3,
     utcHour: h,

@@ -418,21 +418,36 @@ export class Db {
       );
   }
 
-  listJournal(opts: { asset?: string; limit?: number } = {}): JournalRow[] {
+  listJournal(
+    opts: {
+      asset?: string;
+      limit?: number;
+      /** Event types to leave out — the heartbeat noise (ENGINE_RUN) can bury
+       * every real event within any reasonable limit. */
+      exclude?: string[];
+    } = {},
+  ): JournalRow[] {
     const limit = opts.limit ?? 200;
+    const where: string[] = [];
+    const params: (string | number)[] = [];
     if (opts.asset) {
-      return this.raw
-        .query<JournalRow, [string, number]>(
-          `SELECT * FROM signal_journal WHERE asset = ?
-           ORDER BY timestamp DESC LIMIT ?`,
-        )
-        .all(opts.asset, limit);
+      where.push("asset = ?");
+      params.push(opts.asset);
     }
+    if (opts.exclude && opts.exclude.length > 0) {
+      where.push(
+        `event_type NOT IN (${opts.exclude.map(() => "?").join(",")})`,
+      );
+      params.push(...opts.exclude);
+    }
+    params.push(limit);
+    const clause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
     return this.raw
-      .query<JournalRow, [number]>(
-        `SELECT * FROM signal_journal ORDER BY timestamp DESC LIMIT ?`,
+      .query<JournalRow, (string | number)[]>(
+        `SELECT * FROM signal_journal ${clause}
+         ORDER BY timestamp DESC LIMIT ?`,
       )
-      .all(limit);
+      .all(...params);
   }
 
   /** Counts per event type. An aggregate, not a full-table read into memory. */

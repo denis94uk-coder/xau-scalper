@@ -95,12 +95,14 @@ function ExperimentalContent() {
   const loadData = useCallback(async (showRefresh = false) => {
     try {
       if (showRefresh) setRefreshing(true);
+      // The experimental lab stays on tokenised gold deliberately: it is the
+      // quarantine for the pre-crypto tooling, not a general chart.
       const [priceResult, c1, c3, c5, c15] = await Promise.allSettled([
-        fetchGoldPrice(),
-        fetchGoldCandles("1m"),
-        fetchGoldCandles("3m"),
-        fetchGoldCandles("5m"),
-        fetchGoldCandles("15m"),
+        fetchGoldPrice("PAXGUSDT"),
+        fetchGoldCandles("1m", 200, "PAXGUSDT"),
+        fetchGoldCandles("3m", 200, "PAXGUSDT"),
+        fetchGoldCandles("5m", 200, "PAXGUSDT"),
+        fetchGoldCandles("15m", 200, "PAXGUSDT"),
       ]);
       if (priceResult.status === "fulfilled") setPriceData(priceResult.value);
       if (c1.status === "fulfilled") setCandles1m(c1.value);

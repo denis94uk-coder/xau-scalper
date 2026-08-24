@@ -1,1 +1,1 @@
-export const APP_NAME = "XAU Scalper";
+export const APP_NAME = "LIVE CRYPTO ENGINE";
