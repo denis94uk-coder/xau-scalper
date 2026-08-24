@@ -19,12 +19,16 @@ import type { Hypothesis } from "./edgescan";
 import type { Candle, Direction } from "./strategy";
 
 /** UTC hour of a candle. Broker server time is not UTC; the sync stores UTC. */
-function hourOf(c: Candle): number {
+export function hourOf(c: Candle): number {
   return new Date(c.time * 1000).getUTCHours();
 }
 
 /** True when `i` is the first bar at or after `hour` on its day. */
-function isSessionOpen(candles: Candle[], i: number, hour: number): boolean {
+export function isSessionOpen(
+  candles: Candle[],
+  i: number,
+  hour: number,
+): boolean {
   if (i === 0) return false;
   const h = hourOf(candles[i]);
   const prev = hourOf(candles[i - 1]);
@@ -32,7 +36,7 @@ function isSessionOpen(candles: Candle[], i: number, hour: number): boolean {
 }
 
 /** Mean absolute close-to-close move over the preceding `n` bars. */
-function meanAbsMove(candles: Candle[], i: number, n: number): number {
+export function meanAbsMove(candles: Candle[], i: number, n: number): number {
   let sum = 0;
   for (let k = i - n + 1; k <= i; k++) {
     sum += Math.abs(candles[k].close - candles[k - 1].close);
