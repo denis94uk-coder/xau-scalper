@@ -25,7 +25,7 @@
  * the count of tests is never separable from the finding.
  */
 
-import { type CostModel, roundTripCost } from "./costs";
+import { type CostModel, type ExitKind, roundTripCost } from "./costs";
 import type { Candle, Direction } from "./strategy";
 
 /**
@@ -145,6 +145,7 @@ function measure(
   costs: CostModel,
   from: number,
   to: number,
+  exitKind: ExitKind,
 ): { nets: number[] } {
   const nets: number[] = [];
   let i = from;
@@ -159,8 +160,10 @@ function measure(
     const gross = dir === "LONG" ? exit - entry : entry - exit;
     // A flat time-based exit is a market order at both ends, so both legs pay
     // the crossing cost. "TP" would price the exit as a resting limit fill,
-    // which this is not.
-    nets.push(gross - roundTripCost(entry, exit, "TRAIL_SL", costs));
+    // which this is not — unless the caller asks for that lens explicitly via
+    // ScanOptions.exitKind, which is how the cost-sensitivity pass brackets
+    // what a strategy with a limit-style exit could achieve.
+    nets.push(gross - roundTripCost(entry, exit, exitKind, costs));
     i += horizon;
   }
   return { nets };
@@ -217,6 +220,15 @@ export interface ScanOptions {
   windows?: number;
   /** Significance demanded of the SET, before the Šidák adjustment. */
   familyAlpha?: number;
+  /**
+   * How the exit leg is priced. Default "TRAIL_SL": the time exit is a market
+   * order into whatever is moving against you — spread, taker fee and stop
+   * slippage all paid, the most expensive honest assumption. "TP" prices it
+   * as a resting limit: maker fee only, the cheapest exit a strategy with
+   * limit-style take-profits could achieve. The truth of any eventual strategy
+   * sits between the two lenses; run both before declaring an entry dead.
+   */
+  exitKind?: ExitKind;
 }
 
 /**
@@ -239,6 +251,7 @@ export function scanEdges(
   const warmup = options.warmup ?? 60;
   const windows = options.windows ?? 0;
   const familyAlpha = options.familyAlpha ?? 0.05;
+  const exitKind = options.exitKind ?? "TRAIL_SL";
 
   const results: EdgeResult[] = hypotheses.map(h => {
     const { nets } = measure(
@@ -248,6 +261,7 @@ export function scanEdges(
       costs,
       warmup,
       candles.length,
+      exitKind,
     );
     const s = summarise(nets);
 
@@ -258,7 +272,7 @@ export function scanEdges(
       for (let w = 0; w < windows && span > horizon * 2; w++) {
         const from = warmup + w * span;
         const to = w === windows - 1 ? candles.length : from + span;
-        const part = measure(candles, h, horizon, costs, from, to);
+        const part = measure(candles, h, horizon, costs, from, to, exitKind);
         if (part.nets.length === 0) continue;
         windowsJudged++;
         const m = part.nets.reduce((a, b) => a + b, 0) / part.nets.length;

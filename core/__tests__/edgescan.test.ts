@@ -159,6 +159,46 @@ describe("scanEdges", () => {
       survives({ ...r, windowsJudged: 6, windowsPositive: 5 }, report),
     ).toBe(true);
   });
+
+  test("a maker-priced exit costs strictly less than the default", () => {
+    // A real but small drift tuned to land BETWEEN the two cost bands:
+    // ~11 bps of gross edge over the hold sits below full crossing costs
+    // (~16 bps) but above a maker exit (~7.5 bps), so the exit treatment
+    // alone decides whether the entry looks tradeable.
+    const candles = series(6000, r => (r - 0.5) * 2 + 0.18);
+    const paid = {
+      halfSpreadBps: 1.5,
+      takerFeeBps: 4,
+      makerFeeBps: 2,
+      stopSlippageBps: 5,
+    };
+    const full = scanEdges(candles, [alwaysLong], paid);
+    const makerExit = scanEdges(candles, [alwaysLong], paid, {
+      exitKind: "TP",
+    });
+    expect(makerExit.results[0].meanNet).toBeGreaterThan(
+      full.results[0].meanNet,
+    );
+    expect(full.results[0].meanNet).toBeLessThan(0);
+    expect(makerExit.results[0].meanNet).toBeGreaterThan(0);
+  });
+
+  test("omitting exitKind reproduces the historical pessimistic default exactly", () => {
+    const candles = series(4000, r => (r - 0.5) * 4);
+    const paid = {
+      halfSpreadBps: 1.5,
+      takerFeeBps: 4,
+      makerFeeBps: 2,
+      stopSlippageBps: 5,
+    };
+    const implicit = scanEdges(candles, HYPOTHESES, paid);
+    const explicit = scanEdges(candles, HYPOTHESES, paid, {
+      exitKind: "TRAIL_SL",
+    });
+    expect(implicit.results.map(r => r.meanNet)).toEqual(
+      explicit.results.map(r => r.meanNet),
+    );
+  });
 });
 
 describe("hypotheses", () => {
