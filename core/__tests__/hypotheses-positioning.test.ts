@@ -14,7 +14,6 @@ import type {
   FundingEvent,
   OpenInterestPoint,
 } from "../../server/market-futures";
-import type { Candle } from "../strategy";
 import {
   fundingExtreme,
   oiConfirmedBreakout,
@@ -22,6 +21,7 @@ import {
   stepAt,
   stepIndex,
 } from "../hypotheses-positioning";
+import type { Candle } from "../strategy";
 
 const START = Date.UTC(2024, 0, 1) / 1000;
 const STEP = 300;
