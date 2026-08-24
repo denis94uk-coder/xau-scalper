@@ -29,6 +29,25 @@ do not extend. Concretely so far:
   the same semantics as `--adopt` (model=combined, config wholesale per
   asset; RUNE/GRT remain disabled). DB backup in `tmp/teo.db.backup-*`.
 
+## Opportunity engine — 2026-08-24 (later)
+
+Built to widen the search beyond existing indicator families; full record,
+numbers and next steps live in **`ROADMAP-CRYPTO.md`** — read that before
+touching hypotheses or scans. Short version:
+
+- New: `core/hypotheses-crypto.ts` (11 crypto-native claims),
+  exchange-fed `scripts/edgescan.ts` (`--asset BTCUSDT`), and
+  `scripts/batch-edgescan.ts` (`bun run edgescan:batch`) which scans the
+  live top-N by volume × five timeframes under ONE shared Šidák budget.
+- Two full matrix runs (625 then 675 corrected tests, top-5 × M5–H4):
+  **nothing survived**. Decomposition showed gross predictability ≈ 0 on
+  BTC M5 (zero-cost rerun t≤0.91); the loud negative rows are purely the
+  ~13 bps round-trip cost floor, not hidden signals.
+- Consequence for new work: price-only entry edges are measured to
+  exhaustion on majors at these horizons. The ranked next steps are in
+  ROADMAP-CRYPTO.md §"Where opportunity can still be" — funding/OI feeds
+  first, maker-exit cost sensitivity second.
+
 ## Where things stand
 
 The build is finished and green. Do not restart the project or "improve" it broadly.
