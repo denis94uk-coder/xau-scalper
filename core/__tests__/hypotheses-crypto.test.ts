@@ -229,6 +229,73 @@ describe("volumeThrust", () => {
   });
 });
 
+describe("streakFade", () => {
+  test("fades a run of same-direction closes", () => {
+    const h = CRYPTO_HYPOTHESES.find(x => x.name === "streak-fade-3")!;
+    if (!h) throw new Error("streak-fade-3 missing from catalogue");
+    const start = Date.UTC(2024, 2, 1) / 1000;
+    const candles: Candle[] = [];
+    let price = 30000;
+    // Quiet alternating history, then three up closes of any size.
+    for (let k = 0; k < 60; k++) {
+      const drift = k % 2 === 0 ? 1 : -1;
+      const open = price;
+      price += drift;
+      candles.push({
+        time: start + k * 300,
+        open,
+        high: Math.max(open, price) + 0.5,
+        low: Math.min(open, price) - 0.5,
+        close: price,
+        volume: 100,
+      });
+    }
+    for (const m of [4, 2, 6]) {
+      const open = price;
+      price += m;
+      candles.push({
+        time: start + candles.length * 300,
+        open,
+        high: Math.max(open, price) + 1,
+        low: Math.min(open, price) - 1,
+        close: price,
+        volume: 100,
+      });
+    }
+    expect(h.signal(candles, candles.length - 1)).toBe("SHORT");
+  });
+
+  test("a flat close inside the run breaks the streak", () => {
+    const h = CRYPTO_HYPOTHESES.find(x => x.name === "streak-fade-3")!;
+    const start = Date.UTC(2024, 2, 1) / 1000;
+    const candles: Candle[] = [];
+    let price = 30000;
+    for (let k = 0; k < 60; k++) {
+      candles.push({
+        time: start + k * 300,
+        open: price,
+        high: price + 0.5,
+        low: price - 0.5,
+        close: price,
+        volume: 100,
+      });
+    }
+    for (const m of [4, 0, 6]) {
+      const open = price;
+      price += m;
+      candles.push({
+        time: start + candles.length * 300,
+        open,
+        high: Math.max(open, price) + 1,
+        low: Math.min(open, price) - 1,
+        close: price,
+        volume: 100,
+      });
+    }
+    expect(h.signal(candles, candles.length - 1)).toBeNull();
+  });
+});
+
 describe("squeezeExpansion", () => {
   test("requires compression before the wide bar", () => {
     const h = CRYPTO_HYPOTHESES.find(x => x.name === "squeeze-expansion")!;

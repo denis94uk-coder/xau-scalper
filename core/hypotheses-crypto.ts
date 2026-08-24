@@ -211,6 +211,40 @@ function squeezeExpansion(): Hypothesis {
 }
 
 /**
+ * Fade a directional closing streak.
+ *
+ * The claim: a run of consecutive same-direction closes on crypto is
+ * over-extension of leveraged flow rather than information, and the close
+ * after the streak reverts. Derived from measurement, and recorded here as
+ * such: the 2026-08 batch scan found short-horizon momentum entries losing
+ * far beyond their costs on BTC M5 (t = −15.8, zero of six windows), which
+ * is this mechanism's shadow. Registered permanently whatever it scores —
+ * a hypothesis added after one look and removed if it disappoints would be
+ * indistinguishable from cherry-picking, so it stays in the fixed set and
+ * every future scan corrects for having asked.
+ *
+ * Distinct from fadeCascade, which demands each bar be outsized; a streak is
+ * persistence alone, however small the steps.
+ */
+function streakFade(bars: number): Hypothesis {
+  return {
+    name: `streak-fade-${bars}`,
+    claim: `${bars} consecutive same-direction closes revert on the next bar.`,
+    signal(candles, i) {
+      if (i < bars) return null;
+      const first = candles[i - bars + 1].close - candles[i - bars].close;
+      if (first === 0) return null;
+      const dir = Math.sign(first);
+      for (let k = i - bars + 2; k <= i; k++) {
+        const move = candles[k].close - candles[k - 1].close;
+        if (Math.sign(move) !== dir) return null;
+      }
+      return dir > 0 ? "SHORT" : "LONG";
+    },
+  };
+}
+
+/**
  * The crypto catalogue, fixed and named, for the same reason the gold one is:
  * the Šidák correction is only honest if the count is what was actually tried.
  */
@@ -224,4 +258,6 @@ export const CRYPTO_HYPOTHESES: Hypothesis[] = [
   volumeThrust(3),
   volumeThrust(5),
   squeezeExpansion(),
+  streakFade(3),
+  streakFade(5),
 ];
