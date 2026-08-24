@@ -47,6 +47,12 @@ touching hypotheses or scans. Short version:
   exhaustion on majors at these horizons. The ranked next steps are in
   ROADMAP-CRYPTO.md §"Where opportunity can still be" — funding/OI feeds
   first, maker-exit cost sensitivity second.
+- Round 3 (positioning) also ran: `server/market-futures.ts` +
+  `core/hypotheses-positioning.ts` + `bun run edgescan:positioning`.
+  `funding-extreme` is measured and answered NO (negative on BTC and ETH,
+  both horizons). OI hypotheses are unmeasurable until we archive OI
+  ourselves — the venue serves only ~30 days of history. Building that
+  recorder in the engine cycle is the top-ranked next step.
 
 ## Where things stand
 

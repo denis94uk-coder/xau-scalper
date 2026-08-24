@@ -23,6 +23,35 @@ mechanisms are instrument-generic), so each cell tests all 27 hypotheses.
 
 ## Scan record
 
+### Round 3 — 2026-08-24, later: positioning data
+
+Built the feed the price-only nulls were pointing at:
+
+| Piece | File | Notes |
+|---|---|---|
+| Futures fetchers | `server/market-futures.ts` | funding settlements back to 2020, paginated; open interest **venue-capped to ~30 days** |
+| Positioning hypotheses | `core/hypotheses-positioning.ts` | closure factories returning ordinary `Hypothesis` objects — scanner untouched, corrections automatic |
+| Runner | `bun run edgescan:positioning` | full fixed catalogue in one shared budget |
+
+Claims: `funding-extreme` (fade whichever side pays extreme funding rent),
+`oi-breakout-24` (range break only on rising OI), `oi-washout-12` (buy the
+drop that closed positions).
+
+Results, BTCUSDT + ETHUSDT H1, horizons 12 and 48 bars:
+
+    funding-extreme   n=274 (BTC h12) / 232 (ETH h12) — MEASURED
+                      mean NEGATIVE on both assets, ≤1/6 windows positive,
+                      best p = 0.051 vs required 1.7e-3 → answered NO
+    horizon 48        t ≈ −0.5 on both — unwinding takes longer? No.
+    oi-* rows         0–1 occurrences each — NOT A VERDICT: the venue only
+                      serves a month of OI history, so these cannot reach
+                      MIN_OCCURRENCES by construction.
+
+`funding-extreme` is the first catalogue entry measured on real positioning
+data, and it lost honestly: crowded-funding fades did not pay round-trip
+costs on majors in this window, in either direction, at either horizon.
+Registered permanently; future scans keep paying its budget slot.
+
 ### Round 1 — 2026-08-24
 
 Top 5 by 24h quote volume at scan time (BTCUSDT, ETHUSDT, XRPUSDT,
@@ -74,10 +103,11 @@ failure of imagination.
 
 ## Where opportunity can still be — next steps, in order
 
-1. **New data, not new price patterns.** Funding rates and open interest
-   (`fapi.binance.com`, keyless) measure positioning — the input that
-   actually moves liquid majors intraday. Price-only hypotheses have been
-   measured to exhaustion here.
+1. **Build our own open-interest archive.** The venue's 30-day history cap
+   is the only reason OI claims are unmeasured. The engine already runs
+   cycles over every configured asset: snapshotting OI per cycle into the
+   DB starts compounding a dataset nobody can take away, and in ~2 months
+   the `oi-*` rows become measurable for free.
 2. **Model maker exits before condemning strategies.** The scanner's exit
    pays full crossing costs; the live strategy's TP1 is a resting limit
    (maker). A candidate killed by 13 bps may survive 5–7 bps — worth a
@@ -85,19 +115,24 @@ failure of imagination.
 3. **Longer horizons on lower-liquidity assets.** Costs scale with bps;
    edges scale with inefficiency. ZEC-type books move further between
    fixes than BTC does.
-4. **Cross-asset lead-lag** (BTC → alts) needs injected series support in
-   the hypothesis contract; defer until 1 lands since it shares the
-   aux-series plumbing.
+4. **Cross-asset lead-lag** (BTC → alts) needs injected series support;
+   the positioning factories already show the closure pattern to copy.
 5. Whatever survives then graduates to a scoring family via the
    quiet-trend path (argue mechanism → normalize points → thresholds →
    discovery search space → three-window validation).
+
+Funding-rate hypotheses are measured and closed for now; re-test only with
+a materially different mechanism (e.g., funding *change velocity*, not
+level) and register it before scanning.
 
 ## Rerun commands
 
 ```bash
 bun run edgescan -- --asset ETHUSDT --interval 1h --days 180   # single asset
-bun run edgescan:batch -- --out tmp/edgescan-batch.json        # full matrix
+bun run edgescan:batch -- --out tmp/edgescan-batch.json        # price matrix
+bun run edgescan:positioning -- --asset BTCUSDT --interval 1h  # + funding/OI
 bun test core/__tests__/hypotheses-crypto.test.ts              # catalogue tests
+bun test core/__tests__/hypotheses-positioning.test.ts         # positioning tests
 ```
 
 Rules this work obeys: the catalogue is fixed and named; every addition
