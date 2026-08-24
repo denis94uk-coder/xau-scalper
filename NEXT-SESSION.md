@@ -51,8 +51,22 @@ touching hypotheses or scans. Short version:
   `core/hypotheses-positioning.ts` + `bun run edgescan:positioning`.
   `funding-extreme` is measured and answered NO (negative on BTC and ETH,
   both horizons). OI hypotheses are unmeasurable until we archive OI
-  ourselves — the venue serves only ~30 days of history. Building that
-  recorder in the engine cycle is the top-ranked next step.
+  ourselves — the venue serves only ~30 days of history.
+- The OI archive is now BUILT and LIVE (`server/intel/oiRecorder.ts`):
+  every 15m the running server samples perp open interest into
+  `oi_snapshots` for all enabled binance assets. First tick archived
+  42 × 500 rows. In ~2 months `bun run edgescan:positioning` measures the
+  oi-* hypotheses for the first time. Nothing to do but let it run.
+
+## NEW GOTCHA — the dev server runs with --watch
+
+A `bun run --watch server/index.ts` process is often alive in another
+terminal. Editing any file under `server/` makes bun hot-reload THAT REAL
+SERVER against the real `data/teo.db` — top-level jobs (signals, monitor,
+self-heal, the OI recorder) fire immediately. This is how the first OI
+archive tick happened without anyone starting anything. Before assuming a
+script or test wrote something surprising, check for a live watch process:
+`ps aux | grep "watch server"`. The MT5 guard does not cover this path.
 
 ## Where things stand
 

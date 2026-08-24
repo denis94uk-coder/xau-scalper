@@ -103,11 +103,14 @@ failure of imagination.
 
 ## Where opportunity can still be — next steps, in order
 
-1. **Build our own open-interest archive.** The venue's 30-day history cap
-   is the only reason OI claims are unmeasured. The engine already runs
-   cycles over every configured asset: snapshotting OI per cycle into the
-   DB starts compounding a dataset nobody can take away, and in ~2 months
-   the `oi-*` rows become measurable for free.
+1. ~~**Build our own open-interest archive.**~~ **DONE, 2026-08-24.** The
+   engine now samples perp OI every 15 minutes into `oi_snapshots`
+   (`server/intel/oiRecorder.ts`, on by default; `TEO_OI_RECORDER=off` to
+   stop it). First tick already archived 42 symbols × 500 observations.
+   The positioning scanner unions the archive with the venue feed
+   automatically. At ~2 months of history the `oi-*` rows reach
+   MIN_OCCURRENCES and become measurable for the first time — no action
+   needed except letting the server run.
 2. **Model maker exits before condemning strategies.** The scanner's exit
    pays full crossing costs; the live strategy's TP1 is a resting limit
    (maker). A candidate killed by 13 bps may survive 5–7 bps — worth a
