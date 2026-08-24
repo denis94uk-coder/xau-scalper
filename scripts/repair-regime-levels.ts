@@ -27,16 +27,10 @@
  *   bun scripts/repair-regime-levels.ts --dry-run  # report only
  */
 
-import {
-  getAsset,
-  type AssetDefinition,
-} from "../core/assets";
-import {
-  DEFAULT_STRATEGY_CONFIG,
-  type Candle,
-} from "../core/strategy";
-import { applyPrice } from "../server/engine";
+import { type AssetDefinition, getAsset } from "../core/assets";
+import { type Candle, DEFAULT_STRATEGY_CONFIG } from "../core/strategy";
 import { db as openDb } from "../server/db";
+import { applyPrice } from "../server/engine";
 
 const db = openDb();
 const DRY_RUN = process.argv.includes("--dry-run");
@@ -91,9 +85,15 @@ function correctedLevel(
 function isCorrupted(idea: CorruptIdea): boolean {
   if (idea.reason.includes(REPAIR_MARK)) return false;
   if (idea.direction === "LONG") {
-    return idea.tp1 < idea.entry || idea.tp2 < idea.entry || idea.stopLoss > idea.entry;
+    return (
+      idea.tp1 < idea.entry ||
+      idea.tp2 < idea.entry ||
+      idea.stopLoss > idea.entry
+    );
   }
-  return idea.tp1 > idea.entry || idea.tp2 > idea.entry || idea.stopLoss < idea.entry;
+  return (
+    idea.tp1 > idea.entry || idea.tp2 > idea.entry || idea.stopLoss < idea.entry
+  );
 }
 
 /** Classic Wilder ATR over the candles up to and including index i. */
@@ -155,7 +155,12 @@ for (const idea of tagged) {
   const needsRewrite = isCorrupted(idea);
 
   if (needsRewrite) {
-    const sl = correctedLevel(idea.stopLoss, idea.entry, idea.slMult, precision);
+    const sl = correctedLevel(
+      idea.stopLoss,
+      idea.entry,
+      idea.slMult,
+      precision,
+    );
     const tp1 = correctedLevel(idea.tp1, idea.entry, idea.tpMult, precision);
     const tp2 = correctedLevel(idea.tp2, idea.entry, idea.tpMult, precision);
     console.log(

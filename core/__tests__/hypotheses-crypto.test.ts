@@ -364,3 +364,183 @@ describe("squeezeExpansion", () => {
     expect(h.signal(noisy, 130)).toBeNull();
   });
 });
+
+/** One flat hourly bar fully inside [lo, hi] except where overridden. */
+function hourly(
+  time: number,
+  open: number,
+  close: number,
+  hiPad = 3,
+  loPad = 3,
+): Candle {
+  return {
+    time,
+    open,
+    high: Math.max(open, close) + hiPad,
+    low: Math.min(open, close) - loPad,
+    close,
+    volume: 100,
+  };
+}
+
+describe("sweepPriorDay", () => {
+  const day1 = Date.UTC(2024, 2, 1) / 1000;
+  const day2 = day1 + 86400;
+
+  // Day 1: twenty-four flat bars at 105, each spanning 102–108, so the
+  // prior day's levels are unambiguous.
+  function base(): Candle[] {
+    return Array.from({ length: 24 }, (_, k) =>
+      hourly(day1 + k * 3600, 105, 105),
+    );
+  }
+
+  test("a pierce of the prior low that closes back inside goes LONG", () => {
+    const h = CRYPTO_HYPOTHESES.find(x => x.name === "sweep-prior-day")!;
+    const candles = base();
+    candles.push(hourly(day2 + 9 * 3600, 104, 104, 1, 3)); // low 101 < 102
+    expect(h.signal(candles, candles.length - 1)).toBe("LONG");
+  });
+
+  test("a pierce of the prior high that closes back inside goes SHORT", () => {
+    const h = CRYPTO_HYPOTHESES.find(x => x.name === "sweep-prior-day")!;
+    const candles = base();
+    candles.push(hourly(day2 + 10 * 3600, 106, 106, 3, 1)); // high 109 > 108
+    expect(h.signal(candles, candles.length - 1)).toBe("SHORT");
+  });
+
+  test("a close beyond the level is continuation, not a sweep", () => {
+    const h = CRYPTO_HYPOTHESES.find(x => x.name === "sweep-prior-day")!;
+    const candles = base();
+    candles.push(hourly(day2 + 11 * 3600, 104, 101, 1, 3)); // low 98, close 101 < 102
+    expect(h.signal(candles, candles.length - 1)).toBeNull();
+
+    const above: Candle[] = [
+      ...base(),
+      hourly(day2 + 11 * 3600, 106, 109, 3, 1),
+    ];
+    expect(h.signal(above, above.length - 1)).toBeNull();
+  });
+});
+
+describe("breakPriorDay", () => {
+  const day1 = Date.UTC(2024, 2, 1) / 1000;
+  const day2 = day1 + 86400;
+
+  function base(): Candle[] {
+    return Array.from({ length: 24 }, (_, k) =>
+      hourly(day1 + k * 3600, 105, 105),
+    );
+  }
+
+  test("a close beyond the prior high goes LONG, beyond the low SHORT", () => {
+    const h = CRYPTO_HYPOTHESES.find(x => x.name === "break-prior-day")!;
+    if (!h) throw new Error("break-prior-day missing from catalogue");
+
+    const up: Candle[] = [...base(), hourly(day2 + 9 * 3600, 107, 110)];
+    expect(h.signal(up, up.length - 1)).toBe("LONG");
+
+    const down: Candle[] = [...base(), hourly(day2 + 9 * 3600, 103, 100)];
+    expect(h.signal(down, down.length - 1)).toBe("SHORT");
+  });
+
+  test("a close inside the prior range fires nothing", () => {
+    const h = CRYPTO_HYPOTHESES.find(x => x.name === "break-prior-day")!;
+    // Pierces the low intrabar but closes back inside — that is the sweep
+    // hypothesis's event, not this one's.
+    const candles: Candle[] = [
+      ...base(),
+      hourly(day2 + 9 * 3600, 104, 104, 1, 3),
+    ];
+    expect(h.signal(candles, candles.length - 1)).toBeNull();
+  });
+});
+
+describe("asianRangeBreakout", () => {
+  const day0 = Date.UTC(2024, 2, 1) / 1000;
+
+  // Seven days of history whose Asian windows all span exactly 1 point
+  // (99.5–100.5); the eighth day's window is what the test varies.
+  function week(narrowWidth: number): Candle[] {
+    const candles: Candle[] = [];
+    for (let d = 0; d < 7; d++) {
+      const ds = day0 + d * 86400;
+      for (let hr = 0; hr < 24; hr++) {
+        if (hr < 7) {
+          candles.push(hourly(ds + hr * 3600, 100, 100, 0.5, 0.5));
+        } else {
+          candles.push(hourly(ds + hr * 3600, 100, 101));
+        }
+      }
+    }
+    const last = day0 + 7 * 86400;
+    const pad = narrowWidth / 2;
+    for (let hr = 0; hr < 7; hr++) {
+      candles.push(hourly(last + hr * 3600, 100, 100, pad, pad));
+    }
+    return candles;
+  }
+
+  test("first close outside a compressed range continues", () => {
+    const h = CRYPTO_HYPOTHESES.find(x => x.name === "asian-range-breakout")!;
+    const candles = week(0.5); // narrower than every prior day
+    candles.push(hourly(day0 + 7 * 86400 + 8 * 3600, 100, 103));
+    expect(h.signal(candles, candles.length - 1)).toBe("LONG");
+
+    candles[candles.length - 1] = hourly(day0 + 7 * 86400 + 8 * 3600, 100, 97);
+    expect(h.signal(candles, candles.length - 1)).toBe("SHORT");
+  });
+
+  test("an uncompressed range fires nothing", () => {
+    const h = CRYPTO_HYPOTHESES.find(x => x.name === "asian-range-breakout")!;
+    const candles = week(2); // wider than the prior days' 1-point norm
+    candles.push(hourly(day0 + 7 * 86400 + 8 * 3600, 100, 103));
+    expect(h.signal(candles, candles.length - 1)).toBeNull();
+  });
+
+  test("only the crossing bar fires, and only inside the session window", () => {
+    const h = CRYPTO_HYPOTHESES.find(x => x.name === "asian-range-breakout")!;
+    const candles = week(0.5);
+    const cross = day0 + 7 * 86400 + 8 * 3600;
+    candles.push(hourly(cross, 100, 103)); // the breakout bar
+    expect(h.signal(candles, candles.length - 1)).toBe("LONG");
+
+    candles.push(hourly(cross + 3600, 103, 105)); // already outside: stale
+    expect(h.signal(candles, candles.length - 1)).toBeNull();
+
+    candles.push(hourly(cross + 8 * 3600, 105, 108)); // past 15:00 UTC
+    expect(h.signal(candles, candles.length - 1)).toBeNull();
+  });
+});
+
+describe("fadeOpenDrive", () => {
+  const day = Date.UTC(2024, 2, 1) / 1000;
+
+  function dayBars(): Candle[] {
+    return Array.from({ length: 24 }, (_, k) =>
+      hourly(day + k * 3600, 100, 100),
+    );
+  }
+
+  test("fades an upward London drive SHORT, once", () => {
+    const h = CRYPTO_HYPOTHESES.find(x => x.name === "fade-london-drive")!;
+    const candles = dayBars();
+    candles[7] = hourly(day + 7 * 3600, 100, 106); // the drive bar
+    // First bar completing the drive hour is 08:00; entry against the move.
+    candles[8] = hourly(day + 8 * 3600, 106, 107);
+    expect(h.signal(candles, 8)).toBe("SHORT");
+    // The next bar is not a second event…
+    expect(h.signal(candles, 9)).toBeNull();
+    // …and before the hour completes there is nothing to fade yet.
+    expect(h.signal(candles, 7)).toBeNull();
+  });
+
+  test("fades a downward New York drive LONG", () => {
+    const h = CRYPTO_HYPOTHESES.find(x => x.name === "fade-ny-drive")!;
+    const candles = dayBars();
+    candles[13] = hourly(day + 13 * 3600, 100, 95);
+    candles[14] = hourly(day + 14 * 3600, 95, 94);
+    expect(h.signal(candles, 14)).toBe("LONG");
+    expect(h.signal(candles, 13)).toBeNull();
+  });
+});

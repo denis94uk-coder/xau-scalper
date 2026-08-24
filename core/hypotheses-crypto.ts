@@ -15,7 +15,7 @@
  */
 
 import type { Hypothesis } from "./edgescan";
-import { isSessionOpen, meanAbsMove } from "./hypotheses";
+import { hourOf, isSessionOpen, meanAbsMove } from "./hypotheses";
 import type { Candle } from "./strategy";
 
 /** UTC day-of-week of a candle: 0 = Sunday … 6 = Saturday. */
@@ -244,6 +244,230 @@ function streakFade(bars: number): Hypothesis {
   };
 }
 
+/** UTC midnight of the day containing `time`, in seconds. */
+function dayStartOf(time: number): number {
+  return Math.floor(time / 86400) * 86400;
+}
+
+/**
+ * High and low of the UTC day strictly before bar `i`'s day.
+ *
+ * Walks backwards from `i - 1` until it leaves that day, so it never reads a
+ * bar past `i`. Returns null when history does not reach back a full day —
+ * an unmeasurable level is no level.
+ */
+function priorDayExtremes(
+  candles: Candle[],
+  i: number,
+): { hi: number; lo: number } | null {
+  if (i < 1) return null;
+  const dayStart = dayStartOf(candles[i].time);
+  const prevStart = dayStart - 86400;
+  let hi = -Infinity;
+  let lo = Infinity;
+  for (let k = i - 1; k >= 0; k--) {
+    const t = candles[k].time;
+    if (t < prevStart) break;
+    if (t < dayStart) {
+      if (candles[k].high > hi) hi = candles[k].high;
+      if (candles[k].low < lo) lo = candles[k].low;
+    }
+  }
+  return hi === -Infinity ? null : { hi, lo };
+}
+
+/** Asian hours end at 07:00 UTC, matching the gold catalogue's asia block. */
+const ASIAN_HOURS = 7;
+
+/**
+ * High and low of the Asian-hours window (00:00–07:00 UTC) of the day whose
+ * midnight is `ds`, reading only bars at or before `i`.
+ */
+function asianRangeOf(
+  candles: Candle[],
+  i: number,
+  ds: number,
+): { hi: number; lo: number } | null {
+  const asianEnd = ds + ASIAN_HOURS * 3600;
+  let hi = -Infinity;
+  let lo = Infinity;
+  for (let k = i; k >= 0; k--) {
+    const t = candles[k].time;
+    if (t < ds) break;
+    if (t >= ds && t < asianEnd) {
+      if (candles[k].high > hi) hi = candles[k].high;
+      if (candles[k].low < lo) lo = candles[k].low;
+    }
+  }
+  return hi === -Infinity ? null : { hi, lo };
+}
+
+/**
+ * Fade a sweep of the prior UTC day's extreme.
+ *
+ * The claim, taken from the operator's own execution plan and stated so the
+ * scanner can measure it: retail stops pile just beyond yesterday's visible
+ * high and low, thin books get pushed through those levels at some point in
+ * the session, and once the stops are spent there is nothing left to push —
+ * so a bar that trades through the level but CLOSES back inside marks
+ * exhaustion rather than breakout. The close-back-inside requirement is what
+ * separates the claimed stop-run from genuine continuation: a bar that closes
+ * beyond the level fires nothing.
+ *
+ * One hypothesis covers both levels — LONG off the swept low, SHORT off the
+ * swept high — because they are one symmetric mechanism, and registering them
+ * apart would spend two budget slots printing the same fact twice. The
+ * two-sided p-value already prices both directions.
+ */
+function sweepPriorDay(): Hypothesis {
+  return {
+    name: "sweep-prior-day",
+    claim:
+      "A bar that trades through the prior UTC day's high or low but closes back inside reverts away from the level.",
+    signal(candles, i) {
+      const ext = priorDayExtremes(candles, i);
+      if (!ext) return null;
+      const c = candles[i];
+      if (c.low < ext.lo && c.close > ext.lo) return "LONG";
+      if (c.high > ext.hi && c.close < ext.hi) return "SHORT";
+      return null;
+    },
+  };
+}
+
+/**
+ * Compressed-Asian-range breakout.
+ *
+ * The claim, shared by both of the operator's documents: when the overnight
+ * (00:00–07:00 UTC) range is unusually narrow, positioning has compressed
+ * with it, and the first close outside that range releases stored pressure in
+ * the breakout direction through London and New York. The compression gate is
+ * what distinguishes this from utc-day-open-range, which died in rounds 1–2:
+ * that tested every day's opening range regardless of width, this only the
+ * calm ones. Narrow means below the median width of the six prior days'
+ * Asian ranges, which makes the gate self-scaling across timeframes.
+ *
+ * Fires on the crossing bar only — the previous close must still be inside —
+ * so one breakout is one occurrence rather than a run.
+ */
+function asianRangeBreakout(): Hypothesis {
+  return {
+    name: "asian-range-breakout",
+    claim:
+      "When the 00:00–07:00 UTC range sits below its recent median width, the first close outside it during London/NY continues.",
+    signal(candles, i) {
+      const h = hourOf(candles[i]);
+      // Breakouts are read between 07:00 and 15:00 UTC: after Asian hours
+      // close but before the NY afternoon, past which a stale crossing has
+      // nothing left to say and would only duplicate occurrences.
+      if (h < ASIAN_HOURS || h >= 15 || i < 1) return null;
+      const dayStart = dayStartOf(candles[i].time);
+      const today = asianRangeOf(candles, i, dayStart);
+      if (!today) return null;
+
+      const samples: number[] = [];
+      for (let d = 1; d <= 6; d++) {
+        const r = asianRangeOf(candles, i, dayStart - d * 86400);
+        if (r) samples.push(r.hi - r.lo);
+      }
+      if (samples.length < 4) return null;
+      samples.sort((a, b) => a - b);
+      const median = samples[Math.floor(samples.length / 2)];
+      const width = today.hi - today.lo;
+      if (width <= 0 || width >= median) return null;
+
+      const prevClose = candles[i - 1].close;
+      if (!(prevClose <= today.hi && prevClose >= today.lo)) return null;
+
+      const c = candles[i];
+      if (c.close > today.hi) return "LONG";
+      if (c.close < today.lo) return "SHORT";
+      return null;
+    },
+  };
+}
+
+/**
+ * Fade the opening drive at a session open.
+ *
+ * The operator's plan states this as the base mechanism of their whole
+ * strategy: limit orders and stops accumulate just outside the pre-open range,
+ * the open pushes through them because the book is thinnest exactly then, and
+ * the move stops where real liquidity begins — so the first hour's direction
+ * is a stop-run against the session's true direction, and fading it is the
+ * trade.
+ *
+ * The drive is measured open-to-close across the first hour after `hour`:00
+ * UTC; the signal fires once, on the first bar completing that hour, entering
+ * against the drive. On hourly bars the completion bar sits just after the
+ * drive's last bar; on finer bars it is the first bar past 60 minutes, so the
+ * entry never uses information from inside the measured window.
+ *
+ * London (07:00) and New York (13:00, equities cash open) are separate
+ * registrations not because the mechanism differs but because the
+ * participants do — the same precedent as london/newyork-open-range in the
+ * gold catalogue.
+ */
+function fadeOpenDrive(hour: number, label: string): Hypothesis {
+  return {
+    name: `fade-${label}-drive`,
+    claim: `The first hour after ${label} open (${hour}:00 UTC) sweeps stops against the session direction; fade it.`,
+    signal(candles, i) {
+      if (i < 1) return null;
+      const openTime = dayStartOf(candles[i].time) + hour * 3600;
+      if (candles[i].time < openTime + 3600) return null;
+      // Only the first bar whose timestamp completes the hour: later session
+      // bars are not new events, and firing on each would let one morning
+      // print several correlated occurrences.
+      if (candles[i - 1].time >= openTime + 3600) return null;
+
+      let firstOpen = -1;
+      for (let k = i - 1; k >= 0; k--) {
+        const t = candles[k].time;
+        if (t < openTime) break;
+        if (t < openTime + 3600) firstOpen = candles[k].open;
+      }
+      if (firstOpen < 0) return null;
+      const drive = candles[i - 1].close - firstOpen;
+      if (drive === 0) return null;
+      return drive > 0 ? "SHORT" : "LONG";
+    },
+  };
+}
+
+/**
+ * Trade WITH a close beyond the prior UTC day's extreme.
+ *
+ * Registered 2026-08-24 as a measurement-derived claim, the way streak-fade
+ * was: round 6 found this claim's mirror — sweep-prior-day — losing at ZERO
+ * cost on BTCUSDT M15 (gross −35 pts/hold, t = −4.37, 0/6 windows), which is
+ * evidence that prior-day breakouts continued there rather than reverted. A
+ * hypothesis added after one look and removed if it disappoints would be
+ * indistinguishable from cherry-picking, so it enters the fixed set here,
+ * declared as derived, and stays registered whatever it scores.
+ *
+ * The event is the complement of sweep-prior-day's: a bar whose CLOSE sits
+ * beyond the prior day's high or low. The firing sets are disjoint by
+ * construction — together the two hypotheses partition every pierce of the
+ * prior day's extremes into "closed back inside" (faded) and "closed beyond"
+ * (traded here).
+ */
+function breakPriorDay(): Hypothesis {
+  return {
+    name: "break-prior-day",
+    claim:
+      "A bar that closes beyond the prior UTC day's high or low continues in that direction.",
+    signal(candles, i) {
+      const ext = priorDayExtremes(candles, i);
+      if (!ext) return null;
+      const c = candles[i];
+      if (c.close > ext.hi) return "LONG";
+      if (c.close < ext.lo) return "SHORT";
+      return null;
+    },
+  };
+}
+
 /**
  * The crypto catalogue, fixed and named, for the same reason the gold one is:
  * the Šidák correction is only honest if the count is what was actually tried.
@@ -260,4 +484,12 @@ export const CRYPTO_HYPOTHESES: Hypothesis[] = [
   squeezeExpansion(),
   streakFade(3),
   streakFade(5),
+  // Registered 2026-08-24 from the operator's two strategy documents, before
+  // any scan was run with them in the set. They stay registered whatever they
+  // score.
+  sweepPriorDay(),
+  breakPriorDay(),
+  asianRangeBreakout(),
+  fadeOpenDrive(7, "london"),
+  fadeOpenDrive(13, "ny"),
 ];

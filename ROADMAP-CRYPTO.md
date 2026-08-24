@@ -19,11 +19,73 @@ Catalogue: `saturday-drift`, `sunday-drift`, `utc-day-open-range-4`,
 `streak-fade-3`, `streak-fade-5`.
 
 The batch scans run the gold catalogue too (its momentum/fade/quiet-trend
-mechanisms are instrument-generic), so each cell tests all 27 hypotheses.
+mechanisms are instrument-generic), so each cell tests all 32 hypotheses
+(since round 6; 27 before it).
 
 ## Scan record
 
-### Round 5 — 2026-08-24, latest: momentum-48 meets a real exit
+### Round 6 — 2026-08-24, latest: the operator's playbooks, measured
+
+The operator supplied two strategy documents — a Pine v6 "Trend Progression"
+gold script (session-aware, composite trend score, DXY filter) and an
+M15→M1 liquidity-sweep execution plan (Asian range levels, prior-close magnet,
+opening stop-runs that reverse). Their mechanisms were translated into scanner
+claims and REGISTERED BEFORE ANY SCAN, per the house rule:
+
+    sweep-prior-day        wick through yesterday's UTC extreme, closing back
+                           inside, reverts (the plan's §3–5 stop-run)
+    asian-range-breakout   compressed 00:00–07:00 UTC range, first close
+                           outside continues through London/NY (both documents)
+    fade-london-drive      first hour after 07:00 UTC fades (the plan's §3)
+    fade-ny-drive          same at 13:00 UTC (equities cash open)
+    break-prior-day        close beyond yesterday's extreme continues —
+                           registered MID-ROUND as measurement-derived, like
+                           streak-fade in round 2: the zero-cost lens had the
+                           fade losing gross on BTC M15, and the complement
+                           entered the fixed set declared as such
+
+Five additions take the per-cell catalogue from 27 to 32 hypotheses; every
+future scan corrects for the larger set permanently.
+
+Cells: BTCUSDT + ETHUSDT × {M15, H1}, 365 days each, hold 12 bars, windows 6,
+tier costs ≈9–10 bps RT, per-cell Šidák bar p < 1.6e-3. Plus BTC H1 extended
+to 1500 days so newyork/london-open-range reach MIN_OCCURRENCES (they fire
+~40×/year; 365 days left them unmeasured, which is not a verdict).
+
+    new rows, net TRAIL_SL lens (t-stat, mean pts/hold, windows):
+    BTC H1   sweep −0.83 · break −0.65 · asian-arb −0.34 · ldn-fade −0.29 · ny-fade −2.45
+    ETH H1   sweep −0.20 · break −0.80 · asian-arb −0.47 · ldn-fade +0.86 (5/6!) · ny-fade −2.34
+    BTC M15  sweep −4.37 · break −2.73 · asian-arb −1.93 · ldn-fade −3.36 · ny-fade −1.66
+    ETH M15  all five between −0.11 and −2.44
+    SURVIVORS: none in any cell
+
+Investigated before filing under noise:
+
+- **ETH H1 fade-london-drive** (+3.5 pts/hold, 5/6 windows) flipped to gross
+  NEGATIVE over a 400-day window. Not robust across window length; dropped.
+- **newyork-open-range** was gross-positive on BTC at both timeframes over
+  365 days — the plan's own NY-window mechanism, tantalizingly unmeasured.
+  At 1500 days (n=147) it scored t = −0.73, 3/6 windows. Window artifact.
+- **Zero-cost decomposition** (all 32 × all 4 cells):
+  ETH: |gross| ≤ 7 pts everywhere — no information present, cost model
+  irrelevant. BTC M15: best gross +46 pts against a ≈53 pt maker floor —
+  costs exceed every edge, so no parameter choice can rescue any row.
+  BTC H1: a maker-exit-positive cluster exists (streak-fade-5 +99, quiet-trend
+  -p50 +30, momentum-48 +23, fade-london-drive +15 pts/hold) — this is round
+  4's mirage reproduced exactly, and its flagship member already died under
+  real exits in round 5.
+
+**Verdict: the operator's three mechanisms carry no measurable directional
+edge on liquid crypto majors after real costs.** "Fine-tuning" here would be
+fitting noise: on BTC M15 the gap between best gross expectancy and the cost
+floor is arithmetic, not calibration. The strategies' native habitat — where
+session structure and thin opens are real market structure rather than
+analogy — is index CFDs (DAX, UK100, NAS100) and FX majors over MT5;
+`bun run edgescan -- --asset MT5:DAX40` judges them there once a terminal
+syncs those symbols. Crypto-side live lines are unchanged: OI archive
+maturation, then lower-liquidity books.
+
+### Round 5 — 2026-08-24: momentum-48 meets a real exit
 
 `bun run momentum48-test` backtested the round-4 pattern with the live
 engine's actual exit geometry (ATR stop, TP1 limit at 1.2R, breakeven move,
@@ -173,8 +235,11 @@ failure of imagination.
    discovery search space → three-window validation).
 
 Closed for good unless a NEW mechanism arrives: price-only entries on
-liquid majors (rounds 1–5), funding-level fades (round 3). Re-opening any
-of these requires registering the new claim BEFORE scanning it.
+liquid majors (rounds 1–5), funding-level fades (round 3), and — since
+round 6 — level-sweep reversal, compressed-Asian-range breakout and
+opening-drive fade on majors specifically. The catalogue claims stay
+registered; re-testing them needs a new argument, not a new parameter.
+Re-opening any of these requires registering the new claim BEFORE scanning.
 
 ## Rerun commands
 
