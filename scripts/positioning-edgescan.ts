@@ -7,8 +7,12 @@
  * The full fixed catalogue runs here — gold mechanisms, crypto mechanisms,
  * and the three positioning hypotheses — because every question asked in one
  * process shares one family error rate. Data coverage is printed up front:
- * open interest history is venue-capped at roughly thirty days, so its rows
- * will honestly report "too few" on most timeframes rather than pretend.
+ * The full fixed catalogue runs here — gold mechanisms, crypto mechanisms,
+ * and the three positioning hypotheses — because every question asked in one
+ * process shares one family error rate. Data coverage is printed up front:
+ * open interest comes from the local archive (built by the engine's recorder)
+ * UNION the venue's last ~30 days, so scans grow more measurable as the
+ * archive compounds.
  */
 
 import { getAsset, unconfiguredExchangeAsset } from "../core/assets";
@@ -22,10 +26,13 @@ import {
   oiConfirmedBreakout,
   oiWashout,
 } from "../core/hypotheses-positioning";
+import { db as openDb } from "../server/db";
 import { exchangeSymbolFor, fetchCandleRange } from "../server/market";
+import type { OpenInterestPoint } from "../server/market-futures";
 import {
   fetchFundingRates,
   fetchOpenInterestHistory,
+  mergeOpenInterest,
 } from "../server/market-futures";
 
 function parseArgs(argv: string[]) {
@@ -81,16 +88,21 @@ async function main() {
     pageDelayMs: cli.pageDelayMs,
   });
 
-  console.log(
-    "Fetching open-interest history (venue serves only the last ~30 days)…",
-  );
-  const oi = await fetchOpenInterestHistory(
+  console.log("Fetching open-interest history…");
+  // The venue cannot serve anything older than ~30 days. The engine's
+  // recorder archives what the feed shows on every tick, so the local table
+  // already covers the past and keeps growing past what the venue will keep.
+  // Union both: archive fills history, venue refreshes the forming buckets.
+  const database = openDb();
+  const archived = database.getOiSnapshots(venue, from, to);
+  const venueOi = await fetchOpenInterestHistory(
     venue,
     cli.oiPeriod,
     Math.max(from, to - 30 * 86_400),
     to,
     { pageDelayMs: cli.pageDelayMs },
   );
+  const oi: OpenInterestPoint[] = mergeOpenInterest(archived, venueOi);
 
   const positioning: Hypothesis[] = [
     fundingExtreme(funding),
@@ -116,7 +128,7 @@ async function main() {
     `≈${roundTripBps.toFixed(1)} bps round trip · ` +
       `funding prints ${funding.length} ` +
       `(first ${funding.length ? new Date(funding[0].time * 1000).toISOString().slice(0, 10) : "—"}, last ${funding.length ? new Date(funding[funding.length - 1].time * 1000).toISOString().slice(0, 10) : "—"}) · ` +
-      `OI points ${oi.length}` +
+      `OI points ${oi.length} (${archived.length} archived + ${venueOi.length} venue)` +
       `\n${report.hypothesesTested} hypotheses · each must beat p < ` +
       `${report.adjustedAlpha.toExponential(3)} for the set to hold\n`,
   );

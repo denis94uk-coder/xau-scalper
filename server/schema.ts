@@ -203,4 +203,21 @@ CREATE TABLE IF NOT EXISTS discovered_strategies (
 
 CREATE INDEX IF NOT EXISTS idx_discovered_recent
   ON discovered_strategies (pinned_at DESC);
+
+-- ─── Perp open-interest archive ───
+-- The venue serves only ~30 days of history, which is why the oi-* hypotheses
+-- could not be measured (ROADMAP-CRYPTO.md round 3). The engine records what
+-- the feed shows while it runs, so the archive compounds into something no
+-- endpoint can revoke. Timestamps are the venue observation times (epoch
+-- SECONDS), so overlapping re-fetches upsert cleanly on the primary key.
+CREATE TABLE IF NOT EXISTS oi_snapshots (
+  symbol    TEXT    NOT NULL,
+  time      INTEGER NOT NULL,
+  contracts REAL    NOT NULL,
+  notional  REAL    NOT NULL,
+  PRIMARY KEY (symbol, time)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS idx_oi_symbol_time
+  ON oi_snapshots (symbol, time DESC);
 `;

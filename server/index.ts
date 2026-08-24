@@ -29,6 +29,7 @@ import { executeIdea } from "./execution";
 import { scanLiquiditySweeps } from "./intel/liquiditySweep";
 import { fetchMacroData } from "./intel/macroCorrelation";
 import { updateCalendar } from "./intel/newsCalendar";
+import { recordOpenInterest } from "./intel/oiRecorder";
 import { detectMarketRegime } from "./intel/regime";
 import { syncOnce } from "./mt5bridge";
 import { reconcileState } from "./reconciliation";
@@ -68,6 +69,18 @@ const PRUNE_MS = 6 * 60 * 60_000;
  */
 const SELFHEAL_MS = Number(process.env.TEO_SELFHEAL_MS ?? 6 * 60 * 60_000);
 const SELFHEAL_ON = process.env.TEO_SELFHEAL !== "off";
+
+/**
+ * Open-interest recorder. Samples perp positioning into oi_snapshots on every
+ * tick so the archive outlives the venue's 30-day history window — the data
+ * the oi-* hypotheses need and cannot otherwise get (ROADMAP-CRYPTO.md).
+ * On by default because an archive that must be remembered into existence is
+ * an archive with holes; TEO_OI_RECORDER=off stops it, and the cadence is
+ * TEO_OI_RECORDER_SECONDS.
+ */
+const OI_RECORDER_ON = process.env.TEO_OI_RECORDER !== "off";
+const OI_RECORDER_MS =
+  Number(process.env.TEO_OI_RECORDER_SECONDS ?? 15 * 60) * 1000;
 
 const db = new Db();
 const config = new ConfigStore(db);
@@ -260,6 +273,15 @@ if (SELFHEAL_ON) {
   }
 }
 
+// First archive tick happens immediately, not after a full cadence of idling.
+if (OI_RECORDER_ON) {
+  void safely("oi", async () => {
+    const added = await recordOpenInterest({ db });
+    db.recordRun("oi", true);
+    if (added > 0) console.log(`[oi] archived ${added} observation(s)`);
+  });
+}
+
 /**
  * Timers that can be rebuilt when their cadence changes.
  *
@@ -292,6 +314,18 @@ function scheduleTimers(cfg: AppConfig): void {
               }),
             SELFHEAL_MS,
           ),
+        ]
+      : []),
+    ...(OI_RECORDER_ON
+      ? [
+          setInterval(() => {
+            void safely("oi", async () => {
+              const added = await recordOpenInterest({ db });
+              db.recordRun("oi", true);
+              if (added > 0)
+                console.log(`[oi] archived ${added} observation(s)`);
+            });
+          }, OI_RECORDER_MS),
         ]
       : []),
     setInterval(() => {

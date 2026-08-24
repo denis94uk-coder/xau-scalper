@@ -14,6 +14,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { BacktestMetrics } from "../core/backtest";
 import type { Candle, StrategyConfig } from "../core/strategy";
+import type { OpenInterestPoint } from "./market-futures";
 import { SCHEMA_SQL } from "./schema";
 
 export type Direction = "LONG" | "SHORT";
@@ -235,6 +236,52 @@ export class Db {
       close: r.close,
       volume: r.volume,
     }));
+  }
+
+  // ─── Open-interest archive ───
+
+  /** Upsert venue observations. Overlapping re-fetches replace, never duplicate. */
+  saveOiSnapshots(symbol: string, points: OpenInterestPoint[]): void {
+    if (points.length === 0) return;
+    const stmt = this.raw.prepare(
+      `INSERT INTO oi_snapshots (symbol, time, contracts, notional)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT (symbol, time) DO UPDATE SET
+         contracts = excluded.contracts, notional = excluded.notional`,
+    );
+    this.raw.transaction(() => {
+      for (const p of points) {
+        stmt.run(symbol, p.time, p.contracts, p.notional);
+      }
+    })();
+  }
+
+  /** Newest stored observation time for a symbol, or null when none. */
+  latestOiTime(symbol: string): number | null {
+    const row = this.raw
+      .query<{ time: number | null }, [string]>(
+        `SELECT MAX(time) AS time FROM oi_snapshots WHERE symbol = ?`,
+      )
+      .get(symbol);
+    return row?.time ?? null;
+  }
+
+  /** Stored observations in a range, oldest-first. */
+  getOiSnapshots(
+    symbol: string,
+    from: number,
+    to: number,
+  ): OpenInterestPoint[] {
+    return this.raw
+      .query<
+        { time: number; contracts: number; notional: number },
+        [string, number, number]
+      >(
+        `SELECT time, contracts, notional FROM oi_snapshots
+         WHERE symbol = ? AND time >= ? AND time <= ?
+         ORDER BY time ASC`,
+      )
+      .all(symbol, from, to);
   }
 
   /** Open time of the newest stored candle, or null. Drives incremental fetches. */

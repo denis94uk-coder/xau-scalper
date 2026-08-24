@@ -146,3 +146,22 @@ export async function fetchOpenInterestHistory(
 
   return out;
 }
+
+/**
+ * Union two open-interest series, oldest-first, one point per timestamp.
+ *
+ * The positioning scanner combines the local archive (which grows without
+ * limit) with a live venue fetch (which cannot see past thirty days). Where
+ * both describe the same observation, `b` wins — callers pass the fresher
+ * series second, since a re-read of a still-forming bucket supersedes the
+ * archived one.
+ */
+export function mergeOpenInterest(
+  a: OpenInterestPoint[],
+  b: OpenInterestPoint[],
+): OpenInterestPoint[] {
+  const byTime = new Map<number, OpenInterestPoint>();
+  for (const p of a) byTime.set(p.time, p);
+  for (const p of b) byTime.set(p.time, p);
+  return [...byTime.values()].sort((x, y) => x.time - y.time);
+}
