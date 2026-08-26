@@ -24,7 +24,39 @@ mechanisms are instrument-generic), so each cell tests all 32 hypotheses
 
 ## Scan record
 
-### Round 7 — 2026-08-24, latest: lower-liquidity books
+### Round 8 — 2026-08-24, latest: cross-asset lead-lag (BTC → alts)
+
+Roadmap step 3 executed. Built the missing machinery first:
+
+| Piece | File | What it does |
+|---|---|---|
+| Injected-series support | `core/edgescan.ts` | `ScanOptions.series` timestamp-aligns auxiliary candles onto the primary grid; gaps stay undefined, staleness voids signals rather than reusing old bars |
+| Lead-lag catalogue | `core/hypotheses-leads.ts` | 3 claims reading an injected `btc` key: momentum-3/12 continuation, single-bar follow |
+| Runner injection | `scripts/edgescan.ts` | any non-BTC exchange asset fetches BTCUSDT at the same interval and appends the 3 claims (Šidák count follows automatically) |
+
+Tests cover paired-truncation look-ahead, off-grid/late-leader voiding, and
+the no-mirror rule. 555 TS tests green.
+
+Cells: {ETH, SOL, BNB, XRP, DOGE} × {H1, M15}, 365 days, hold 12 bars,
+windows 6 — 10 cells × 35 hypotheses = 350 tests.
+
+    H1:   every lead row between t = −1.6 and +0.4 — nothing
+    M15:  ALL FIFTEEN rows NEGATIVE, t from −2.1 to −6.6, hit rates 39–43%,
+          nearly all 0/6 or 1/6 windows
+
+**Verdict: answered NO at bar scale.** When BTC has just moved, the move is
+already in the alt — entering after alignment pays the full round trip for
+information the alt's own price holds. The loud negative rows say alignment
+is essentially instant relative to a 15-minute bar close, which kills the
+arbitrage-delay story on liquid pairs at these horizons. Whatever lead-lag
+exists lives below bar resolution (tick/order-flow), which is a different
+instrument than this scanner.
+
+Step 3 is CLOSED for bar-close data on liquid alts. Remaining lines: OI
+archive maturation (passive), MT5 index CFDs (needs terminal sync), tick-
+level flow (needs a different data path entirely).
+
+### Round 7 — 2026-08-24: lower-liquidity books
 
 Roadmap step 2 executed: `bun run edgescan:batch -- --top 20 --out
 tmp/r7-batch-top20.json` — live top-20 by 24h quote volume × {M5, M15, M30,
@@ -250,12 +282,13 @@ failure of imagination.
    history `bun run edgescan:positioning` measures the oi-* hypotheses for
    the first time. No action needed except letting the server run. This is
    now the only live line on liquid majors.
-2. **Lower-liquidity books, longer horizons.** Costs scale with bps; edges
-   scale with inefficiency. ZEC-type books move further between fixes than
-   BTC does — the batch scanner already covers them (`--top 20`), and the
-   same three-window + real-exit gauntlet applies to anything that shows.
-3. **Cross-asset lead-lag** (BTC → alts) needs injected series support;
-   the positioning factories already show the closure pattern to copy.
+2. **Lower-liquidity books, longer horizons.** ANSWERED for rank ≤ 20 ×
+   M5–H4 (round 7): nothing survives. Deeper ranks or longer bars are new
+   draws against the same budget.
+3. **Cross-asset lead-lag** — ANSWERED NO at bar scale on liquid alts
+   (round 8); alignment is faster than a bar close. Tick-level flow would
+   need a different data path; machinery (`core/hypotheses-leads.ts` +
+   series injection) stays for any future partner series.
 4. Whatever survives then graduates to a scoring family via the
    quiet-trend path (argue mechanism → normalize points → thresholds →
    discovery search space → three-window validation).

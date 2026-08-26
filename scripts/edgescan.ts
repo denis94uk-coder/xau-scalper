@@ -22,11 +22,15 @@ import type { CostModel } from "../core/costs";
 import { MIN_OCCURRENCES, scanEdges, survives } from "../core/edgescan";
 import { HYPOTHESES } from "../core/hypotheses";
 import { CRYPTO_HYPOTHESES } from "../core/hypotheses-crypto";
+import { LEAD_HYPOTHESES } from "../core/hypotheses-leads";
 import type { Candle } from "../core/strategy";
 import { db as openDb } from "../server/db";
 import { exchangeSymbolFor, fetchCandleRange } from "../server/market";
 
 const ALL_HYPOTHESES = [...HYPOTHESES, ...CRYPTO_HYPOTHESES];
+// Lead-lag claims need an injected partner series; they join the set only
+// when one is actually provided, so the Šidák count matches what was asked.
+const LEADER = "BTCUSDT";
 
 function parseArgs(argv: string[]) {
   const a: Record<string, string> = {};
@@ -61,6 +65,10 @@ async function main() {
   const database = openDb();
 
   let prepared: PreparedScan;
+  // Filled only on the exchange path when the target is not the leader
+  // itself — scanning BTC "led by BTC" would re-measure plain momentum under
+  // a second name and spend two budget slots on one question.
+  let injected: Record<string, Candle[]> | undefined;
 
   if (/^MT5:/i.test(cli.asset)) {
     // ─── Broker bars: unchanged legacy path ───
@@ -121,6 +129,14 @@ async function main() {
       c.makerFeeBps +
       c.stopSlippageBps
     ).toFixed(1);
+
+    if (venue !== LEADER) {
+      console.log(`Fetching ${LEADER} ${cli.interval} as the lead series…`);
+      injected = {
+        btc: await fetchCandleRange(LEADER, cli.interval, from, to),
+      };
+    }
+
     prepared = {
       label: `${venue} ${cli.interval} | ${candles.length} bars | last ${cli.days}d`,
       costNote:
@@ -131,15 +147,19 @@ async function main() {
     };
   }
 
-  const report = scanEdges(prepared.candles, ALL_HYPOTHESES, prepared.costs, {
+  const hypotheses = [...ALL_HYPOTHESES, ...(injected ? LEAD_HYPOTHESES : [])];
+  const report = scanEdges(prepared.candles, hypotheses, prepared.costs, {
     horizonBars: cli.horizon,
     windows: cli.windows,
+    series: injected,
   });
 
   console.log(`\nEdge scan: ${prepared.label} | hold ${cli.horizon} bars`);
   console.log(
     `${prepared.costNote} · ` +
-      `${report.hypothesesTested} hypotheses · ` +
+      `${report.hypothesesTested} hypotheses` +
+      (injected ? " (incl. 3 BTC-lead claims)" : "") +
+      ` · ` +
       `each must beat p < ${report.adjustedAlpha.toFixed(5)} ` +
       `for the set to hold at ${report.familyAlpha}\n`,
   );

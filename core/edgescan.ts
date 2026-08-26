@@ -34,12 +34,65 @@ import type { Candle, Direction } from "./strategy";
  * `signal` sees the bars up to and including `i` and returns the direction it
  * claims, or null for "no opinion here". It must never read past `i` —
  * everything in this module is worthless the moment a hypothesis does.
+ *
+ * The third parameter carries auxiliary series injected by the caller (see
+ * ScanOptions.series), aligned bar-for-bar with the primary. Most hypotheses
+ * ignore it; the lead-lag family is the reason it exists. An aligned entry is
+ * undefined when the auxiliary history does not reach that bar, and a
+ * hypothesis that cannot do its job without its partner series must return
+ * null rather than guess from a stale one.
  */
 export interface Hypothesis {
   name: string;
   /** What is being claimed, in words, so a result can be argued with. */
   claim: string;
-  signal(candles: Candle[], i: number): Direction | null;
+  signal(
+    candles: Candle[],
+    i: number,
+    series?: AlignedSeries,
+  ): Direction | null;
+}
+
+/**
+ * Auxiliary series aligned to the primary's bar grid, keyed by name.
+ *
+ * `aligned[i]` is the auxiliary bar sharing bar `i`'s open time, or undefined
+ * when the two histories do not overlap there. Alignment is by TIMESTAMP, not
+ * index — two symbols listed months apart share no index grid, and correlating
+ * index-for-index across offset series produces a confident number that means
+ * nothing. Same-interval bars are assumed: a finer auxiliary bar could close
+ * after the primary bar it was paired with, which would be quiet look-ahead.
+ */
+export type AlignedSeries = Record<string, (Candle | undefined)[]>;
+
+/**
+ * Align injected series onto the primary's timestamps.
+ *
+ * A linear merge per series: walk both grids forward, keeping the auxiliary
+ * bar whose open time equals each primary bar's. Gaps stay undefined rather
+ * than being papered over with a stale bar — staleness is information loss
+ * wearing the costume of data, and the hypotheses decide for themselves
+ * whether an absent partner voids the signal.
+ */
+function alignSeries(
+  primary: Candle[],
+  injected?: Record<string, Candle[]>,
+): AlignedSeries | undefined {
+  if (!injected) return undefined;
+  const out: AlignedSeries = {};
+  for (const [key, aux] of Object.entries(injected)) {
+    const aligned: (Candle | undefined)[] = new Array(primary.length).fill(
+      undefined,
+    );
+    let j = 0;
+    for (let i = 0; i < primary.length; i++) {
+      while (j < aux.length && aux[j].time < primary[i].time) j++;
+      if (j < aux.length && aux[j].time === primary[i].time)
+        aligned[i] = aux[j];
+    }
+    out[key] = aligned;
+  }
+  return out;
 }
 
 export interface EdgeResult {
@@ -146,11 +199,12 @@ function measure(
   from: number,
   to: number,
   exitKind: ExitKind,
+  series?: AlignedSeries,
 ): { nets: number[] } {
   const nets: number[] = [];
   let i = from;
   while (i < to - horizon) {
-    const dir = h.signal(candles, i);
+    const dir = h.signal(candles, i, series);
     if (dir === null) {
       i++;
       continue;
@@ -229,6 +283,15 @@ export interface ScanOptions {
    * sits between the two lenses; run both before declaring an entry dead.
    */
   exitKind?: ExitKind;
+  /**
+   * Auxiliary series injected for hypotheses that trade one instrument off
+   * another (lead-lag). Each is timestamp-aligned to the primary; entries
+   * missing on the primary's grid stay undefined. Passing series changes
+   * nothing for hypotheses that ignore the third argument, but it DOES widen
+   * what the catalogue can ask — callers should pass only series they intend
+   * lead-lag hypotheses to use.
+   */
+  series?: Record<string, Candle[]>;
 }
 
 /**
@@ -252,6 +315,7 @@ export function scanEdges(
   const windows = options.windows ?? 0;
   const familyAlpha = options.familyAlpha ?? 0.05;
   const exitKind = options.exitKind ?? "TRAIL_SL";
+  const series = alignSeries(candles, options.series);
 
   const results: EdgeResult[] = hypotheses.map(h => {
     const { nets } = measure(
@@ -262,6 +326,7 @@ export function scanEdges(
       warmup,
       candles.length,
       exitKind,
+      series,
     );
     const s = summarise(nets);
 
@@ -272,7 +337,16 @@ export function scanEdges(
       for (let w = 0; w < windows && span > horizon * 2; w++) {
         const from = warmup + w * span;
         const to = w === windows - 1 ? candles.length : from + span;
-        const part = measure(candles, h, horizon, costs, from, to, exitKind);
+        const part = measure(
+          candles,
+          h,
+          horizon,
+          costs,
+          from,
+          to,
+          exitKind,
+          series,
+        );
         if (part.nets.length === 0) continue;
         windowsJudged++;
         const m = part.nets.reduce((a, b) => a + b, 0) / part.nets.length;
