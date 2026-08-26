@@ -245,7 +245,7 @@ function streakFade(bars: number): Hypothesis {
 }
 
 /** UTC midnight of the day containing `time`, in seconds. */
-function dayStartOf(time: number): number {
+export function dayStartOf(time: number): number {
   return Math.floor(time / 86400) * 86400;
 }
 
@@ -277,13 +277,13 @@ function priorDayExtremes(
 }
 
 /** Asian hours end at 07:00 UTC, matching the gold catalogue's asia block. */
-const ASIAN_HOURS = 7;
+export const ASIAN_HOURS = 7;
 
 /**
  * High and low of the Asian-hours window (00:00–07:00 UTC) of the day whose
  * midnight is `ds`, reading only bars at or before `i`.
  */
-function asianRangeOf(
+export function asianRangeOf(
   candles: Candle[],
   i: number,
   ds: number,

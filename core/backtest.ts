@@ -154,7 +154,8 @@ export function toBacktestModel(model: string | undefined): BacktestModel {
     model === "trend" ||
     model === "reversion" ||
     model === "breakout" ||
-    model === "momentum"
+    model === "momentum" ||
+    model === "progression"
   ) {
     return model;
   }

@@ -21,9 +21,11 @@
  * fixture and the live engine still runs it.
  */
 
+import { asianRangeOf, dayStartOf } from "./hypotheses-crypto";
 import {
   type Bias,
   type Candle,
+  calcATR,
   DEFAULT_STRATEGY_CONFIG,
   type Direction,
   type IndicatorSeries,
@@ -33,7 +35,12 @@ import {
   type StrategyConfig,
 } from "./strategy";
 
-export type StrategyFamily = "trend" | "reversion" | "breakout" | "momentum";
+export type StrategyFamily =
+  | "trend"
+  | "reversion"
+  | "breakout"
+  | "momentum"
+  | "progression";
 
 /**
  * Grade thresholds for one family.
@@ -60,6 +67,7 @@ export const TREND_MAX_POINTS = 60; // 25 EMA stack + 10 price/EMA21 + 20 MACD c
 export const REVERSION_MAX_POINTS = 53; // 20 RSI + 15 Stoch + 18 BB touch
 export const BREAKOUT_MAX_POINTS = 70; // 30 channel break + 15 squeeze + 10 expansion bar + 10 EMA21 follow-through + 5 RSI tilt
 export const MOMENTUM_MAX_POINTS = 75; // 25 velocity conviction + 15 persistence + 15 MACD agreement + 10 EMA50 side + 10 RSI conviction
+export const PROGRESSION_MAX_POINTS = 100; // 25 direction + 25 ADX + 25 momentum + 25 Chande price action
 
 function maxPointsFor(family: StrategyFamily): number {
   switch (family) {
@@ -71,6 +79,8 @@ function maxPointsFor(family: StrategyFamily): number {
       return BREAKOUT_MAX_POINTS;
     case "momentum":
       return MOMENTUM_MAX_POINTS;
+    case "progression":
+      return PROGRESSION_MAX_POINTS;
   }
 }
 
@@ -90,6 +100,10 @@ export function familyWarmup(
       return Math.max(59, Math.floor(config.breakoutPeriod) + 1);
     case "momentum":
       return Math.max(59, Math.floor(config.momentumLookback) + 51);
+    case "progression":
+      // ADX(14) needs ~2×14 bars to settle, the long ATR gate wants 50,
+      // and the Chande counter is stateful from bar 1 — 120 covers all.
+      return Math.max(59, 120);
     default:
       return 59;
   }
@@ -133,6 +147,17 @@ export const DEFAULT_FAMILY_THRESHOLDS: Record<
     bStrength: 55,
     bExtreme: 0,
     cStrength: 40,
+  },
+  // The operator's Trend Progression composite (Pine v6 port). Pine trades
+  // score > 40 with a confidence gate; A here means a dominant component on
+  // top of a 60 score, B is the tradeable band Pine's default threshold
+  // describes.
+  progression: {
+    aStrength: 60,
+    aExtreme: 1,
+    bStrength: 45,
+    bExtreme: 0,
+    cStrength: 35,
   },
 };
 
@@ -520,6 +545,249 @@ export function scoreMomentum(
   return s;
 }
 
+/**
+ * Progression evidence: the operator's Trend Progression Score, ported from
+ * their Pine v6 strategy document.
+ *
+ * WHY THIS FAMILY EXISTS
+ * It is a different composite from any of the four above: direction (EMA 21/50
+ * structure plus slope plus ATR-normalised separation), STRENGTH (ADX, which no
+ * family scores), momentum (RSI band position + MACD histogram scaled by ATR),
+ * and Chande TrendScore price action (consecutive outside bars, decayed). Each
+ * contributes up to 25 of an exact 100, so thresholds are raw points.
+ *
+ * FAITHFUL PORTS AND DOCUMENTED DEPARTURES
+ * Ported as written: the four components' arithmetic; ADX added to BOTH sides
+ * (it is strength, not direction); the Chande ±15 counter with 0.95 decay;
+ * entry gates for higher-timeframe agreement and ATR expansion.
+ * Adapted: EMA21/50 stand in for Pine's fast/slow inputs (the series we
+ * precompute); HTF bias becomes a 24-bar slope sign (single-timeframe harness —
+ * request.security does not exist here); the session killzone filter is omitted
+ * (crypto trades the clock it is tested on; round 6 measured session blocks on
+ * majors as null); DXY inverse filter is omitted (no second series — Pine
+ * itself skips when data is missing); small-TF confirmations are omitted for
+ * the same single-series reason. The Asian-range breakout trigger is ported and
+ * ON: Pine requires a close beyond the overnight range, and that is the
+ * strategy's actual entry event.
+ */
+const PROG_HTF_LOOKBACK = 24; // one trading day on H1, Pine's "D" bias at H1 scale
+const PROG_ATR_EXPANSION_RATIO = 0.85; // atr(5) must exceed atr(50) × this
+const PROG_REQUIRE_ASIAN_BREAK = true;
+
+/** Wilder ADX(14), computed once per candles array and cached. */
+const adxCache = new WeakMap<Candle[], (number | undefined)[]>();
+function adx14(candles: Candle[]): (number | undefined)[] {
+  const cached = adxCache.get(candles);
+  if (cached) return cached;
+
+  const len = 14;
+  const dx: number[] = new Array(candles.length).fill(NaN);
+  let trS = 0;
+  let plusS = 0;
+  let minusS = 0;
+  let adx: number | undefined;
+  const out: (number | undefined)[] = new Array(candles.length).fill(undefined);
+
+  for (let i = 1; i < candles.length; i++) {
+    const c = candles[i];
+    const p = candles[i - 1];
+    const tr = Math.max(
+      c.high - c.low,
+      Math.abs(c.high - p.close),
+      Math.abs(c.low - p.close),
+    );
+    const upMove = c.high - p.high;
+    const downMove = p.low - c.low;
+    const plusDM = upMove > downMove && upMove > 0 ? upMove : 0;
+    const minusDM = downMove > upMove && downMove > 0 ? downMove : 0;
+
+    if (i <= len) {
+      trS += tr;
+      plusS += plusDM;
+      minusS += minusDM;
+      if (i < len) continue;
+    } else {
+      trS = trS - trS / len + tr;
+      plusS = plusS - plusS / len + plusDM;
+      minusS = minusS - minusS / len + minusDM;
+    }
+
+    const diPlus = trS > 0 ? (100 * plusS) / trS : 0;
+    const diMinus = trS > 0 ? (100 * minusS) / trS : 0;
+    const sum = diPlus + diMinus;
+    dx[i] = sum > 0 ? (100 * Math.abs(diPlus - diMinus)) / sum : 0;
+
+    if (adx === undefined) {
+      // First ADX value is the mean of the first `len` DX readings.
+      const window: number[] = [];
+      for (let k = i; k > i - len && k >= 1; k--) {
+        if (Number.isFinite(dx[k])) window.push(dx[k]);
+      }
+      if (window.length === len) adx = window.reduce((a, b) => a + b, 0) / len;
+    } else {
+      adx = (adx * (len - 1) + dx[i]) / len;
+    }
+    out[i] = adx;
+  }
+
+  adxCache.set(candles, out);
+  return out;
+}
+
+/** Short and long ATR series for the expansion gate, cached per array. */
+const atrGateCache = new WeakMap<
+  Candle[],
+  { fast: (number | undefined)[]; slow: (number | undefined)[] }
+>();
+function atrGate(candles: Candle[]) {
+  const cached = atrGateCache.get(candles);
+  if (cached) return cached;
+  const gate = {
+    fast: calcATR(candles, 5),
+    slow: calcATR(candles, 50),
+  };
+  atrGateCache.set(candles, gate);
+  return gate;
+}
+
+/** Chande TrendScore state per bar (+1 outside-up, −1 outside-down, ×0.95). */
+const chandeCache = new WeakMap<Candle[], number[]>();
+function chandeSeries(candles: Candle[]): number[] {
+  const cached = chandeCache.get(candles);
+  if (cached) return cached;
+  const out: number[] = new Array(candles.length).fill(0);
+  let raw = 0;
+  for (let i = 1; i < candles.length; i++) {
+    const c = candles[i];
+    const p = candles[i - 1];
+    if (c.high > p.high && c.low >= p.low) raw = Math.min(raw + 1, 15);
+    else if (c.low < p.low && c.high <= p.high) raw = Math.max(raw - 1, -15);
+    else raw *= 0.95;
+    out[i] = raw;
+  }
+  chandeCache.set(candles, out);
+  return out;
+}
+
+export function scoreProgression(
+  candles: Candle[],
+  ind: IndicatorSeries,
+  last: number,
+  _config: StrategyConfig,
+): FamilyScore {
+  const { rsi, histogram, ema21, ema50, atr } = ind;
+  const s: FamilyScore = {
+    bull: 0,
+    bear: 0,
+    extremeBull: 0,
+    extremeBear: 0,
+    reasons: [],
+  };
+
+  const currentATR = atr[last];
+  if (currentATR === undefined || currentATR <= 0) return s;
+
+  // ── Component 1: direction (0–25), Pine's emaAbove/slope/distance ──
+  const ef = ema21[last];
+  const es = ema50[last];
+  const ef3 = ema21[last - 3];
+  let dirBull = 0;
+  let dirBear = 0;
+  if (ef !== undefined && es !== undefined && ef3 !== undefined) {
+    const above = ef > es;
+    const slopeUp = ef - ef3 > 0;
+    const distNorm = Math.min(Math.abs(ef - es) / (currentATR * 2), 1);
+    const rawPts = (above ? 12.5 : 0) + (slopeUp ? 6.25 : 0) + distNorm * 6.25;
+    // Partial structure earns partial credit — exactly Pine's ×0.6 branch.
+    dirBull = above ? (slopeUp ? rawPts : rawPts * 0.6) : 0;
+    dirBear = !above
+      ? !slopeUp
+        ? 12.5 + 6.25 + distNorm * 6.25
+        : (12.5 + distNorm * 6.25) * 0.6
+      : 0;
+    if (dirBull >= 20 || dirBear >= 20) {
+      s.reasons.push("direction aligned");
+    }
+  }
+
+  // ── Component 2: strength (0–25), ADX added to both sides ──
+  const adx = adx14(candles)[last];
+  const adxScore = adx !== undefined ? Math.min(adx / 60, 1) * 25 : 0;
+
+  // ── Component 3: momentum (0–25), RSI band + ATR-scaled MACD ──
+  let momBull = 0;
+  let momBear = 0;
+  const lastRSI = rsi[last];
+  if (lastRSI !== undefined) {
+    momBull += Math.max(Math.min((lastRSI - 30) / 40, 1), 0) * 12.5;
+    momBear += Math.max(Math.min((70 - lastRSI) / 40, 1), 0) * 12.5;
+  }
+  const h = histogram[last];
+  if (h !== undefined) {
+    const macdScaled = Math.min(Math.abs(h) / (currentATR * 0.05), 1) * 12.5;
+    if (h > 0) momBull += macdScaled;
+    else if (h < 0) momBear += macdScaled;
+  }
+  if (momBull >= 20 || momBear >= 20) s.reasons.push("momentum strong");
+
+  // ── Component 4: price action (0–25), Chande TrendScore ──
+  const chande = chandeSeries(candles)[last] ?? 0;
+  const paBull = chande > 0 ? Math.min(chande / 15, 1) * 25 : 0;
+  const paBear = chande < 0 ? Math.min(Math.abs(chande) / 15, 1) * 25 : 0;
+  if (paBull >= 20 || paBear >= 20) s.reasons.push("outside-bar sequence");
+
+  s.bull = dirBull + adxScore + momBull + paBull;
+  s.bear = dirBear + adxScore + momBear + paBear;
+  // An extreme is a component near its ceiling pushing one way — the same
+  // role "≥3 extremes" plays in the combined model.
+  if (dirBull >= 20) s.extremeBull++;
+  if (momBull >= 20) s.extremeBull++;
+  if (paBull >= 20) s.extremeBull++;
+  if (dirBear >= 20) s.extremeBear++;
+  if (momBear >= 20) s.extremeBear++;
+  if (paBear >= 20) s.extremeBear++;
+
+  return s;
+}
+
+/**
+ * The progression family's entry gates beyond the score, evaluated in order:
+ * Asian-range breakout trigger, higher-timeframe slope agreement, ATR
+ * expansion. Null from any gate means no opinion that bar, whatever the score.
+ */
+export function progressionGates(
+  candles: Candle[],
+  _ind: IndicatorSeries,
+  last: number,
+  direction: Direction,
+): boolean {
+  // Asian-range trigger: close outside today's compressed overnight window.
+  if (PROG_REQUIRE_ASIAN_BREAK) {
+    const dayStart = dayStartOf(candles[last].time);
+    const range = asianRangeOf(candles, last, dayStart);
+    if (!range) return false;
+    const price = candles[last].close;
+    if (direction === "LONG" && price <= range.hi) return false;
+    if (direction === "SHORT" && price >= range.lo) return false;
+  }
+
+  // Higher-timeframe bias as slope sign over the lookback window.
+  if (last < PROG_HTF_LOOKBACK) return false;
+  const htfMove = candles[last].close - candles[last - PROG_HTF_LOOKBACK].close;
+  if (htfMove === 0) return false;
+  if (direction === "LONG" && htfMove < 0) return false;
+  if (direction === "SHORT" && htfMove > 0) return false;
+
+  // ATR expansion: short-term volatility not collapsed vs its slow baseline.
+  const gate = atrGate(candles);
+  const f = gate.fast[last];
+  const sl = gate.slow[last];
+  if (f === undefined || sl === undefined || sl <= 0) return false;
+  if (f <= sl * PROG_ATR_EXPANSION_RATIO) return false;
+
+  return true;
+}
+
 export interface FamilyAnalysis {
   family: StrategyFamily;
   bias: Bias;
@@ -599,7 +867,9 @@ export function analyzeFamilyAt(
         ? scoreReversion(ind, last, config)
         : family === "breakout"
           ? scoreBreakout(candles, ind, last, config)
-          : scoreMomentum(ind, last, config);
+          : family === "progression"
+            ? scoreProgression(candles, ind, last, config)
+            : scoreMomentum(ind, last, config);
   const maxPoints = maxPointsFor(family);
 
   const total = raw.bull + raw.bear;
@@ -636,6 +906,20 @@ export function analyzeFamilyAt(
     sink.grade = grade;
   }
   if (grade === "NO_TRADE") return null;
+
+  // The progression family's own entry gates — Asian-range trigger, HTF
+  // slope agreement, ATR expansion. Applied after grading so the rejection
+  // sink still reports the score that was blocked.
+  if (
+    family === "progression" &&
+    !progressionGates(candles, ind, last, direction)
+  ) {
+    if (sink) {
+      sink.reason = "no_trade_grade";
+      sink.grade = null;
+    }
+    return null;
+  }
 
   const confidence = Math.min(
     config.confidenceCap,

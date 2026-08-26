@@ -24,7 +24,41 @@ mechanisms are instrument-generic), so each cell tests all 32 hypotheses
 
 ## Scan record
 
-### Round 9 — 2026-08-26, latest: taker-flow imbalance
+### Round 10 — 2026-08-26, latest: the operator's Trend Progression v2, built and tested
+
+Different kind of round: not a scan but a full STRATEGY port. The operator's
+Pine v6 "Trend Progression" document became the fifth scoring family,
+selectable everywhere models are (`--model progression`, BacktestModel
+union, sweep/self-heal included).
+
+| Piece | File | Notes |
+|---|---|---|
+| Progression family | `core/families.ts` | four components × 25 pts exactly as specified: EMA21/50 direction + slope + ATR-normalised separation; ADX(14) added to both sides (strength, not direction); RSI-band + ATR-scaled MACD momentum; Chande ±15 outside-bar counter with 0.95 decay |
+| Entry gates | `progressionGates()` | compressed-Asian-range breakout close (ported from Pine), 24-bar HTF slope agreement, atr(5)>atr(50)×0.85 expansion |
+| Documented omissions | header comment | session killzones (round 6 measured them null on majors), DXY filter (no second series; Pine skips when missing too), small-TF confirmations (single-TF harness) |
+
+Tests pin the pipeline end-to-end (graded LONG on a synthetic compressed-
+overnight breakout day, HTF veto, compression gate, component responses).
+
+Verdict through the REAL exit harness (ATR stop, TP1 partial → breakeven →
+trail → TP2) at tier costs:
+
+    BTC H1: 136 trades, WR 30.9% vs 32.6% breakeven — gross +3287 pts,
+            costs −7992 · NO edge
+    ETH H1: 142 trades, WR 34.5% vs 31.9% — net POSITIVE +455 …
+    …then the 730-day six-window walk-forward killed it honestly:
+      ETH: 2439 trades, −5201 pts, 0/6 windows positive (WR 24.8–28.9%)
+      BTC: 2486 trades, −210383 pts, 0/6 windows positive (WR 27.6–31.1%)
+
+**Verdict: the composite carries real gross signal on H1 (rare this session)
+but its win rate sits under the cost-adjusted breakeven everywhere, in every
+window, on both majors.** Same conclusion as rounds 1–9 from the opposite
+direction: the strategy was designed for session-structured markets (gold,
+index CFDs) and finds no habitat on 24/7 crypto at these cost bands. It stays
+in the system as a permanent family — the honest next test for it is
+`--asset MT5:XAUUSD` or index CFDs once a terminal syncs.
+
+### Round 9 — 2026-08-26: taker-flow imbalance
 
 The last free-data line that had never been asked. Binance klines publish
 per-bar aggressive TAKER BUY base volume (field 9); the system fetched it

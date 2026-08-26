@@ -46,6 +46,7 @@ function parseModel(v: string | undefined): BacktestModel {
     v === "reversion" ||
     v === "breakout" ||
     v === "momentum" ||
+    v === "progression" ||
     v === "combined"
   ) {
     return v;
