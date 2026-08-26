@@ -5,6 +5,7 @@ import { Toaster } from "./components/ui/sonner";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { TimezoneProvider } from "./contexts/TimezoneContext";
 import {
+  CalendarPage,
   DashboardPage,
   ExperimentalPage,
   PerformanceTrackerPage,
@@ -29,6 +30,7 @@ function App() {
               <Route path="/ideas" element={<TradingIdeasPage />} />
               <Route path="/journal" element={<SignalJournalPage />} />
               <Route path="/performance" element={<PerformanceTrackerPage />} />
+              <Route path="/calendar" element={<CalendarPage />} />
               <Route path="/risk" element={<RiskManagerPage />} />
               <Route path="/experimental" element={<ExperimentalPage />} />
               <Route path="/research" element={<ResearchPage />} />

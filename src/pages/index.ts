@@ -1,3 +1,4 @@
+export { CalendarPage } from "./CalendarPage";
 export { default as DashboardPage } from "./DashboardPage";
 export { default as ExperimentalPage } from "./ExperimentalPage";
 export { PerformanceTrackerPage } from "./PerformanceTrackerPage";

@@ -1,3 +1,4 @@
+import { format } from "date-fns";
 import {
   BarChart3,
   Bot,
@@ -10,6 +11,7 @@ import {
   User,
 } from "lucide-react";
 import { useState } from "react";
+import { DailyPnlCalendar } from "@/components/dashboard/DailyPnlCalendar";
 import { useLive } from "@/hooks/useLive";
 import { api, type Significance } from "@/lib/api";
 
@@ -69,15 +71,14 @@ export function PerformanceTrackerPage() {
       i.status === "EXPIRED",
   );
 
-  // Group by day for calendar
+  // Group by day for calendar. Local-date keys, not UTC — an evening-resolved
+  // trade belongs on the day the operator saw it happen.
   const byDay: Record<
     string,
     { wins: number; losses: number; pnl: number; count: number }
   > = {};
   for (const idea of closed) {
-    const d = new Date(idea.resolvedAt ?? idea.createdAt)
-      .toISOString()
-      .split("T")[0];
+    const d = format(new Date(idea.resolvedAt ?? idea.createdAt), "yyyy-MM-dd");
     if (!byDay[d]) byDay[d] = { wins: 0, losses: 0, pnl: 0, count: 0 };
     byDay[d].count++;
     byDay[d].pnl += idea.pnlPoints ?? 0;
@@ -365,47 +366,8 @@ export function PerformanceTrackerPage() {
         </div>
       )}
 
-      {/* Daily P&L Calendar */}
-      {Object.keys(byDay).length > 0 && (
-        <div className="bg-[#12141A] border border-white/5 rounded-lg p-3">
-          <div className="text-sm font-medium mb-3">Daily P&L</div>
-          <div className="grid grid-cols-7 gap-1">
-            {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map(d => (
-              <div
-                key={d}
-                className="text-[10px] text-center text-muted-foreground"
-              >
-                {d}
-              </div>
-            ))}
-            {Object.entries(byDay)
-              .sort(([a], [b]) => a.localeCompare(b))
-              .map(([date, data]) => (
-                <div
-                  key={date}
-                  className={`aspect-square rounded-md flex flex-col items-center justify-center text-[10px] border ${
-                    data.pnl > 0
-                      ? "bg-emerald-500/15 border-emerald-500/20"
-                      : data.pnl < 0
-                        ? "bg-red-500/15 border-red-500/20"
-                        : "bg-white/5 border-white/5"
-                  }`}
-                  title={`${date}: ${data.count} trades, ${data.pnl >= 0 ? "+" : ""}${data.pnl.toFixed(1)} pts`}
-                >
-                  <span className="text-muted-foreground">
-                    {new Date(`${date}T12:00:00`).getDate()}
-                  </span>
-                  <span
-                    className={`font-mono font-medium ${data.pnl > 0 ? "text-emerald-400" : "text-red-400"}`}
-                  >
-                    {data.pnl >= 0 ? "+" : ""}
-                    {data.pnl.toFixed(0)}
-                  </span>
-                </div>
-              ))}
-          </div>
-        </div>
-      )}
+      {/* Daily P&L Calendar — shared month-navigating component */}
+      <DailyPnlCalendar byDay={byDay} />
 
       {/* Recent Closed */}
       <div className="bg-[#12141A] border border-white/5 rounded-lg p-3">

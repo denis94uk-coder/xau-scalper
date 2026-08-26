@@ -1,5 +1,6 @@
 import {
   BarChart3,
+  CalendarDays,
   FlaskConical,
   LayoutDashboard,
   Lightbulb,
@@ -35,6 +36,7 @@ const signalsNav = [
 
 const trackingNav = [
   { href: "/performance", label: "Performance", icon: BarChart3 },
+  { href: "/calendar", label: "Calendar", icon: CalendarDays },
   { href: "/risk", label: "Risk Manager", icon: Shield },
 ];
 
