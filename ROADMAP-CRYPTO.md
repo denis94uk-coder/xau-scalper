@@ -24,7 +24,46 @@ mechanisms are instrument-generic), so each cell tests all 32 hypotheses
 
 ## Scan record
 
-### Round 10 — 2026-08-26, latest: the operator's Trend Progression v2, built and tested
+### Round 11 — 2026-08-26, latest: funding CARRY, not funding direction
+
+The operator locked scope to crypto-only. Within it, one line remained that
+no round had touched: the harvest question. Round 3 measured whether price
+REVERTS after extreme funding (NO); it never measured what a delta-neutral
+book COLLECTS while funding stays elevated — long spot + short perp receives
+every positive settlement regardless of where price goes.
+
+`bun run carry` (`scripts/funding-carry.ts`) measures episodes: enter when
+the settlement rate crosses above a threshold, exit below half of it, sum
+what the short-perp leg collects, against a pessimistic 20 bps round trip
+(four taker legs). Three years of settlements (3,285 per asset):
+
+    BTC: p95 rate 1.96 bps · thr 3bps → 16 episodes, avg collect 32.6 bps,
+         net ~+67 bps/yr; only 4/16 episodes individually profitable
+    ETH: p95 2.28 bps · thr 3bps → 16 episodes, avg collect 40.6 bps,
+         net ~+110 bps/yr; 5/16 profitable
+    Above 8bps the event barely exists (1 episode in three years)
+
+**First positive-expectancy structure measured this whole effort** — and an
+honest reading of how thin it is:
+
+1. The total is carried by a few large episodes (bull-run regimes); the median
+   episode roughly pays its costs at taker-everything assumptions.
+2. The 20 bps bracket is the worst case. Maker legs on spot and realistic
+   fee tiers put the true number between 8–12 bps, which flips most episodes
+   positive — but limit-leg fills carry adverse selection that this arithmetic
+   does not model.
+3. Basis drift between legs is unmodelled. It is THE risk of the structure and
+   must be quantified from premium-index data before any capital cares.
+4. Income is regime-dependent: near zero across 2024–25 calm, concentrated in
+   manias. As a standalone it is pocket money; as an overlay on a book that
+   holds the assets anyway, it is free optionality.
+
+Next steps if pursued: basis-risk measurement from premium index history,
+maker-fill cost sensitivity, always-on hysteresis variant (harvest whenever
+rate > trailing median), and — before anything live — the Binance execution
+path that does not exist yet (MT5 cannot trade this).
+
+### Round 10 — 2026-08-26: the operator's Trend Progression v2, built and tested
 
 Different kind of round: not a scan but a full STRATEGY port. The operator's
 Pine v6 "Trend Progression" document became the fifth scoring family,

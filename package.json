@@ -31,6 +31,7 @@
     "edgescan:positioning": "bun run --bun scripts/positioning-edgescan.ts",
     "cost-sensitivity": "bun run --bun scripts/cost-sensitivity.ts",
     "momentum48-test": "bun run --bun scripts/momentum48-exit-test.ts",
+    "carry": "bun run --bun scripts/funding-carry.ts",
     "import-csv": "bun run --bun scripts/import-csv.ts",
     "mt5:import-h1": "bun run --bun scripts/import-csv.ts seeds/XAUUSD_H1_2021-2026.csv --asset XAUUSD --interval 1h",
     "mt5:1h-backtest": "bun run --bun scripts/backtest.ts --source db --asset mt5:XAUUSD --interval 1h",
