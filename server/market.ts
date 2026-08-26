@@ -27,7 +27,7 @@ export interface MarketOptions {
 }
 
 function toCandle(k: unknown[]): Candle {
-  return {
+  const candle: Candle = {
     time: Math.floor(Number(k[0]) / 1000),
     open: Number.parseFloat(k[1] as string),
     high: Number.parseFloat(k[2] as string),
@@ -35,6 +35,14 @@ function toCandle(k: unknown[]): Candle {
     close: Number.parseFloat(k[4] as string),
     volume: Number.parseFloat(k[5] as string),
   };
+  // Kline field 9 is taker-buy base volume. Present on the exchange feed,
+  // absent from MT5 rows; kept optional rather than zeroed so "no data"
+  // never masquerades as "no aggressive buying".
+  if (k.length > 9 && k[9] !== undefined && k[9] !== null) {
+    const takerBuy = Number.parseFloat(k[9] as string);
+    if (Number.isFinite(takerBuy)) candle.takerBuyBase = takerBuy;
+  }
+  return candle;
 }
 
 /**

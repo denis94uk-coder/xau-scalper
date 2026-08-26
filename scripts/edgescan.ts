@@ -22,6 +22,7 @@ import type { CostModel } from "../core/costs";
 import { MIN_OCCURRENCES, scanEdges, survives } from "../core/edgescan";
 import { HYPOTHESES } from "../core/hypotheses";
 import { CRYPTO_HYPOTHESES } from "../core/hypotheses-crypto";
+import { FLOW_HYPOTHESES } from "../core/hypotheses-flow";
 import { LEAD_HYPOTHESES } from "../core/hypotheses-leads";
 import type { Candle } from "../core/strategy";
 import { db as openDb } from "../server/db";
@@ -31,6 +32,14 @@ const ALL_HYPOTHESES = [...HYPOTHESES, ...CRYPTO_HYPOTHESES];
 // Lead-lag claims need an injected partner series; they join the set only
 // when one is actually provided, so the Šidák count matches what was asked.
 const LEADER = "BTCUSDT";
+
+/** True when the series carries venue flow data anywhere near its middle. */
+function hasFlowData(candles: Candle[]): boolean {
+  for (let k = Math.floor(candles.length / 2); k < candles.length; k++) {
+    if (candles[k].takerBuyBase !== undefined) return true;
+  }
+  return false;
+}
 
 function parseArgs(argv: string[]) {
   const a: Record<string, string> = {};
@@ -147,7 +156,12 @@ async function main() {
     };
   }
 
-  const hypotheses = [...ALL_HYPOTHESES, ...(injected ? LEAD_HYPOTHESES : [])];
+  const flow = hasFlowData(prepared.candles);
+  const hypotheses = [
+    ...ALL_HYPOTHESES,
+    ...(flow ? FLOW_HYPOTHESES : []),
+    ...(injected ? LEAD_HYPOTHESES : []),
+  ];
   const report = scanEdges(prepared.candles, hypotheses, prepared.costs, {
     horizonBars: cli.horizon,
     windows: cli.windows,
@@ -159,6 +173,7 @@ async function main() {
     `${prepared.costNote} · ` +
       `${report.hypothesesTested} hypotheses` +
       (injected ? " (incl. 3 BTC-lead claims)" : "") +
+      (flow ? " (incl. 4 taker-flow claims)" : "") +
       ` · ` +
       `each must beat p < ${report.adjustedAlpha.toFixed(5)} ` +
       `for the set to hold at ${report.familyAlpha}\n`,

@@ -24,7 +24,39 @@ mechanisms are instrument-generic), so each cell tests all 32 hypotheses
 
 ## Scan record
 
-### Round 8 — 2026-08-24, latest: cross-asset lead-lag (BTC → alts)
+### Round 9 — 2026-08-26, latest: taker-flow imbalance
+
+The last free-data line that had never been asked. Binance klines publish
+per-bar aggressive TAKER BUY base volume (field 9); the system fetched it
+since day one and dropped it in `toCandle`. Built:
+
+| Piece | File | What it does |
+|---|---|---|
+| Flow field kept | `core/strategy.ts` + `server/market.ts` | optional `Candle.takerBuyBase`, parsed when present; absence means unknown, never zero |
+| Flow catalogue | `core/hypotheses-flow.ts` | 4 claims registered BEFORE scanning: `flow-thrust-3x/5x` (loud bar, >70%/<30% aggressive side continues), `flow-absorption-24` (new 24-bar low/high against the aggressive side reverts), `flow-divergence-12` (cumulative share vs price direction, fade the price) |
+| Runner gating | `scripts/edgescan.ts` | flow claims join a scan only when the series actually carries the field |
+
+Cells: {BTC, ETH, SOL, XRP} × {H1, M15} × {365d}, then the H1 cells extended
+to 1500d so near-threshold rows were measured rather than imagined.
+
+    M15: nothing survives; loudest rows NEGATIVE (BTC absorption t=−3.98,
+         divergence −3.85; XRP divergence −2.23)
+    H1 @365d: mostly "too few" — thrust is structurally rare hourly;
+         three rows looked positive but unmeasured
+    H1 @1500d: every temptation dissolved — BTC divergence +141/hold at n=88
+         became −35 at n=226; SOL absorption +1.2/5-of-6 became +0.2 t=0.94
+         at n=266. flow-thrust stays unmeasurable at H1 even across four
+         years (fires 3–26 times), which is itself the finding: the claimed
+         event barely exists at that resolution.
+
+**Verdict: answered NO.** Aggregated taker-side volume carries no exploitable
+directional information on liquid majors after costs — consistent with every
+round since 1: whatever order-flow edge exists is below bar resolution or
+below the cost floor. Note: live fetches now carry the field but the DB
+schema still stores plain OHLCV; scans fetch fresh, stored history does not
+gain flow retroactively.
+
+### Round 8 — 2026-08-24: cross-asset lead-lag (BTC → alts)
 
 Roadmap step 3 executed. Built the missing machinery first:
 
@@ -294,11 +326,12 @@ failure of imagination.
    discovery search space → three-window validation).
 
 Closed for good unless a NEW mechanism arrives: price-only entries on
-liquid majors (rounds 1–5), funding-level fades (round 3), and — since
-round 6 — level-sweep reversal, compressed-Asian-range breakout and
-opening-drive fade on majors specifically. The catalogue claims stay
-registered; re-testing them needs a new argument, not a new parameter.
-Re-opening any of these requires registering the new claim BEFORE scanning.
+liquid majors (rounds 1–5), funding-level fades (round 3), level-sweep
+reversal, compressed-Asian-range breakout and opening-drive fade on majors
+(round 6), bar-scale lead-lag on liquid alts (round 8), taker-flow imbalance
+from kline aggregates (round 9). The catalogue claims stay registered;
+re-testing them needs a new argument, not a new parameter. Re-opening any of
+these requires registering the new claim BEFORE scanning.
 
 ## Rerun commands
 

@@ -19,6 +19,13 @@ export interface Candle {
   low: number;
   close: number;
   volume: number;
+  /**
+   * Base-asset volume traded by aggressive TAKER buys within this bar, when
+   * the venue publishes it (Binance kline field 9). Optional everywhere:
+   * MT5 bars and older stored rows do not have it, and every consumer must
+   * treat its absence as "unknown flow", never as zero.
+   */
+  takerBuyBase?: number;
 }
 
 export type SignalGrade = "A" | "B" | "C" | "NO_TRADE";
