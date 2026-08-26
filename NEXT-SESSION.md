@@ -116,48 +116,19 @@ MT5 terminal (0.50bps spread → TP1 breakeven 83% → 47.4%).
    once written into the user's live terminal. If you touch MT5 discovery or env handling,
    re-verify `requests/` stays empty after a full suite run.
 
-## Item 1 — Rotate the leaked credentials (do this first)
+## Item 1 — Rotate the leaked credentials — CLOSED 2026-08-26
 
-This is the only item that gets worse with time. It is dashboard work, ~15 minutes, and
-the agent cannot do it alone because it needs the user's logins.
+Operator's verdict: these credentials belonged to the **old development
+phase** (the upstream project this was forked from). The current system runs
+**locally and fully independently** — no Convex, no Viktor Spaces, no external
+deployment — so the leaked blobs are dead secrets for this codebase. Nothing
+to rotate. Do not reopen.
 
-`.env.local` was committed in `e08cfc2` and is still reachable in the **public** history
-of both the fork and upstream `donnnod/xau-scalper`. Deleting it (done in `b05e346`)
-does not help; the blob is still fetchable via `git show e08cfc2:.env.local`. The file is
-currently untracked and gitignored (`.gitignore:9`), so no new exposure is being added.
+## Item 2 — Fill one order on a DEMO account — CLOSED 2026-08-26
 
-Four secrets need rotating:
-
-- `JWT_PRIVATE_KEY` (an RSA private key — rotating invalidates existing sessions)
-- `CONVEX_DEPLOY_KEY`
-- `VIKTOR_SPACES_PROJECT_SECRET`
-- `TEST_USER_PASSWORD`
-
-Rotation is what actually fixes this. History rewriting is optional and mostly cosmetic:
-upstream is a separate repo the user may not control, and forks/clones/caches persist.
-**Do not offer history rewriting as a substitute for rotation.** If the user wants it
-anyway, it is a force-push across two repos and needs explicit confirmation.
-
-Ask the user to rotate in the Convex and Spaces dashboards; offer to update local
-`.env.local` with the new values once they have them.
-
-## Item 2 — Fill one order on a DEMO account
-
-No order has ever been filled on a real broker account. The path is proven end to end up
-to the ack (order → pending → ack, simulated EA), so this is a confidence check rather
-than construction.
-
-**Demo account only.** Do not arm a live account. Confirm with the user which account the
-terminal is pointed at before arming anything.
-
-Recall the safety design, which is intentional and must not be "simplified":
-- MT5 execution is armed by a switch separate from data ingest
-- Both default to off
-- Execution cannot be armed while the bridge is off, enforced server-side (verified from
-  both directions)
-
-Steps: launch the app, point it at the demo terminal, enable ingest, then arm execution,
-place one minimum-size order, and confirm the fill appears. Then disarm.
+Operator's verdict: a leftover from the **old development** phase. The system
+is now local and fully independent; live MT5 execution is not part of the
+current plan. No demo fill is needed. Do not reopen.
 
 ## Known gap the agent cannot close alone
 
