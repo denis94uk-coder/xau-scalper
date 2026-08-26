@@ -24,7 +24,33 @@ mechanisms are instrument-generic), so each cell tests all 32 hypotheses
 
 ## Scan record
 
-### Round 6 — 2026-08-24, latest: the operator's playbooks, measured
+### Round 7 — 2026-08-24, latest: lower-liquidity books
+
+Roadmap step 2 executed: `bun run edgescan:batch -- --top 20 --out
+tmp/r7-batch-top20.json` — live top-20 by 24h quote volume × {M5, M15, M30,
+H1, H4}, ≤30k bars per cell, tier-banded pessimistic costs by volume rank,
+ONE shared Šidák budget across everything (now including round 6's five
+operator-playbook hypotheses).
+
+    99 scans × 32 hypotheses = 3168 tests · shared bar p < 1.619e-5 (|t| ≈ 4.3)
+    2469 pairs fired ≥100 times and were judged
+    SURVIVORS: none
+
+Loudest rows, all far under the bar: TUTUSDT M5 saturday-drift (t=2.74),
+TUTUSDT M15 saturday-drift (t=2.19), ENAUSDT H4 mom3-with-d1 (t=2.13),
+TRUMPUSDT H1 momentum-48 (t=2.04). At 3168 tries, a handful of rows this
+size is exactly what noise yields. The new playbook rows topped a few
+low-cap cells (break-prior-day TUT M30 t=2.01, asian-range-breakout ADA M5
+t=0.72) without approaching significance anywhere.
+
+Step 2's answer for THIS pass: no exit from the cost floor one rank band
+lower. Untried variants remain — longer horizons than H4, deeper than rank
+20, and the maker-exit lens over low-cap cells specifically — but each is
+another draw against the same budget, and the prior after 3800+ corrected
+tests is firmly negative. Next lines stay: OI maturation (passive),
+cross-asset lead-lag (needs injected-series support), MT5 index CFDs.
+
+### Round 6 — 2026-08-24: the operator's playbooks, measured
 
 The operator supplied two strategy documents — a Pine v6 "Trend Progression"
 gold script (session-aware, composite trend score, DXY filter) and an
