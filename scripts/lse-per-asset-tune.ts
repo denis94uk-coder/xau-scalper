@@ -20,7 +20,6 @@ import {
   DEFAULT_SEARCH_SPACE,
   discover,
   type DiscoveryReport,
-  sampleConfig,
 } from "../core/discovery";
 import { Db } from "../server/db";
 import { confirmFor } from "../server/lse-engine";
@@ -108,7 +107,6 @@ function localRefine(
   days: number,
   iterations: number,
 ): typeof base | null {
-  const inst = LSE_UNIVERSE.find(u => u.id === id)!;
   const meta = db.getSetting<any>(`lse:${id}`);
   const asset = lseAsset(meta);
   const to = Math.floor(Date.now() / 1000);
