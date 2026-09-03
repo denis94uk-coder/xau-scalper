@@ -37,8 +37,6 @@ import { ladderIsSane, syncCandles } from "./engine";
 import { publish } from "./events";
 import type { RiskManager } from "./risk-manager";
 
-const SIGNAL_INTERVAL = "1h";
-
 /**
  * XAUUSD gold 1h breakout — the strongest survivor of the 3000-config deep
  * search over 20 years of vault history: PF 1.24, 816 trades, adjusted
@@ -92,11 +90,78 @@ const LSE_STRATEGIES: Record<
   XAUUSD: { family: "breakout", config: XAUUSD_BREAKOUT },
 };
 
-/** Universe order: qualified instruments first, gold permanent. */
+// ─── Per-asset discovered strategies ───
+
+/**
+ * One instrument's independent strategy, as adopted by
+ * scripts/lse-discovery.ts --adopt. The book's promise: an instrument
+ * trades only on ITS OWN edge — the family, config and interval the data
+ * qualified for that instrument, never a book-wide template.
+ */
+export interface LseStrategy {
+  family: Family;
+  config: typeof DEFAULT_STRATEGY_CONFIG;
+  interval: string;
+  /** Higher-timeframe confirmation bar, when the strategy wants one. */
+  confirm: string | null;
+  adjustedP: number;
+  adoptedAt: number;
+}
+
+const STRATEGIES_KEY = "lse:strategies";
+
+/** Interval → its confirmation interval (the next one up). */
+export function confirmFor(interval: string): string | null {
+  switch (interval) {
+    case "5m":
+      return "15m";
+    case "15m":
+      return "30m";
+    case "30m":
+      return "1h";
+    default:
+      return null; // 1h+ strategies stand alone
+  }
+}
+
+/**
+ * Regime veto, family-aware. Reversion's edge is a range edge — it needs
+ * RANGING. Every other family was validated by discovery with no regime
+ * filter, so it gets context, not a veto: a hard RANGING block on breakout
+ * was measured refusing grade-A gold setups on live day one.
+ */
+export function lseRegimeBlocks(
+  family: Family,
+  regime: string | null | undefined,
+): boolean {
+  return family === "reversion" && regime !== "RANGING";
+}
+
+/**
+ * The strategy an instrument trades. A discovered entry wins when present;
+ * otherwise the hand-qualified fallbacks above apply; an instrument with
+ * neither has no edge and must not trade.
+ */
+export function lseStrategyFor(db: Db, assetId: string): LseStrategy | null {
+  const store = db.getSetting<Record<string, LseStrategy>>(STRATEGIES_KEY);
+  const discovered = store?.[assetId];
+  if (discovered?.config) return discovered;
+  const qualified = LSE_STRATEGIES[assetId];
+  if (!qualified) return null;
+  return {
+    ...qualified,
+    interval: "1h",
+    confirm: null,
+    adjustedP: 0.006,
+    adoptedAt: 0,
+  };
+}
+
+/** Universe: LSE instruments that HAVE a strategy (discovered or qualified). */
 function lseUniverse(db: Db): AssetDefinition[] {
   const assets: AssetDefinition[] = [];
   for (const inst of LSE_UNIVERSE) {
-    if (!LSE_STRATEGIES[inst.id]) continue;
+    if (!lseStrategyFor(db, inst.id)) continue;
     const meta = db.getSetting<{
       symbol: string;
       digits: number;
@@ -153,7 +218,9 @@ export async function generateForLse(
 ): Promise<number | null> {
   const { db } = deps;
   const now = deps.now?.() ?? Date.now();
-  const strategy = LSE_STRATEGIES[asset.id];
+  // This instrument's own strategy — discovered per instrument, never a
+  // book-wide template. Only this strategy can trigger a trade here.
+  const strategy = lseStrategyFor(db, asset.id);
   if (!strategy) return null;
   const { family, config: cfg } = strategy;
 
@@ -185,8 +252,15 @@ export async function generateForLse(
   const candles = await syncCandles(
     { db, assets: deps.assets } as any,
     { ...asset, config: cfg } as AssetDefinition,
-    SIGNAL_INTERVAL,
+    strategy.interval,
   );
+  const confirmCandles = strategy.confirm
+    ? await syncCandles(
+        { db, assets: deps.assets } as any,
+        { ...asset, config: cfg } as AssetDefinition,
+        strategy.confirm,
+      )
+    : [];
   const price = candles.at(-1)?.close;
   if (price === undefined) return null;
 
@@ -196,26 +270,39 @@ export async function generateForLse(
     cfg,
     asset.pricePrecision,
   );
+  const confirmation = confirmCandles.length
+    ? analyzeFamilyCandles(confirmCandles, family, cfg, asset.pricePrecision)
+    : null;
 
   db.logJournal({
     eventType: "ENGINE_RUN",
     asset: asset.id,
     source: "lse",
     price,
-    details: `[LSE ${asset.displaySymbol}] ${SIGNAL_INTERVAL}:${family} ${signal?.bias ?? "N/A"} ${signal?.grade ?? "-"}(${signal?.confidence ?? 0}%) daily ${dayPct.toFixed(2)}%`,
+    details: `[LSE ${asset.displaySymbol}] ${strategy.interval}:${family} ${signal?.bias ?? "N/A"} ${signal?.grade ?? "-"}(${signal?.confidence ?? 0}%) ${strategy.confirm ? `${strategy.confirm}:${confirmation?.bias ?? "N/A"} ${confirmation?.grade ?? "-"}` : "(no confirm)"} daily ${dayPct.toFixed(2)}%`,
     metadata: {
       signal: signal && { bias: signal.bias, grade: signal.grade },
     } as any,
   });
 
   if (!signal) return null;
+  // Confirmation: the confirm interval must agree if it has an opinion
+  if (confirmation && confirmation.direction !== signal.direction) return null;
 
-  // NO hard regime gate here — discovery validated this family over 20 years
-  // of vault data with no regime filter, and a RANGING block was measured
-  // refusing grade-A setups on day one. Regime is carried on the idea as
-  // context (SL/TP multipliers, reason tag) instead of being a veto.
-  // The reversion branch keeps its RANGING requirement for any future
-  // instrument whose edge qualifies under that family.
+  // Regime veto, family-aware (see lseRegimeBlocks): reversion needs
+  // RANGING; every other family was validated with no regime filter and
+  // gets context via the regimeTag on the idea, never a veto.
+  if (regime && lseRegimeBlocks(family, regime.regime)) {
+    db.logJournal({
+      eventType: "SIGNAL_BLOCKED",
+      asset: asset.id,
+      source: "lse",
+      direction: signal.direction,
+      price: signal.entryPrice,
+      details: `[LSE] regime ${regime.regime} — reversion needs RANGING`,
+    });
+    return null;
+  }
 
   // COT crowd gate — gold only; the percentile is a GC futures rank.
   if (asset.id === "XAUUSD") {
@@ -284,7 +371,10 @@ export async function generateForLse(
   const universe = deps.assets ?? lseUniverse(db);
   const matrix = buildCorrelationMatrix(
     Object.fromEntries(
-      universe.map(a => [a.id, db.getCandles(a.id, SIGNAL_INTERVAL, 200)]),
+      universe.map(a => [
+        a.id,
+        db.getCandles(a.id, lseStrategyFor(db, a.id)?.interval ?? "1h", 200),
+      ]),
     ),
     deps.correlationOptions,
   );
@@ -346,8 +436,8 @@ export async function generateForLse(
     tp2,
     confidence,
     grade: signal.grade,
-    reason: `[LSE ${family}] ${signal.reason}${decision.hedge ? " · hedges" : ""}${regimeTag} · ${dayPct.toFixed(2)}% today`,
-    timeframe: SIGNAL_INTERVAL,
+    reason: `[LSE ${family}@${strategy.interval}] ${signal.reason}${confirmation ? ` · ${strategy.confirm} confirms` : ""}${decision.hedge ? " · hedges" : ""}${regimeTag} · ${dayPct.toFixed(2)}% today`,
+    timeframe: [strategy.interval, strategy.confirm].filter(Boolean).join("+"),
     bias: signal.bias,
     biasStrength: signal.biasStrength,
     spotPrice: price,

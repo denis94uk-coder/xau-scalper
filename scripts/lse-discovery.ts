@@ -1,23 +1,32 @@
 /**
  * Batch strategy discovery over the LSE research universe, from the local DB.
  *
- *   bun run scripts/lse-discovery.ts                                  # 15m, 2y, 300 tries
- *   bun run scripts/lse-discovery.ts -- --interval 1h --days 3650     # deep 1h
+ *   bun run scripts/lse-discovery.ts                                  # 1h, 22y, 300 tries, research only
+ *   bun run scripts/lse-discovery.ts -- --interval 15m --days 730
  *   bun run scripts/lse-discovery.ts -- --only XAUUSD,EURUSD
- *   bun run scripts/lse-discovery.ts -- --models reversion,trend
+ *   bun run scripts/lse-discovery.ts -- --adopt                       # also install winners
  *
  * WHAT IT DOES
  * For every LSE instrument it loads bars from the candle database (pulled by
  * scripts/import-lse.ts), runs `core/discovery` (three-window split,
- * walk-forward, Šidák correction), pins every QUALIFIED candidate to the
- * Strategy Carpet, and prints each asset's best.
+ * walk-forward, Šidák correction) across the four families, pins every
+ * QUALIFIED candidate to the Strategy Carpet, and prints each asset's best.
  *
- * WHY A SEPARATE SCRIPT
- * scripts/batch-discovery.ts fetches from Binance and iterates the crypto
- * registry; this one reads the LSE backfill instead. The statistics are
- * identical — same discovery core, same honesty rules: a candidate reaches
- * the Carpet only by surviving data it never influenced, and costs are netted
- * throughout using the pessimistic spread assumptions in LSE_UNIVERSE.
+ * ISOLATION
+ * --adopt writes each asset's single best qualified strategy to the
+ * `lse:strategies` settings store — never the live AppConfig — so the main
+ * engine and top10 keep trading exactly what they traded before this script
+ * ran. The LSE engine reads the store at signal time; instruments without a
+ * qualified strategy keep their hand-qualified fallback (gold) or stand
+ * aside. An instrument that qualified in an earlier run but not in this one
+ * KEEPS its existing entry: failing to requalify on a different sample is
+ * not proof the edge died.
+ *
+ * HONESTY RULES CARRIED OVER
+ * A candidate reaches the Carpet only by surviving data it never influenced,
+ * and costs are netted throughout using the pessimistic spread assumptions
+ * in LSE_UNIVERSE. A strategy must be traded under the family it was
+ * measured with.
  */
 
 import { LSE_UNIVERSE, lseAsset } from "../core/assets";
@@ -29,6 +38,15 @@ import {
 } from "../core/discovery";
 import type { Candle } from "../core/strategy";
 import { Db } from "../server/db";
+import { confirmFor } from "../server/lse-engine";
+
+const STRATEGIES_KEY = "lse:strategies";
+const FAMILIES: BacktestModel[] = [
+  "reversion",
+  "trend",
+  "breakout",
+  "momentum",
+];
 
 function flag(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -38,10 +56,11 @@ function flag(name: string): string | undefined {
 }
 
 async function main() {
-  const interval = flag("interval") ?? "15m";
-  const days = Number(flag("days") ?? 730);
+  const interval = flag("interval") ?? "1h";
+  const days = Number(flag("days") ?? 8000);
   const iterations = Number(flag("iterations") ?? 300);
   const seed = Number(flag("seed") ?? 42);
+  const adopt = Boolean(flag("adopt"));
   const models = (flag("models") ?? "reversion,trend,breakout,momentum")
     .split(",")
     .map(s => s.trim()) as BacktestModel[];
@@ -65,10 +84,15 @@ async function main() {
 
   console.log(
     `LSE discovery on ${universe.length} instruments · ${interval} · ${days}d · ` +
-      `${iterations} configs each · models: ${models.join(",")}\n`,
+      `${iterations} configs each · models: ${models.join(",")}` +
+      `${adopt ? " · ADOPTING winners" : ""}\n`,
   );
 
   let pinnedTotal = 0;
+  let adopted = 0;
+  const store = adopt
+    ? (db.getSetting<Record<string, unknown>>(STRATEGIES_KEY) ?? {})
+    : {};
   const summary: Array<{
     id: string;
     best: Candidate | null;
@@ -129,6 +153,22 @@ async function main() {
       }
     }
 
+    if (adopt && report.best && FAMILIES.includes(report.best.model)) {
+      const b = report.best;
+      store[inst.id] = {
+        family: b.model,
+        config: b.config,
+        interval,
+        confirm: confirmFor(interval),
+        adjustedP: b.adjustedPValue,
+        adoptedAt: Date.now(),
+      };
+      adopted++;
+      console.log(
+        `             ADOPTED [${b.model}@${interval}] p=${b.adjustedPValue.toExponential(1)}`,
+      );
+    }
+
     summary.push({
       id: inst.id,
       best: report.best,
@@ -137,9 +177,12 @@ async function main() {
     });
   }
 
+  if (adopt) db.setSetting(STRATEGIES_KEY, store);
+
   console.log(`\n${"─".repeat(78)}`);
   console.log(
-    `SUMMARY · ${pinnedTotal} candidates pinned to the Carpet · ` +
+    `SUMMARY · ${pinnedTotal} candidates pinned to the Carpet` +
+      `${adopt ? ` · ${adopted} strategy(ies) adopted to ${STRATEGIES_KEY}` : ""} · ` +
       `${((Date.now() - startedAll) / 60000).toFixed(1)} min\n`,
   );
   for (const s of summary) {
