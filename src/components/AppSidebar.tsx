@@ -24,6 +24,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarSeparator,
   useSidebar,
 } from "./ui/sidebar";
 
@@ -57,6 +58,9 @@ const experimentalNav = [
 const topTenNav = [
   { href: "/top10", label: "Top 10", icon: Award },
   { href: "/top10/ideas", label: "Top 10 Ideas", icon: Lightbulb },
+];
+
+const lseNav = [
   { href: "/lse", label: "LSE", icon: Globe },
   { href: "/lse/ideas", label: "LSE Ideas", icon: Lightbulb },
 ];
@@ -137,6 +141,27 @@ function SidebarNav() {
         <SidebarGroupContent>
           <SidebarMenu>
             {topTenNav.map(item => (
+              <NavLink
+                key={item.href}
+                href={item.href}
+                label={item.label}
+                icon={item.icon}
+                isActive={isActive(item.href)}
+              />
+            ))}
+          </SidebarMenu>
+        </SidebarGroupContent>
+      </SidebarGroup>
+
+      <SidebarSeparator />
+
+      <SidebarGroup>
+        <SidebarGroupLabel className="text-[10px] text-muted-foreground uppercase tracking-wider">
+          LSE Terminal
+        </SidebarGroupLabel>
+        <SidebarGroupContent>
+          <SidebarMenu>
+            {lseNav.map(item => (
               <NavLink
                 key={item.href}
                 href={item.href}
