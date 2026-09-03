@@ -27,6 +27,8 @@ import {
   type AssetDefinition,
   DEFAULT_ASSET_ID,
   getEnabledAssets,
+  LSE_UNIVERSE,
+  lseAsset,
 } from "../core/assets";
 import { analyzeFamilyCandles, type FamilyAnalysis } from "../core/families";
 import {
@@ -757,20 +759,24 @@ export async function monitorIdeas(deps: EngineDeps): Promise<void> {
   }
 
   const active = assets.filter(a => open.some(i => i.asset === a.id));
-  if (active.length === 0) {
+  if (active.length === 0 && lseMonitoredAssets(db).length === 0) {
     db.recordRun("monitor", true);
     return;
   }
 
-  let prices: Map<string, number>;
-  try {
-    // ONE request covering every asset that has something open.
-    prices = await fetchPrices(venueSymbols(active), { fetcher: deps.fetcher });
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    db.recordRun("monitor", false, msg);
-    console.error("[monitor]", msg);
-    return;
+  let prices: Map<string, number> = new Map();
+  if (active.length > 0) {
+    try {
+      // ONE request covering every asset that has something open.
+      prices = await fetchPrices(venueSymbols(active), {
+        fetcher: deps.fetcher,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      db.recordRun("monitor", false, msg);
+      console.error("[monitor]", msg);
+      return;
+    }
   }
 
   let changed = 0;
@@ -795,12 +801,110 @@ export async function monitorIdeas(deps: EngineDeps): Promise<void> {
     }
   }
 
+  // LSE book positions are priced off vault bars: the exchange feed cannot
+  // quote them, and their assets deliberately stay out of the main registry
+  // (book isolation). The newest stored 1m bars replay as ticks — exact
+  // SL/TP resolution at one-minute granularity.
+  for (const asset of lseMonitoredAssets(db)) {
+    const mine = open.filter(i => i.asset === asset.id);
+    if (mine.length === 0) continue;
+    try {
+      // A rolling window only: a position never needs bars older than the
+      // last few minutes, and an unbounded first fetch would walk the vault
+      // back to 2003 — with 2003 prices fed to live stops.
+      const since = Math.floor(Date.now() / 1000) - 900;
+      const fresh = await fetchLseCandles(asset.dataSourceSymbol, "1m", {
+        fetcher: deps.fetcher,
+        since,
+      });
+      if (fresh.length > 0) db.saveCandles(asset.id, "1m", fresh);
+      // No new bar yet — the newest stored bar stands in as the live tick.
+      const bars =
+        fresh.length > 0 ? fresh : db.getCandles(asset.id, "1m", 1);
+      const atr = lseAtr(db, asset);
+      for (const idea of mine) {
+        // Only bars AFTER the position opened may resolve it — the vault's
+        // date-granular fetch returns the whole day, and pre-entry bars
+        // (different price regime entirely) would false-stop the position.
+        const openedSec = Math.floor(idea.created_at / 1000);
+        for (const bar of bars) {
+          if (bar.time < openedSec) continue;
+          if (applyPrice(db, asset, idea, bar, atr)) {
+            changed++;
+            // Once a position resolves, further bars must not touch it —
+            // replaying a resolved idea fires its exit over and over.
+            const state = db.getIdea(idea.id);
+            if (!state || state.resolved_at !== null) break;
+          }
+        }
+      }
+    } catch (e) {
+      console.error(
+        `[monitor] lse ${asset.id}:`,
+        e instanceof Error ? e.message : e,
+      );
+    }
+  }
+
   db.recordRun("monitor", true);
   if (changed > 0) {
     publish("ideas");
     publish("journal");
   }
   publish("prices", Object.fromEntries(prices));
+}
+
+const LSE_STRATEGIES_KEY = "lse:strategies";
+
+/**
+ * Interval an LSE instrument's strategy trades — its own discovered entry
+ * when adopted, the 1h gold default otherwise.
+ */
+function lseIntervalFor(db: Db, assetId: string): string {
+  const store = db.getSetting<Record<string, { interval?: string }>>(
+    LSE_STRATEGIES_KEY,
+  );
+  return store?.[assetId]?.interval ?? "1h";
+}
+
+function lseAtr(db: Db, asset: AssetDefinition): number {
+  const candles = db.getCandles(
+    asset.id,
+    lseIntervalFor(db, asset.id),
+    60,
+  );
+  if (candles.length < asset.config.atrPeriod + 1) return 0;
+  return calcATR(candles, asset.config.atrPeriod).at(-1) ?? 0;
+}
+
+/**
+ * LSE assets that currently hold open positions, built from the LSE
+ * universe — deliberately NOT part of the main engine's asset list.
+ */
+export function lseMonitoredAssets(db: Db): AssetDefinition[] {
+  const open = db.openIdeas().filter(i => i.source === "lse");
+  if (open.length === 0) return [];
+  const out: AssetDefinition[] = [];
+  for (const inst of LSE_UNIVERSE) {
+    if (!open.some(i => i.asset === inst.id)) continue;
+    const meta = db.getSetting<{
+      symbol: string;
+      digits: number;
+      assetId: string;
+      spreadBps: number;
+    }>(`lse:${inst.id}`);
+    out.push(
+      meta
+        ? lseAsset(meta)
+        : lseAsset({
+            symbol: inst.lse,
+            digits: inst.digits,
+            assetId: inst.id,
+            spreadBps: inst.spreadBps,
+          }),
+    );
+  }
+  return out;
 }
 
 function latestATR(db: Db, asset: AssetDefinition): number {
@@ -824,7 +928,7 @@ function latestATR(db: Db, asset: AssetDefinition): number {
  */
 export async function recoverGap(deps: EngineDeps): Promise<number> {
   const { db } = deps;
-  const assets = deps.assets ?? getEnabledAssets();
+  const assets = [...(deps.assets ?? getEnabledAssets()), ...lseMonitoredAssets(db)];
   const open = db.openIdeas();
   if (open.length === 0) return 0;
 
@@ -832,7 +936,8 @@ export async function recoverGap(deps: EngineDeps): Promise<number> {
   if (lastMonitor === null) return 0;
 
   const downtime = (deps.now?.() ?? Date.now()) - lastMonitor;
-  // Under one bar of downtime there is nothing a replay would add.
+  // Under one bar of downtime there is nothing a replay would add. The LSE
+  // book trades 1h bars; the main engine's 5m bar is the finer bound.
   if (downtime < intervalMs(SIGNAL_INTERVAL)) return 0;
 
   console.log(
@@ -845,9 +950,14 @@ export async function recoverGap(deps: EngineDeps): Promise<number> {
     const mine = open.filter(i => i.asset === asset.id);
     if (mine.length === 0) continue;
 
+    // LSE instruments replay their own strategy interval off the vault; the
+    // main registry replays the engine's 5m signal bar.
+    const interval =
+      asset.dataSource === "lse" ? lseIntervalFor(db, asset.id) : SIGNAL_INTERVAL;
+
     let bars: Candle[];
     try {
-      bars = await syncCandles(deps, asset, SIGNAL_INTERVAL);
+      bars = await syncCandles(deps, asset, interval);
     } catch (e) {
       console.error(
         `[recover] ${asset.id}:`,
