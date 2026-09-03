@@ -1,6 +1,9 @@
 import { Award, BarChart3, Target, Zap } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { DailyPnlCalendar } from "@/components/dashboard/DailyPnlCalendar";
+import {
+  DailyPnlCalendar,
+  pnlPct,
+} from "@/components/dashboard/DailyPnlCalendar";
 import { PriceTicker } from "@/components/dashboard/PriceTicker";
 import { useLive } from "@/hooks/useLive";
 import { type AssetPerformance, api } from "@/lib/api";
@@ -113,7 +116,7 @@ export default function LsePage() {
     );
     if (!byDay[d]) byDay[d] = { wins: 0, losses: 0, pnl: 0, count: 0 };
     byDay[d].count++;
-    byDay[d].pnl += idea.pnlPoints ?? 0;
+    byDay[d].pnl += pnlPct(idea) ?? 0;
     if ((idea.pnlPoints ?? 0) > 0) byDay[d].wins++;
     else byDay[d].losses++;
   }

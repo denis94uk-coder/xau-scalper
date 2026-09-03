@@ -77,7 +77,7 @@ const XAUUSD_BREAKOUT: typeof DEFAULT_STRATEGY_CONFIG = {
   momentumLookback: 95,
 };
 
-type Family = "reversion" | "breakout";
+type Family = "reversion" | "trend" | "breakout" | "momentum";
 
 /**
  * Per-asset strategy. An asset absent here has no qualified edge yet and

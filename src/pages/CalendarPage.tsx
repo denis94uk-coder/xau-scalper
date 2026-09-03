@@ -4,6 +4,7 @@ import { useState } from "react";
 import {
   DailyPnlCalendar,
   type DayStats,
+  pnlPct,
 } from "@/components/dashboard/DailyPnlCalendar";
 import { useLive } from "@/hooks/useLive";
 import { api } from "@/lib/api";
@@ -68,7 +69,7 @@ export function CalendarPage() {
     const d = format(new Date(idea.resolvedAt ?? idea.createdAt), "yyyy-MM-dd");
     if (!byDay[d]) byDay[d] = { wins: 0, losses: 0, pnl: 0, count: 0 };
     byDay[d].count++;
-    byDay[d].pnl += idea.pnlPoints ?? 0;
+    byDay[d].pnl += pnlPct(idea) ?? 0;
     // By realized P&L, not status — a STOPPED exit can still be a trailed win.
     if ((idea.pnlPoints ?? 0) > 0) byDay[d].wins++;
     else byDay[d].losses++;
@@ -92,7 +93,7 @@ export function CalendarPage() {
       Record<string, { pnl: number; wins: number; losses: number }>
     >((acc, idea) => {
       if (!acc[idea.asset]) acc[idea.asset] = { pnl: 0, wins: 0, losses: 0 };
-      acc[idea.asset].pnl += idea.pnlPoints ?? 0;
+      acc[idea.asset].pnl += pnlPct(idea) ?? 0;
       if ((idea.pnlPoints ?? 0) > 0) acc[idea.asset].wins++;
       else acc[idea.asset].losses++;
       return acc;

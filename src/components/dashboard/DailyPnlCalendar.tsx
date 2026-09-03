@@ -13,24 +13,30 @@ import { fmtPrice } from "@/lib/priceApi";
 export interface DayStats {
   wins: number;
   losses: number;
+  /** Sum of per-trade % of entry — see pnlPct. Never raw price points. */
   pnl: number;
   count: number;
 }
 
-function fmtPnl(n: number): string {
-  const abs = Math.abs(n);
-  if (abs === 0) return "0.0";
-  if (abs < 0.01) return n.toFixed(4);
-  if (abs < 0.1) return n.toFixed(3);
-  if (abs < 10) return n.toFixed(2);
-  return n.toFixed(1);
+/**
+ * P&L as % of entry — the only unit comparable across assets and the
+ * calendar's unit throughout. Raw price points span orders of magnitude
+ * between BTC and a sub-cent altcoin: a full stop on ONG is 0.003 points,
+ * and a day of honest trades sums to a rounded "0.0".
+ */
+export function pnlPct(idea: {
+  pnlPoints: number | null;
+  entryPrice: number;
+}): number | null {
+  if (idea.pnlPoints === null || idea.entryPrice === 0) return null;
+  return (idea.pnlPoints / idea.entryPrice) * 100;
 }
 
 /**
- * Month-navigating daily P&L calendar. Green/red cells by realized points,
- * hover for the W/L split. Local-date keys ("yyyy-MM-dd") — a trade resolved
- * in the evening belongs on the day the operator saw it happen, not on UTC's
- * tomorrow.
+ * Month-navigating daily P&L calendar. Green/red cells by realized P&L as
+ * % of entry, hover for the W/L split. Local-date keys ("yyyy-MM-dd") — a
+ * trade resolved in the evening belongs on the day the operator saw it
+ * happen, not on UTC's tomorrow.
  */
 export function DailyPnlCalendar({
   byDay,
@@ -97,7 +103,8 @@ export function DailyPnlCalendar({
                 className={`font-mono text-xs px-1.5 py-0.5 rounded ${monthPnl >= 0 ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400"}`}
               >
                 {monthPnl >= 0 ? "+" : ""}
-                {monthPnl.toFixed(1)} · {monthTrades} trades
+                {monthPnl >= 0 ? "+" : ""}
+                {monthPnl.toFixed(2)}% · {monthTrades} trades
               </span>
             ) : (
               <span className="text-xs text-muted-foreground font-mono">
@@ -112,7 +119,8 @@ export function DailyPnlCalendar({
               }
             >
               {yearPrefix} YTD: {yearPnl >= 0 ? "+" : ""}
-              {yearPnl.toFixed(1)} pts
+              {yearPnl >= 0 ? "+" : ""}
+              {yearPnl.toFixed(2)}%
             </span>
             <span>·</span>
             <span>
@@ -188,7 +196,7 @@ export function DailyPnlCalendar({
                     }`}
                     title={
                       data
-                        ? `${key}: ${data.count} trades (${data.wins}W/${data.losses}L), ${data.pnl >= 0 ? "+" : ""}${data.pnl.toFixed(1)} pts — click to see trades`
+                        ? `${key}: ${data.count} trades (${data.wins}W/${data.losses}L), ${data.pnl >= 0 ? "+" : ""}${data.pnl.toFixed(2)}% — click to see trades`
                         : `${key} — click to see trades`
                     }
                   >
@@ -208,7 +216,8 @@ export function DailyPnlCalendar({
                         className={`font-mono font-medium ${data.pnl > 0 ? "text-emerald-400" : data.pnl < 0 ? "text-red-400" : "text-muted-foreground"}`}
                       >
                         {data.pnl >= 0 ? "+" : ""}
-                        {data.pnl.toFixed(0)}
+                        {data.pnl >= 0 ? "+" : ""}
+                        {data.pnl.toFixed(1)}
                       </span>
                     )}
                   </button>
@@ -228,7 +237,7 @@ export function DailyPnlCalendar({
               <span className="text-muted-foreground font-normal">
                 —{" "}
                 {byDay[selectedDay]
-                  ? `${byDay[selectedDay].count} trades · ${byDay[selectedDay].pnl >= 0 ? "+" : ""}${byDay[selectedDay].pnl.toFixed(1)} pts`
+                  ? `${byDay[selectedDay].count} trades · ${byDay[selectedDay].pnl >= 0 ? "+" : ""}${byDay[selectedDay].pnl.toFixed(2)}%`
                   : "no trades"}
               </span>
             </span>
@@ -284,8 +293,10 @@ export function DailyPnlCalendar({
                       <span
                         className={`font-mono ml-auto ${(idea.pnlPoints ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}
                       >
-                        {(idea.pnlPoints ?? 0) >= 0 ? "+" : ""}
-                        {fmtPnl(idea.pnlPoints ?? 0)} pts
+                        {pnlPct(idea) !== null && pnlPct(idea)! >= 0 ? "+" : ""}
+                        {pnlPct(idea) !== null
+                          ? `${pnlPct(idea)!.toFixed(2)}%`
+                          : "—"}
                       </span>
                     </div>
                     <div className="flex items-center gap-2 font-mono text-[10px]">

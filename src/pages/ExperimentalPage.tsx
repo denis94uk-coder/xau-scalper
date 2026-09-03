@@ -26,7 +26,10 @@ import {
 } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { DailyPnlCalendar } from "@/components/dashboard/DailyPnlCalendar";
+import {
+  DailyPnlCalendar,
+  pnlPct,
+} from "@/components/dashboard/DailyPnlCalendar";
 import { MiniChart } from "@/components/dashboard/MultiTimeframeView";
 import { PriceTicker } from "@/components/dashboard/PriceTicker";
 import { Button } from "@/components/ui/button";
@@ -1574,7 +1577,7 @@ function ExperimentalCalendar() {
     const d = format(new Date(idea.resolvedAt ?? idea.createdAt), "yyyy-MM-dd");
     if (!byDay[d]) byDay[d] = { wins: 0, losses: 0, pnl: 0, count: 0 };
     byDay[d].count++;
-    byDay[d].pnl += idea.pnlPoints ?? 0;
+    byDay[d].pnl += pnlPct(idea) ?? 0;
     if ((idea.pnlPoints ?? 0) > 0) byDay[d].wins++;
     else byDay[d].losses++;
   }

@@ -1,6 +1,9 @@
 import { Award, BarChart3, Target, Zap } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { DailyPnlCalendar } from "@/components/dashboard/DailyPnlCalendar";
+import {
+  DailyPnlCalendar,
+  pnlPct,
+} from "@/components/dashboard/DailyPnlCalendar";
 import { PriceTicker } from "@/components/dashboard/PriceTicker";
 import { useLive } from "@/hooks/useLive";
 import { type AssetPerformance, api } from "@/lib/api";
@@ -122,10 +125,12 @@ export default function TopTenPage() {
       i.status === "STOPPED" ||
       i.status === "EXPIRED",
   )) {
-    const d = new Date(idea.resolvedAt ?? idea.createdAt).toLocaleDateString("en-CA"); // local yyyy-MM-dd matches DailyPnlCalendar's format(day)
+    const d = new Date(idea.resolvedAt ?? idea.createdAt).toLocaleDateString(
+      "en-CA",
+    ); // local yyyy-MM-dd matches DailyPnlCalendar's format(day)
     if (!byDay[d]) byDay[d] = { wins: 0, losses: 0, pnl: 0, count: 0 };
     byDay[d].count++;
-    byDay[d].pnl += idea.pnlPoints ?? 0;
+    byDay[d].pnl += pnlPct(idea) ?? 0;
     if ((idea.pnlPoints ?? 0) > 0) byDay[d].wins++;
     else byDay[d].losses++;
   }
@@ -135,12 +140,15 @@ export default function TopTenPage() {
     start.setHours(0, 0, 0, 0);
     const todayIdeas = topIdeas.filter(
       i =>
-        (i.status === "TP2_HIT" || i.status === "STOPPED" || i.status === "EXPIRED") &&
+        (i.status === "TP2_HIT" ||
+          i.status === "STOPPED" ||
+          i.status === "EXPIRED") &&
         (i.resolvedAt ?? i.createdAt) >= start.getTime() &&
         i.pnlPoints !== null,
     );
     let pct = 0;
-    for (const idea of todayIdeas) pct += (idea.pnlPoints! / idea.entryPrice) * 100;
+    for (const idea of todayIdeas)
+      pct += (idea.pnlPoints! / idea.entryPrice) * 100;
     const hit = pct >= 1.0;
     const stopped = pct <= -0.5;
     return { pct, hit, stopped, count: todayIdeas.length };
@@ -169,7 +177,8 @@ export default function TopTenPage() {
             </span>
           </h1>
           <p className="text-[10px] text-muted-foreground truncate">
-            Distinct strategies — reversion (ONG 30m / JST 1h discovered) — isolated book, singular focus if one dominates
+            Distinct strategies — reversion (ONG 30m / JST 1h discovered) —
+            isolated book, singular focus if one dominates
           </p>
         </div>
         <div className="ml-auto flex items-center gap-1.5 text-[10px] font-mono">
@@ -212,18 +221,29 @@ export default function TopTenPage() {
         <div className="flex items-center gap-2">
           <Target className="w-3.5 h-3.5 text-[#D4A843]" />
           <span className="text-xs font-medium">Daily 1% Target</span>
-          <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${dailyTarget.hit ? "bg-emerald-500/20 text-emerald-400" : dailyTarget.stopped ? "bg-red-500/20 text-red-400" : "bg-white/5 text-muted-foreground"}`}>
-            {dailyTarget.hit ? "HIT ✓" : dailyTarget.stopped ? "STOPPED" : `${dailyTarget.count} trades today`}
+          <span
+            className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${dailyTarget.hit ? "bg-emerald-500/20 text-emerald-400" : dailyTarget.stopped ? "bg-red-500/20 text-red-400" : "bg-white/5 text-muted-foreground"}`}
+          >
+            {dailyTarget.hit
+              ? "HIT ✓"
+              : dailyTarget.stopped
+                ? "STOPPED"
+                : `${dailyTarget.count} trades today`}
           </span>
         </div>
         <div className="flex-1 h-2 bg-white/5 rounded-full overflow-hidden max-w-[240px] ml-auto">
           <div
             className={`h-full rounded-full transition-all ${dailyTarget.hit ? "bg-emerald-500" : dailyTarget.pct >= 0 ? "bg-[#D4A843]" : "bg-red-500"}`}
-            style={{ width: `${Math.min(100, Math.max(0, (dailyTarget.pct / 1) * 100))}%` }}
+            style={{
+              width: `${Math.min(100, Math.max(0, (dailyTarget.pct / 1) * 100))}%`,
+            }}
           />
         </div>
-        <span className={`text-xs font-mono font-bold ${dailyTarget.hit ? "text-emerald-400" : dailyTarget.pct >= 0 ? "text-[#D4A843]" : "text-red-400"}`}>
-          {dailyTarget.pct >= 0 ? "+" : ""}{dailyTarget.pct.toFixed(2)}% / 1.00%
+        <span
+          className={`text-xs font-mono font-bold ${dailyTarget.hit ? "text-emerald-400" : dailyTarget.pct >= 0 ? "text-[#D4A843]" : "text-red-400"}`}
+        >
+          {dailyTarget.pct >= 0 ? "+" : ""}
+          {dailyTarget.pct.toFixed(2)}% / 1.00%
         </span>
       </div>
 

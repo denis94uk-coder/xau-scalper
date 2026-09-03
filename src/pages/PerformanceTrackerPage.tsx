@@ -11,7 +11,10 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { DailyPnlCalendar } from "@/components/dashboard/DailyPnlCalendar";
+import {
+  DailyPnlCalendar,
+  pnlPct,
+} from "@/components/dashboard/DailyPnlCalendar";
 import { useLive } from "@/hooks/useLive";
 import { api, type Significance } from "@/lib/api";
 
@@ -201,7 +204,7 @@ export function PerformanceTrackerPage() {
     const d = format(new Date(idea.resolvedAt ?? idea.createdAt), "yyyy-MM-dd");
     if (!byDay[d]) byDay[d] = { wins: 0, losses: 0, pnl: 0, count: 0 };
     byDay[d].count++;
-    byDay[d].pnl += idea.pnlPoints ?? 0;
+    byDay[d].pnl += pnlPct(idea) ?? 0;
     // By realized P&L, not status — a STOPPED exit can still be a trailed win.
     if ((idea.pnlPoints ?? 0) > 0) byDay[d].wins++;
     else byDay[d].losses++;
