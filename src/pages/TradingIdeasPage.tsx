@@ -1,8 +1,10 @@
 import {
+  Award,
   Bot,
   ChevronDown,
   ChevronUp,
   FlaskConical,
+  Globe,
   Trash2,
   User,
   Zap,
@@ -39,6 +41,8 @@ const SOURCE_ICONS: Record<
   engine: { icon: Bot, label: "Engine", color: "text-cyan-400" },
   dashboard: { icon: User, label: "Manual", color: "text-[#D4A843]" },
   experimental: { icon: FlaskConical, label: "EXP", color: "text-purple-400" },
+  top10: { icon: Award, label: "Top 10", color: "text-[#D4A843]" },
+  lse: { icon: Globe, label: "LSE", color: "text-emerald-400" },
 };
 
 const GRADE_COLORS: Record<string, string> = {
@@ -94,10 +98,18 @@ function JourneyTimeline({
   );
 }
 
-export function TradingIdeasPage() {
-  // Main trading ideas — strictly engine (top10 + experimental are isolated).
+export function TradingIdeasPage({
+  source = "engine",
+  title = "Trading Ideas",
+}: {
+  /** Which book's ideas to show. Book views are strictly single-source. */
+  source?: string;
+  title?: string;
+} = {}) {
+  // Main trading ideas default to the engine book; /top10/ideas and
+  // /lse/ideas pass their own source so each book shows only itself.
   const ideas = useLive(
-    () => api.ideas({ limit: 300, source: "engine" }).then(r => r.ideas),
+    () => api.ideas({ limit: 300, source }).then(r => r.ideas),
     ["ideas"],
   );
   const [deleteIdea] = useMutation((id: number) => api.deleteIdea(id));
@@ -147,7 +159,7 @@ export function TradingIdeasPage() {
   // Equal-weight sum of per-trade % — raw points cannot be summed across
   // assets priced orders of magnitude apart.
   const totalPnl = ideas.reduce((s, i) => s + (pnlPct(i) ?? 0), 0);
-  const engineCount = ideas.filter(i => i.source === "engine").length;
+  const engineCount = ideas.length;
 
   return (
     <div className="space-y-4">
@@ -156,10 +168,11 @@ export function TradingIdeasPage() {
         <div>
           <h1 className="text-xl font-bold flex items-center gap-2">
             <Zap className="w-5 h-5 text-[#D4A843]" />
-            Trading Ideas
+            {title}
           </h1>
           <p className="text-xs text-muted-foreground mt-0.5">
             Auto-generated signals with live journey tracking
+            {source !== "engine" ? ` · source=${source}` : ""}
           </p>
         </div>
       </div>
@@ -175,7 +188,7 @@ export function TradingIdeasPage() {
           color={totalPnl >= 0 ? "text-emerald-400" : "text-red-400"}
         />
         <StatCard
-          label="Engine Signals"
+          label={source === "engine" ? "Engine Signals" : "Signals"}
           value={engineCount}
           color="text-cyan-400"
           icon={<Bot className="w-3.5 h-3.5" />}
@@ -201,23 +214,25 @@ export function TradingIdeasPage() {
             ),
           )}
         </div>
-        <div className="flex gap-1 bg-[#12141A] rounded-lg p-0.5 border border-white/5">
-          {["ALL", "engine"].map(s => (
-            <button
-              key={s}
-              onClick={() => setSourceFilter(s)}
-              className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
-                sourceFilter === s
-                  ? "bg-white/10 text-white font-medium"
-                  : "text-muted-foreground hover:text-white"
-              }`}
-            >
-              {s === "ALL"
-                ? "All Sources"
-                : s.charAt(0).toUpperCase() + s.slice(1)}
-            </button>
-          ))}
-        </div>
+        {source === "engine" && (
+          <div className="flex gap-1 bg-[#12141A] rounded-lg p-0.5 border border-white/5">
+            {["ALL", "engine"].map(s => (
+              <button
+                key={s}
+                onClick={() => setSourceFilter(s)}
+                className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
+                  sourceFilter === s
+                    ? "bg-white/10 text-white font-medium"
+                    : "text-muted-foreground hover:text-white"
+                }`}
+              >
+                {s === "ALL"
+                  ? "All Sources"
+                  : s.charAt(0).toUpperCase() + s.slice(1)}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="flex gap-1 bg-[#12141A] rounded-lg p-0.5 border border-white/5 ml-auto">
           {(["date", "pnl", "confidence"] as const).map(s => (
             <button

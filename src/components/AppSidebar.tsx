@@ -56,7 +56,9 @@ const experimentalNav = [
 
 const topTenNav = [
   { href: "/top10", label: "Top 10", icon: Award },
+  { href: "/top10/ideas", label: "Top 10 Ideas", icon: Lightbulb },
   { href: "/lse", label: "LSE", icon: Globe },
+  { href: "/lse/ideas", label: "LSE Ideas", icon: Lightbulb },
 ];
 
 const systemNav = [

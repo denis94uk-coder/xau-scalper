@@ -15,8 +15,9 @@
  *     Reversion on real gold produced nothing.
  *   * HEDGES: COT crowd gate (never join a ≥90th/≤10th percentile fund
  *     positioning) and the real economic-calendar shield (lseNewsShield).
- *   * REGIME: breakout is blocked in RANGING — a range has no channel to
- *     break. The mirror image of top10's reversion-only-in-RANGING rule.
+ *   * REGIME: carried as context (SL/TP multipliers + reason tag), never a
+ *     veto — the qualified edge was measured with no regime filter, and a
+ *     RANGING block was observed refusing grade-A setups on live day one.
  *
  * Gold trades paper-tracked like top10 (no MT5 execution) until the user
  * promotes the book.
@@ -209,30 +210,12 @@ export async function generateForLse(
 
   if (!signal) return null;
 
-  // Regime gate — breakout dies in ranges.
-  if (regime && regime.regime === "RANGING" && family !== "reversion") {
-    db.logJournal({
-      eventType: "SIGNAL_BLOCKED",
-      asset: asset.id,
-      source: "lse",
-      direction: signal.direction,
-      price: signal.entryPrice,
-      details: `[LSE] regime RANGING — breakout needs a trend to break`,
-    });
-    return null;
-  }
-  // Reversion (if ever qualified here) is the mirror image.
-  if (regime && regime.regime !== "RANGING" && family === "reversion") {
-    db.logJournal({
-      eventType: "SIGNAL_BLOCKED",
-      asset: asset.id,
-      source: "lse",
-      direction: signal.direction,
-      price: signal.entryPrice,
-      details: `[LSE] regime ${regime.regime} — reversion needs RANGING`,
-    });
-    return null;
-  }
+  // NO hard regime gate here — discovery validated this family over 20 years
+  // of vault data with no regime filter, and a RANGING block was measured
+  // refusing grade-A setups on day one. Regime is carried on the idea as
+  // context (SL/TP multipliers, reason tag) instead of being a veto.
+  // The reversion branch keeps its RANGING requirement for any future
+  // instrument whose edge qualifies under that family.
 
   // COT crowd gate — gold only; the percentile is a GC futures rank.
   if (asset.id === "XAUUSD") {

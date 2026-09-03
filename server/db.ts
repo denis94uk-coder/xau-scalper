@@ -153,6 +153,60 @@ export class Db {
         this.raw.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
       }
     }
+    this.rebuildIdeaSourceCheck();
+  }
+
+  /**
+   * Databases created before the LSE book carry a CHECK constraint on
+   * trading_ideas.source without 'lse', so every LSE insert fails at the
+   * storage layer. SQLite cannot ALTER a CHECK — the table is rebuilt when
+   * the live constraint predates the source, copying all rows across.
+   */
+  private rebuildIdeaSourceCheck(): void {
+    const table = this.raw
+      .query<{ sql: string }, []>(
+        `SELECT sql FROM sqlite_master WHERE type='table' AND name='trading_ideas'`,
+      )
+      .get();
+    if (!table?.sql || table.sql.includes("'lse'")) return;
+
+    this.raw.exec(`
+      PRAGMA foreign_keys=OFF;
+      BEGIN;
+      CREATE TABLE trading_ideas_rebuilt (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        asset         TEXT    NOT NULL,
+        direction     TEXT    NOT NULL CHECK (direction IN ('LONG', 'SHORT')),
+        status        TEXT    NOT NULL CHECK (
+                        status IN ('ACTIVE','TP1_HIT','TP2_HIT','STOPPED','EXPIRED')),
+        source        TEXT    NOT NULL DEFAULT 'engine' CHECK (
+                        source IN ('engine','teo','dashboard','experimental','top10','lse')),
+        entry_price   REAL    NOT NULL,
+        stop_loss     REAL    NOT NULL,
+        tp1           REAL    NOT NULL,
+        tp2           REAL    NOT NULL,
+        trailing_sl   REAL,
+        confidence    REAL    NOT NULL DEFAULT 0,
+        grade         TEXT,
+        reason        TEXT    NOT NULL DEFAULT '',
+        timeframe     TEXT    NOT NULL DEFAULT '5m',
+        bias          TEXT    NOT NULL DEFAULT 'NEUTRAL',
+        bias_strength REAL    NOT NULL DEFAULT 0,
+        spot_price    REAL    NOT NULL,
+        teo_score     REAL,
+        teo_regime    TEXT,
+        pnl_points    REAL,
+        created_at    INTEGER NOT NULL,
+        resolved_at   INTEGER
+      );
+      INSERT INTO trading_ideas_rebuilt SELECT * FROM trading_ideas;
+      DROP TABLE trading_ideas;
+      ALTER TABLE trading_ideas_rebuilt RENAME TO trading_ideas;
+      COMMIT;
+      PRAGMA foreign_keys=ON;
+    `);
+    // Indexes live in SCHEMA_SQL as IF NOT EXISTS — recreate after the swap.
+    this.raw.exec(SCHEMA_SQL);
   }
 
   close(): void {

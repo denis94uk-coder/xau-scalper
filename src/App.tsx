@@ -52,7 +52,15 @@ function App() {
                 element={<ExperimentalPage />}
               />
               <Route path="/top10" element={<TopTenPage />} />
+              <Route
+                path="/top10/ideas"
+                element={<TradingIdeasPage source="top10" title="Top 10 — Trading Ideas" />}
+              />
               <Route path="/lse" element={<LsePage />} />
+              <Route
+                path="/lse/ideas"
+                element={<TradingIdeasPage source="lse" title="LSE — Trading Ideas" />}
+              />
               <Route path="/research" element={<ResearchPage />} />
               <Route path="/strategies" element={<StrategyCarpetPage />} />
               <Route path="/settings" element={<SettingsPage />} />
