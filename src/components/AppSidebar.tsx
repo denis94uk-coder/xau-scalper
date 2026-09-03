@@ -113,101 +113,45 @@ function SidebarNav() {
     trackingNav[2], // Risk
   ];
 
+  // Every section renders with the same shape — label, items, and a
+  // separator before it — so spacing and alignment stay identical no matter
+  // how many groups the sidebar grows.
+  const sections: Array<{
+    label: string;
+    items: Array<{ href: string; label: string; icon: React.ComponentType<{ className?: string }> }>;
+  }> = [
+    { label: "Teo'D'Or Lab", items: experimentalNav },
+    { label: "Top 10", items: topTenNav },
+    { label: "LSE Terminal", items: lseNav },
+    { label: "Crypto", items: mainMenu },
+    { label: "System", items: systemNav },
+  ];
+
   return (
     <SidebarContent>
-      <SidebarGroup>
-        <SidebarGroupLabel className="text-[10px] text-muted-foreground uppercase tracking-wider">
-          Teo&apos;D&apos;Or Lab
-        </SidebarGroupLabel>
-        <SidebarGroupContent>
-          <SidebarMenu>
-            {experimentalNav.map(item => (
-              <NavLink
-                key={item.href}
-                href={item.href}
-                label={item.label}
-                icon={item.icon}
-                isActive={isActive(item.href)}
-              />
-            ))}
-          </SidebarMenu>
-        </SidebarGroupContent>
-      </SidebarGroup>
-
-      <SidebarGroup>
-        <SidebarGroupLabel className="text-[10px] text-muted-foreground uppercase tracking-wider">
-          Top 10
-        </SidebarGroupLabel>
-        <SidebarGroupContent>
-          <SidebarMenu>
-            {topTenNav.map(item => (
-              <NavLink
-                key={item.href}
-                href={item.href}
-                label={item.label}
-                icon={item.icon}
-                isActive={isActive(item.href)}
-              />
-            ))}
-          </SidebarMenu>
-        </SidebarGroupContent>
-      </SidebarGroup>
-
-      <SidebarSeparator />
-
-      <SidebarGroup>
-        <SidebarGroupLabel className="text-[10px] text-muted-foreground uppercase tracking-wider">
-          LSE Terminal
-        </SidebarGroupLabel>
-        <SidebarGroupContent>
-          <SidebarMenu>
-            {lseNav.map(item => (
-              <NavLink
-                key={item.href}
-                href={item.href}
-                label={item.label}
-                icon={item.icon}
-                isActive={isActive(item.href)}
-              />
-            ))}
-          </SidebarMenu>
-        </SidebarGroupContent>
-      </SidebarGroup>
-
-      <SidebarGroup>
-        <SidebarGroupContent>
-          <SidebarMenu>
-            {mainMenu.map(item => (
-              <NavLink
-                key={item.href}
-                href={item.href}
-                label={item.label}
-                icon={item.icon}
-                isActive={isActive(item.href)}
-              />
-            ))}
-          </SidebarMenu>
-        </SidebarGroupContent>
-      </SidebarGroup>
-
-      <SidebarGroup>
-        <SidebarGroupLabel className="text-[10px] text-muted-foreground uppercase tracking-wider">
-          System
-        </SidebarGroupLabel>
-        <SidebarGroupContent>
-          <SidebarMenu>
-            {systemNav.map(item => (
-              <NavLink
-                key={item.href}
-                href={item.href}
-                label={item.label}
-                icon={item.icon}
-                isActive={isActive(item.href)}
-              />
-            ))}
-          </SidebarMenu>
-        </SidebarGroupContent>
-      </SidebarGroup>
+      {sections.map((section, i) => (
+        <div key={section.label}>
+          {i > 0 && <SidebarSeparator />}
+          <SidebarGroup>
+            <SidebarGroupLabel className="text-[10px] text-muted-foreground uppercase tracking-wider">
+              {section.label}
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {section.items.map(item => (
+                  <NavLink
+                    key={item.href}
+                    href={item.href}
+                    label={item.label}
+                    icon={item.icon}
+                    isActive={isActive(item.href)}
+                  />
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </div>
+      ))}
     </SidebarContent>
   );
 }
