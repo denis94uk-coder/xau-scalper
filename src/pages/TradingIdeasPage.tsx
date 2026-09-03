@@ -5,6 +5,7 @@ import {
   ChevronUp,
   FlaskConical,
   Globe,
+  Target,
   Trash2,
   User,
   Zap,
@@ -161,6 +162,18 @@ export function TradingIdeasPage({
   const totalPnl = ideas.reduce((s, i) => s + (pnlPct(i) ?? 0), 0);
   const engineCount = ideas.length;
 
+  // Today's realized P&L — trades resolved since local midnight, same % of
+  // entry convention and same local-day rule the daily target uses.
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const dailyPnl = ideas
+    .filter(
+      i =>
+        i.pnlPoints !== null &&
+        (i.resolvedAt ?? i.createdAt) >= startOfToday.getTime(),
+    )
+    .reduce((s, i) => s + (pnlPct(i) ?? 0), 0);
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -178,10 +191,16 @@ export function TradingIdeasPage({
       </div>
 
       {/* Stats Bar */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-6 gap-2">
         <StatCard label="Active" value={active} color="text-blue-400" />
         <StatCard label="Wins" value={wins} color="text-emerald-400" />
         <StatCard label="Losses" value={losses} color="text-red-400" />
+        <StatCard
+          label="Daily P&L"
+          value={`${dailyPnl >= 0 ? "+" : ""}${dailyPnl.toFixed(2)}%`}
+          color={dailyPnl > 0 ? "text-emerald-400" : dailyPnl < 0 ? "text-red-400" : "text-muted-foreground"}
+          icon={<Target className="w-3.5 h-3.5" />}
+        />
         <StatCard
           label="Total P&L"
           value={`${totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)}%`}
