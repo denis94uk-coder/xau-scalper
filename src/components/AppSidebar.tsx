@@ -1,7 +1,9 @@
 import {
+  Award,
   BarChart3,
   CalendarDays,
   FlaskConical,
+  Globe,
   LayoutDashboard,
   Lightbulb,
   ScrollText,
@@ -26,7 +28,7 @@ import {
 } from "./ui/sidebar";
 
 const mainNav = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/dashboard", label: "Crypto Dash", icon: LayoutDashboard },
 ];
 
 const signalsNav = [
@@ -40,11 +42,21 @@ const trackingNav = [
   { href: "/risk", label: "Risk Manager", icon: Shield },
 ];
 
-// Development focus is crypto-first (BTC, ETH, the liquid top-100). The
-// traditional-asset and MT5-bridge work lives here, kept apart so it cannot
-// pull the main flow sideways.
 const experimentalNav = [
-  { href: "/experimental", label: "Experimental Lab", icon: FlaskConical },
+  { href: "/experimental", label: "Teo'D'Or Lab", icon: FlaskConical },
+  { href: "/experimental/ideas", label: "Exp Ideas", icon: Lightbulb },
+  {
+    href: "/experimental/performance",
+    label: "Exp Performance",
+    icon: BarChart3,
+  },
+  { href: "/experimental/calendar", label: "Exp Calendar", icon: CalendarDays },
+  { href: "/experimental/journal", label: "Exp Journal", icon: ScrollText },
+];
+
+const topTenNav = [
+  { href: "/top10", label: "Top 10", icon: Award },
+  { href: "/lse", label: "LSE", icon: Globe },
 ];
 
 const systemNav = [
@@ -85,69 +97,60 @@ function SidebarNav() {
     location.pathname === href ||
     (href === "/dashboard" && location.pathname === "/");
 
+  // Journal after Calendar in both sections
+  const mainMenu = [
+    ...mainNav,
+    signalsNav[0], // Ideas
+    trackingNav[0], // Performance
+    trackingNav[1], // Calendar
+    signalsNav[1], // Journal
+    trackingNav[2], // Risk
+  ];
+
   return (
     <SidebarContent>
       <SidebarGroup>
-        <SidebarGroupContent>
-          <SidebarMenu>
-            {mainNav.map(item => (
-              <NavLink
-                key={item.href}
-                href={item.href}
-                label={item.label}
-                icon={item.icon}
-                isActive={isActive(item.href)}
-              />
-            ))}
-          </SidebarMenu>
-        </SidebarGroupContent>
-      </SidebarGroup>
-
-      <SidebarGroup>
         <SidebarGroupLabel className="text-[10px] text-muted-foreground uppercase tracking-wider">
-          Signals
-        </SidebarGroupLabel>
-        <SidebarGroupContent>
-          <SidebarMenu>
-            {signalsNav.map(item => (
-              <NavLink
-                key={item.href}
-                href={item.href}
-                label={item.label}
-                icon={item.icon}
-                isActive={isActive(item.href)}
-              />
-            ))}
-          </SidebarMenu>
-        </SidebarGroupContent>
-      </SidebarGroup>
-
-      <SidebarGroup>
-        <SidebarGroupLabel className="text-[10px] text-muted-foreground uppercase tracking-wider">
-          Tracking
-        </SidebarGroupLabel>
-        <SidebarGroupContent>
-          <SidebarMenu>
-            {trackingNav.map(item => (
-              <NavLink
-                key={item.href}
-                href={item.href}
-                label={item.label}
-                icon={item.icon}
-                isActive={isActive(item.href)}
-              />
-            ))}
-          </SidebarMenu>
-        </SidebarGroupContent>
-      </SidebarGroup>
-
-      <SidebarGroup>
-        <SidebarGroupLabel className="text-[10px] text-muted-foreground uppercase tracking-wider">
-          Experimental
+          Teo&apos;D&apos;Or Lab
         </SidebarGroupLabel>
         <SidebarGroupContent>
           <SidebarMenu>
             {experimentalNav.map(item => (
+              <NavLink
+                key={item.href}
+                href={item.href}
+                label={item.label}
+                icon={item.icon}
+                isActive={isActive(item.href)}
+              />
+            ))}
+          </SidebarMenu>
+        </SidebarGroupContent>
+      </SidebarGroup>
+
+      <SidebarGroup>
+        <SidebarGroupLabel className="text-[10px] text-muted-foreground uppercase tracking-wider">
+          Top 10
+        </SidebarGroupLabel>
+        <SidebarGroupContent>
+          <SidebarMenu>
+            {topTenNav.map(item => (
+              <NavLink
+                key={item.href}
+                href={item.href}
+                label={item.label}
+                icon={item.icon}
+                isActive={isActive(item.href)}
+              />
+            ))}
+          </SidebarMenu>
+        </SidebarGroupContent>
+      </SidebarGroup>
+
+      <SidebarGroup>
+        <SidebarGroupContent>
+          <SidebarMenu>
+            {mainMenu.map(item => (
               <NavLink
                 key={item.href}
                 href={item.href}

@@ -178,37 +178,39 @@ export function ScalpingToolbar({
 
         {/* Key S/R levels */}
         <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
-          {activeAnalysis.keyResistances.length > 0 && (
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px] text-muted-foreground">R:</span>
-              {activeAnalysis.keyResistances.slice(0, 2).map((r, i) => (
-                <span
-                  key={i}
-                  className="text-xs font-mono tabular-nums text-[#FF1744]/80"
-                >
-                  {r.toFixed(2)}
-                </span>
-              ))}
-            </div>
-          )}
-          {activeAnalysis.keySupports.length > 0 && (
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px] text-muted-foreground">S:</span>
-              {activeAnalysis.keySupports.slice(0, 2).map((s, i) => (
-                <span
-                  key={i}
-                  className="text-xs font-mono tabular-nums text-[#00E676]/80"
-                >
-                  {s.toFixed(2)}
-                </span>
-              ))}
-            </div>
-          )}
+          {Array.isArray(activeAnalysis.keyResistances) &&
+            activeAnalysis.keyResistances.length > 0 && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-muted-foreground">R:</span>
+                {activeAnalysis.keyResistances.slice(0, 2).map((r, i) => (
+                  <span
+                    key={i}
+                    className="text-xs font-mono tabular-nums text-[#FF1744]/80"
+                  >
+                    {r.toFixed(2)}
+                  </span>
+                ))}
+              </div>
+            )}
+          {Array.isArray(activeAnalysis.keySupports) &&
+            activeAnalysis.keySupports.length > 0 && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-muted-foreground">S:</span>
+                {activeAnalysis.keySupports.slice(0, 2).map((s, i) => (
+                  <span
+                    key={i}
+                    className="text-xs font-mono tabular-nums text-[#00E676]/80"
+                  >
+                    {s.toFixed(2)}
+                  </span>
+                ))}
+              </div>
+            )}
         </div>
       </div>
 
       {/* Row 2: Entry Ideas */}
-      {entries.length > 0 && (
+      {Array.isArray(entries) && entries.length > 0 && (
         <div
           className="mt-3 pt-3 border-t"
           style={{ borderColor: colors.border }}

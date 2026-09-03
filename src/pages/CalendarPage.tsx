@@ -17,16 +17,32 @@ type ViewMode = "all" | "asset";
  * rather than a precise P&L statement.
  */
 export function CalendarPage() {
-  const [view, setView] = useState<ViewMode>("asset");
+  const [view, setView] = useState<ViewMode>("all");
   const [asset, setAsset] = useState<string>("");
 
   const assets = useLive(() => api.assets().then(r => r.assets), ["hello"]);
+  // Main calendar — strictly engine (top10 + experimental are isolated)
   const allIdeas = useLive(
-    () => api.ideas({ limit: 500 }).then(r => r.ideas),
+    () => api.ideas({ limit: 500, source: "engine" }).then(r => r.ideas),
     ["ideas"],
   );
 
-  const selected = asset || assets?.find(a => a.enabled)?.id || "";
+  // Only assets with trades — 100 pills is a mess
+  const allClosedForFilter = allIdeas
+    ? allIdeas.filter(
+        i =>
+          i.status === "TP2_HIT" ||
+          i.status === "STOPPED" ||
+          i.status === "EXPIRED",
+      )
+    : [];
+  const tradedAssetIds = new Set(allClosedForFilter.map(i => i.asset));
+  const selected =
+    asset ||
+    (tradedAssetIds.size > 0
+      ? [...tradedAssetIds][0]
+      : assets?.find(a => a.enabled)?.id) ||
+    "";
 
   if (!allIdeas) {
     return (
@@ -124,25 +140,48 @@ export function CalendarPage() {
         </div>
       </div>
 
-      {/* Asset selector — only meaningful in single-asset view */}
+      {/* Asset selector — only meaningful in single-asset view, only traded assets */}
       {view === "asset" && (
         <div className="flex flex-wrap items-center gap-1">
           {(assets ?? [])
-            .filter(a => a.enabled)
+            .filter(a => a.enabled && tradedAssetIds.has(a.id))
             .map(a => (
               <button
                 type="button"
                 key={a.id}
                 onClick={() => setAsset(a.id)}
-                className={`px-2 py-1 rounded-md text-[11px] font-mono transition-colors ${
+                className={`px-2 py-1 rounded-md text-[11px] font-mono transition-colors border ${
                   a.id === selected
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:text-white"
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-[#12141A] border-white/5 text-muted-foreground hover:text-white"
                 }`}
               >
                 {a.symbol}
               </button>
             ))}
+          {tradedAssetIds.size === 0 && (
+            <span className="text-xs text-muted-foreground">
+              No traded assets yet
+            </span>
+          )}
+          <button
+            onClick={async () => {
+              const cfg = await api.config();
+              const enabledDead = cfg.assets.filter(
+                a => a.enabled && !tradedAssetIds.has(a.id),
+              ).length;
+              if (enabledDead === 0) return;
+              for (const a of cfg.assets)
+                if (!tradedAssetIds.has(a.id)) a.enabled = false;
+              await api.saveConfig(cfg);
+            }}
+            className="ml-2 px-2 py-1 rounded-md text-[10px] border border-white/10 bg-[#12141A] text-muted-foreground hover:text-white hover:border-red-500/30"
+            title="Disable dead assets"
+          >
+            Disable dead (
+            {(assets ?? []).filter(a => a.enabled).length - tradedAssetIds.size}
+            )
+          </button>
         </div>
       )}
       {view === "all" && (
@@ -261,7 +300,7 @@ export function CalendarPage() {
         </div>
       )}
 
-      <DailyPnlCalendar byDay={byDay} />
+      <DailyPnlCalendar byDay={byDay} ideas={closed} />
 
       {days.length === 0 && (
         <div className="bg-[#12141A] border border-white/5 rounded-lg p-6 text-center text-xs text-muted-foreground">

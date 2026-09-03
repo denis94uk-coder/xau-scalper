@@ -24,7 +24,7 @@ import { averageConcurrency, summarise } from "../core/portfolio";
 import { assessSignificance, effectiveSampleSize } from "../core/significance";
 import { ConfigError, ConfigStore } from "./config";
 import type { Db } from "./db";
-import { correlationsFrom, openExposures } from "./engine";
+import { correlationsFrom, ladderIsSane, openExposures } from "./engine";
 import { type AppEvent, publish, subscribe } from "./events";
 import { fetchCandles, fetchTickers } from "./market";
 import { findExportDir } from "./mt5";
@@ -198,9 +198,27 @@ export async function handleApi(
   if (path === "/api/ideas" && req.method === "GET") {
     const asset = assetParam(url);
     if (asset instanceof Response) return asset;
+    const source = url.searchParams.get("source") ?? undefined;
+    const excludeSource = url.searchParams.get("excludeSource") ?? undefined;
+    const validSources = new Set([
+      "engine",
+      "teo",
+      "dashboard",
+      "experimental",
+      "top10",
+      "lse",
+    ]);
+    if (source && !validSources.has(source)) {
+      return bad(`unknown source "${source}"`, 400);
+    }
+    if (excludeSource && !validSources.has(excludeSource)) {
+      return bad(`unknown excludeSource "${excludeSource}"`, 400);
+    }
     const ideas = db.listIdeas({
       asset,
       limit: intParam(url, "limit", 100, 500),
+      source,
+      excludeSource,
     });
     return json({
       ideas: ideas.map(i => ({ ...camel(i), events: db.ideaEvents(i.id) })),
@@ -230,6 +248,25 @@ export async function handleApi(
   if (path === "/api/journal") {
     const asset = assetParam(url);
     if (asset instanceof Response) return asset;
+    const source = url.searchParams.get("source") ?? undefined;
+    const excludeSource = url.searchParams.get("excludeSource") ?? undefined;
+    const validSources = new Set([
+      "engine",
+      "teo",
+      "dashboard",
+      "experimental",
+      "top10",
+      "lse",
+    ]);
+    if (source && !validSources.has(source)) {
+      return bad(`unknown source "${source}"`, 400);
+    }
+    if (excludeSource && !validSources.has(excludeSource)) {
+      return bad(`unknown excludeSource "${excludeSource}"`, 400);
+    }
+    if (source && excludeSource) {
+      return bad("use either source or excludeSource, not both", 400);
+    }
     const excludeParam = url.searchParams.get("exclude");
     const exclude = excludeParam
       ? excludeParam
@@ -242,6 +279,8 @@ export async function handleApi(
         db.listJournal({
           asset,
           limit: intParam(url, "limit", 200, 1000),
+          source,
+          excludeSource,
           exclude,
         }),
       ),
@@ -249,19 +288,50 @@ export async function handleApi(
   }
 
   if (path === "/api/journal/counts") {
-    return json(db.journalCounts());
+    const jSource = url.searchParams.get("source") ?? undefined;
+    const jExclude = url.searchParams.get("excludeSource") ?? undefined;
+    const validJ = new Set(["engine", "teo", "dashboard", "experimental"]);
+    if (jSource && !validJ.has(jSource)) {
+      return bad(`unknown source "${jSource}"`, 400);
+    }
+    if (jExclude && !validJ.has(jExclude)) {
+      return bad(`unknown excludeSource "${jExclude}"`, 400);
+    }
+    if (jSource && jExclude) {
+      return bad("use either source or excludeSource, not both", 400);
+    }
+    return json(db.journalCounts({ source: jSource, excludeSource: jExclude }));
   }
 
   // ─── Performance ───
   if (path === "/api/performance") {
     const asset = assetParam(url);
     if (asset instanceof Response) return asset;
+    const source = url.searchParams.get("source") ?? undefined;
+    const excludeSource = url.searchParams.get("excludeSource") ?? undefined;
+    const validSources = new Set([
+      "engine",
+      "teo",
+      "dashboard",
+      "experimental",
+      "top10",
+      "lse",
+    ]);
+    if (source && !validSources.has(source)) {
+      return bad(`unknown source "${source}"`, 400);
+    }
+    if (excludeSource && !validSources.has(excludeSource)) {
+      return bad(`unknown excludeSource "${excludeSource}"`, 400);
+    }
+    if (source && excludeSource) {
+      return bad("use either source or excludeSource, not both", 400);
+    }
     // Per asset always. A combined total would sum points across instruments,
     // which is not a meaningful quantity.
     const assets = asset ? [asset] : enabledAssets(cfg).map(a => a.id);
     return json({
       byAsset: assets.map(a => {
-        const perf = db.performance(a);
+        const perf = db.performance(a, { source, excludeSource });
         // Attach the verdict to the numbers it qualifies, rather than offering
         // it separately: a win rate shown without its sample size is the exact
         // thing that gets over-read.
@@ -340,7 +410,32 @@ export async function handleApi(
     // How much independent evidence the whole record actually carries. The
     // per-asset verdicts on /api/performance count every trade as its own
     // result; across a correlated book, many of them are the same result.
-    const periods = db.holdingPeriods();
+    const portfolioSource = url.searchParams.get("source") ?? undefined;
+    const portfolioExclude = url.searchParams.get("excludeSource") ?? undefined;
+    const _validPortfolioSources = new Set([
+      "engine",
+      "teo",
+      "dashboard",
+      "experimental",
+      "top10",
+      "lse",
+    ]);
+    if (portfolioSource && !_validPortfolioSources.has(portfolioSource)) {
+      return bad(`unknown source "${portfolioSource}"`, 400);
+    }
+    if (portfolioExclude && !_validPortfolioSources.has(portfolioExclude)) {
+      return bad(`unknown excludeSource "${portfolioExclude}"`, 400);
+    }
+    if (portfolioSource && portfolioExclude) {
+      return bad("use either source or excludeSource, not both", 400);
+    }
+    const periods = db.holdingPeriods(
+      portfolioSource
+        ? { source: portfolioSource }
+        : portfolioExclude
+          ? { excludeSource: portfolioExclude }
+          : {},
+    );
     const wins = periods.filter(p => p.won).length;
     const concurrency = averageConcurrency(periods);
     const rho = Math.max(0, matrix.average());
@@ -477,6 +572,21 @@ export async function handleApi(
     if (!findAsset(asset)) return bad(`unknown asset "${asset}"`, 404);
 
     const entryPrice = body.entryPrice as number;
+    // Refuse an inverted ladder — otherwise the monitor books it as a fake win.
+    if (
+      !ladderIsSane(
+        body.direction,
+        entryPrice,
+        body.stopLoss as number,
+        body.tp1 as number,
+        body.tp2 as number,
+      )
+    ) {
+      return bad(
+        `inverted SL/TP geometry: SL ${body.stopLoss} | TP1 ${body.tp1} | TP2 ${body.tp2} must point away from entry ${entryPrice} for ${body.direction}`,
+        422,
+      );
+    }
     const id = db.createIdea({
       asset,
       direction: body.direction,
@@ -519,7 +629,7 @@ export async function handleApi(
       const candles = await fetchCandles(asset.dataSourceSymbol, interval, {
         limit,
       });
-      return json(candles);
+      return json(Array.isArray(candles) ? candles : []);
     } catch (e) {
       return bad(e instanceof Error ? e.message : "upstream failed", 502);
     }
@@ -765,6 +875,21 @@ export async function handleApi(
       if (!findAsset(asset)) return bad(`unknown asset "${asset}"`, 404);
 
       const entryPrice = body.entryPrice as number;
+      // Refuse an inverted ladder — otherwise the monitor books it as a fake win.
+      if (
+        !ladderIsSane(
+          body.direction,
+          entryPrice,
+          body.stopLoss as number,
+          body.tp1 as number,
+          body.tp2 as number,
+        )
+      ) {
+        return bad(
+          `inverted SL/TP geometry: SL ${body.stopLoss} | TP1 ${body.tp1} | TP2 ${body.tp2} must point away from entry ${entryPrice} for ${body.direction}`,
+          422,
+        );
+      }
       const id = db.createIdea({
         asset,
         direction: body.direction,

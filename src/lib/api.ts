@@ -522,8 +522,14 @@ export interface ResearchableAsset {
 export const api = {
   assets: () => get<{ assets: AssetInfo[] }>("/api/assets"),
 
-  ideas: (opts: { asset?: string; limit?: number } = {}) =>
-    get<{ ideas: Idea[] }>(`/api/ideas${q(opts)}`),
+  ideas: (
+    opts: {
+      asset?: string;
+      limit?: number;
+      source?: string;
+      excludeSource?: string;
+    } = {},
+  ) => get<{ ideas: Idea[] }>(`/api/ideas${q(opts)}`),
   openIdeas: (opts: { asset?: string } = {}) =>
     get<{ ideas: Idea[] }>(`/api/ideas/open${q(opts)}`),
   logIdea: (body: Record<string, unknown>) =>
@@ -534,6 +540,8 @@ export const api = {
     opts: {
       asset?: string;
       limit?: number;
+      source?: string;
+      excludeSource?: string;
       /** Event types to leave out server-side (e.g. ENGINE_RUN heartbeat). */
       exclude?: string[];
     } = {},
@@ -541,12 +549,15 @@ export const api = {
     get<{ entries: JournalEntry[] }>(
       `/api/journal${q({ ...opts, exclude: opts.exclude?.join(",") })}`,
     ),
-  journalCounts: () => get<Record<string, number>>("/api/journal/counts"),
+  journalCounts: (opts: { source?: string; excludeSource?: string } = {}) =>
+    get<Record<string, number>>(`/api/journal/counts${q(opts)}`),
 
-  performance: (opts: { asset?: string } = {}) =>
-    get<{ byAsset: AssetPerformance[] }>(`/api/performance${q(opts)}`),
+  performance: (
+    opts: { asset?: string; source?: string; excludeSource?: string } = {},
+  ) => get<{ byAsset: AssetPerformance[] }>(`/api/performance${q(opts)}`),
 
-  portfolio: () => get<Portfolio>("/api/portfolio"),
+  portfolio: (opts: { source?: string; excludeSource?: string } = {}) =>
+    get<Portfolio>(`/api/portfolio${q(opts)}`),
 
   candles: (asset: string, interval = "5m", limit = 200) =>
     get<{ asset: string; interval: string; candles: Candle[] }>(

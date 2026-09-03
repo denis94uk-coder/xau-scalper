@@ -55,13 +55,17 @@ export function SignalJournalPage() {
       api
         .journal({
           limit: 500,
+          source: "engine",
           exclude: showEngine ? undefined : ["ENGINE_RUN", "MONITOR_CHECK"],
         })
         .then(r => r.entries),
     ["journal", "ideas"],
     [showEngine],
   );
-  const counts = useLive(() => api.journalCounts(), ["journal", "ideas"]);
+  const counts = useLive(
+    () => api.journalCounts({ source: "engine" }),
+    ["journal", "ideas"],
+  );
 
   if (!journal) {
     return (

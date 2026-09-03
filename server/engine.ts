@@ -15,6 +15,12 @@
  *
  * 3. EXITS CARRY THEIR ASSET. Every journal write is tagged, so exit rows stop
  *    defaulting to gold.
+ *
+ * 4. SESSION GATE (kill zones). The dashboard's SessionBar was display-only;
+ *    with `TEO_SESSION_GATE=1` (default on) the engine now actually blocks new
+ *    signals during the Asian no-trade window (00:00–08:00 UTC). Kill-zone
+ *    highlights (08:00–09:30, 13:30–15:00) remain propose-only — they are shown
+ *    as “prime entry window” but do not block.
  */
 
 import {
@@ -41,6 +47,7 @@ import {
 import { analyzeExperimental } from "../src/lib/experimentalIndicators";
 import type { Db, TradingIdea } from "./db";
 import { publish } from "./events";
+import { fetchLseCandles } from "./lse";
 import {
   type Fetcher,
   fetchCandles,
@@ -105,6 +112,18 @@ export async function syncCandles(
     return db.getCandles(asset.id, interval, HISTORY_BARS);
   }
 
+  // LSE research instruments read the vault incrementally and trade off the
+  // stored window, the same read-back-after-write shape as the Binance path.
+  if (asset.dataSource === "lse") {
+    const storedLse = db.latestCandleTime(asset.id, interval);
+    const fresh = await fetchLseCandles(asset.dataSourceSymbol, interval, {
+      fetcher: deps.fetcher,
+      since: storedLse,
+    });
+    db.saveCandles(asset.id, interval, fresh);
+    return db.getCandles(asset.id, interval, HISTORY_BARS);
+  }
+
   const stored = db.latestCandleTime(asset.id, interval);
 
   const fresh = await fetchCandles(asset.dataSourceSymbol, interval, {
@@ -150,6 +169,26 @@ export function openExposures(db: Db): Exposure[] {
 // ─── Signal generation ───
 
 /**
+ * A SL/TP ladder is well-formed only if it points away from entry. A long's
+ * stop sits below entry and both targets above it (TP2 beyond TP1); a short is
+ * the mirror. Anything else is an inverted ladder — the Aug-2025 regime bug
+ * wrote longs whose targets sat below entry and booked them as fake wins.
+ * Every write path into `trading_ideas` must pass this before `createIdea`.
+ */
+export function ladderIsSane(
+  direction: "LONG" | "SHORT",
+  entryPrice: number,
+  stopLoss: number,
+  tp1: number,
+  tp2: number,
+): boolean {
+  const isLong = direction === "LONG";
+  return isLong
+    ? stopLoss < entryPrice && tp1 > entryPrice && tp2 > tp1
+    : stopLoss > entryPrice && tp1 < entryPrice && tp2 < tp1;
+}
+
+/**
  * Score a window with whichever model the asset names.
  *
  * The combined model scores trend-following and mean-reversion evidence into
@@ -177,12 +216,29 @@ function analyzeFor(
  * Mirrors the live rules: 5m primary, 15m must agree if it has an opinion,
  * A/B grades only, per-asset same-direction cooldown.
  */
+/** UTC hours that are no-trade — mirrors SessionBar.tsx SESSIONS_UTC ASIAN 00–08. Currently disabled. */
+function isNoTradeSession(_nowMs: number): boolean {
+  return false;
+}
+const SESSION_GATE_ON = process.env.TEO_SESSION_GATE === "1";
+
 export async function generateForAsset(
   deps: EngineDeps,
   asset: AssetDefinition,
 ): Promise<number | null> {
   const { db } = deps;
   const now = deps.now?.() ?? Date.now();
+
+  // Session gate — was display-only (SessionBar), now actually blocks.
+  if (SESSION_GATE_ON && isNoTradeSession(now)) {
+    db.logJournal({
+      eventType: "SIGNAL_BLOCKED",
+      asset: asset.id,
+      price: 0,
+      details: `[${asset.id}] no-trade session (Asian 00–08 UTC) — signal suppressed`,
+    });
+    return null;
+  }
 
   const candles5m = await syncCandles(deps, asset, SIGNAL_INTERVAL);
   const candles15m = await syncCandles(deps, asset, CONFIRM_INTERVAL);
@@ -337,6 +393,25 @@ export async function generateForAsset(
     ? ` · regime ${regime.regime} (SL ${slMult}× TP ${tpMult}×)`
     : "";
 
+  // Last-line guard against inverted geometry (the Aug-2025 regime bug wrote
+  // longs with targets below entry, then booked the fake TP2 hits as wins).
+  // Whatever upstream produces, an idea whose ladder points the wrong way
+  // must never be written.
+  const sane = ladderIsSane(a5.direction, a5.entryPrice, stopLoss, tp1, tp2);
+  if (!sane) {
+    db.logJournal({
+      eventType: "SIGNAL_BLOCKED",
+      asset: asset.id,
+      direction: a5.direction,
+      price: a5.entryPrice,
+      details:
+        `[${asset.displaySymbol}] ${a5.grade} ${a5.direction} not taken. ` +
+        `Inverted SL/TP geometry: SL ${stopLoss} | TP1 ${tp1} | TP2 ${tp2}`,
+      metadata: { stopLoss, tp1, tp2, entryPrice: a5.entryPrice },
+    });
+    return null;
+  }
+
   const id = db.createIdea({
     asset: asset.id,
     direction: a5.direction,
@@ -463,6 +538,34 @@ export async function generateExperimentalSignal(
     return null;
   const last = db.lastIdeaAt(asset.id, sig.direction);
   if (last !== null && now - last < EXPERIMENTAL_COOLDOWN_MS) return null;
+
+  // Same geometry guard as the engine path — refuse an inverted ladder.
+  if (
+    !ladderIsSane(
+      sig.direction,
+      entry.entryPrice,
+      entry.stopLoss,
+      entry.tp1,
+      entry.tp2,
+    )
+  ) {
+    db.logJournal({
+      eventType: "SIGNAL_BLOCKED",
+      asset: asset.id,
+      direction: sig.direction,
+      price: entry.entryPrice,
+      details:
+        `[${asset.displaySymbol}] EXP ${sig.direction} not taken. ` +
+        `Inverted SL/TP geometry: SL ${entry.stopLoss} | TP1 ${entry.tp1} | TP2 ${entry.tp2}`,
+      metadata: {
+        stopLoss: entry.stopLoss,
+        tp1: entry.tp1,
+        tp2: entry.tp2,
+        entryPrice: entry.entryPrice,
+      },
+    });
+    return null;
+  }
 
   const id = db.createIdea({
     asset: asset.id,

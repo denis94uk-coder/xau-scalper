@@ -8,12 +8,14 @@ import {
   CalendarPage,
   DashboardPage,
   ExperimentalPage,
+  LsePage,
   PerformanceTrackerPage,
   ResearchPage,
   RiskManagerPage,
   SettingsPage,
   SignalJournalPage,
   StrategyCarpetPage,
+  TopTenPage,
   TradingIdeasPage,
 } from "./pages";
 
@@ -33,6 +35,24 @@ function App() {
               <Route path="/calendar" element={<CalendarPage />} />
               <Route path="/risk" element={<RiskManagerPage />} />
               <Route path="/experimental" element={<ExperimentalPage />} />
+              <Route
+                path="/experimental/ideas"
+                element={<ExperimentalPage />}
+              />
+              <Route
+                path="/experimental/journal"
+                element={<ExperimentalPage />}
+              />
+              <Route
+                path="/experimental/performance"
+                element={<ExperimentalPage />}
+              />
+              <Route
+                path="/experimental/calendar"
+                element={<ExperimentalPage />}
+              />
+              <Route path="/top10" element={<TopTenPage />} />
+              <Route path="/lse" element={<LsePage />} />
               <Route path="/research" element={<ResearchPage />} />
               <Route path="/strategies" element={<StrategyCarpetPage />} />
               <Route path="/settings" element={<SettingsPage />} />

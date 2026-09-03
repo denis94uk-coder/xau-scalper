@@ -11,7 +11,7 @@
  *   bun run backtest -- --source db --asset MT5:XAUUSD --sweep
  */
 
-import { DEFAULT_ASSET_ID, getAsset, mt5Asset } from "../core/assets";
+import { DEFAULT_ASSET_ID, getAsset, lseAsset, mt5Asset } from "../core/assets";
 import {
   type BacktestModel,
   computeMetrics,
@@ -135,13 +135,12 @@ async function main() {
   const cli = parseArgs(process.argv.slice(2));
 
   if (cli.source === "db") {
-    // ─── DB source: MT5 bars from the local database ───
+    // ─── DB source: broker (MT5) or LSE research bars from the local database ───
     const database = openDb();
 
-    const mt5Symbol = cli.asset.startsWith("MT5:")
-      ? cli.asset.replace("MT5:", "")
-      : cli.asset;
-    const settingsKey = `mt5:${mt5Symbol}`;
+    const isLse = cli.asset.startsWith("LSE:");
+    const mt5Symbol = cli.asset.replace(/^(MT5|LSE):/, "");
+    const settingsKey = `${isLse ? "lse" : "mt5"}:${mt5Symbol}`;
     const meta = database.getSetting<{
       symbol: string;
       digits: number;
@@ -151,14 +150,18 @@ async function main() {
 
     if (!meta) {
       console.error(
-        `No MT5 data for "${mt5Symbol}". Run 'bun run mt5:sync' first.`,
+        isLse
+          ? `No LSE data for "${mt5Symbol}". Run 'bun run scripts/import-lse.ts --asset ${mt5Symbol}' first.`
+          : `No MT5 data for "${mt5Symbol}". Run 'bun run mt5:sync' first.`,
       );
       process.exit(1);
     }
 
     // The sweep scores candidates with the asset's own model, so --model has to
     // reach it here as well as the single backtest below.
-    const asset = mt5Asset(meta, undefined, cli.model);
+    const asset = isLse
+      ? lseAsset(meta, undefined, cli.model)
+      : mt5Asset(meta, undefined, cli.model);
     const candles = database.getCandles(meta.assetId, cli.interval, 10_000);
 
     if (candles.length < 61) {
@@ -169,7 +172,7 @@ async function main() {
     }
 
     console.log(
-      `\nBacktest ${asset.displaySymbol} (MT5 broker data) [${cli.model}] ` +
+      `\nBacktest ${asset.displaySymbol} (${isLse ? "LSE research" : "MT5 broker"} data) [${cli.model}] ` +
         `${cli.interval} | ${candles.length} bars\n`,
     );
     console.log(

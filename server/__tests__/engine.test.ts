@@ -560,6 +560,25 @@ describe("regime overlay", () => {
     expect(id).toBeNull();
     expect(feed.db.listIdeas()).toHaveLength(0);
   });
+
+  test("inverted SL/TP geometry from upstream is refused, not written", async () => {
+    // Whatever the cause — a bad adapted config or a future regression of the
+    // regime-level bug — a long whose targets sit below entry must never be
+    // recorded. A negative tp1R makes analyzeCandles produce exactly that.
+    const broken: AssetDefinition = {
+      ...ASSET,
+      config: { ...DEFAULT_STRATEGY_CONFIG, tp1R: -1.2, tp2R: -2.5 },
+    };
+    const feed = freshFeed();
+    const id = await generateForAsset(feed, broken);
+    expect(id).toBeNull();
+    expect(feed.db.listIdeas()).toHaveLength(0);
+    const blocked = feed.db
+      .listJournal()
+      .filter(r => r.event_type === "SIGNAL_BLOCKED");
+    expect(blocked).toHaveLength(1);
+    expect(blocked[0].details).toContain("Inverted SL/TP geometry");
+  });
 });
 
 // ─── Experimental signal source (XAU/USD 8-tool confluence) ───

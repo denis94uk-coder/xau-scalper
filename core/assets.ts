@@ -25,7 +25,7 @@ export type ScoringModel = "combined" | StrategyFamily | "quiet-trend";
  * terminal's export directory, so the engine reads them out of the database
  * rather than off the network.
  */
-export type DataSource = "binance" | "mt5";
+export type DataSource = "binance" | "mt5" | "lse";
 export type SessionType = "24_7";
 
 export interface AssetDefinition {
@@ -323,6 +323,68 @@ export function getAsset(id: string): AssetDefinition | undefined {
 export function getEnabledAssets(): AssetDefinition[] {
   return ASSETS.filter(a => a.enabled);
 }
+
+/**
+ * Build an AssetDefinition from stored London Strategic Edge instrument specs.
+ *
+ * scripts/import-lse.ts stores the spec under `lse:<assetId>` in the settings
+ * table (same convention as mt5 sync). Backtests read bars from the candle DB
+ * the same way MT5 assets do — the vault is for research and backfill, the
+ * broker feed is what the live engine trades on, and costs stay pessimistic
+ * until measured.
+ */
+export function lseAsset(
+  meta: {
+    symbol: string;
+    digits: number;
+    assetId: string;
+    spreadBps: number;
+  },
+  configOverride?: StrategyConfig,
+  model: ScoringModel = "quiet-trend",
+): AssetDefinition {
+  return {
+    model,
+    id: meta.assetId,
+    displaySymbol: meta.symbol,
+    dataSourceSymbol: meta.symbol,
+    dataSource: "lse",
+    sessionType: "24_7",
+    pricePrecision: meta.digits,
+    config: configOverride ?? DEFAULT_STRATEGY_CONFIG,
+    costs: {
+      halfSpreadBps: meta.spreadBps / 2,
+      takerFeeBps: 0,
+      makerFeeBps: 0,
+      stopSlippageBps: meta.spreadBps,
+    },
+    enabled: true,
+  };
+}
+
+/**
+ * The LSE research universe: liquid, few, tradeable on an MT5 broker.
+ *
+ * `lse` is the vault symbol, `id` the broker-style asset id candles are stored
+ * under. spreadBps is the FULL spread assumption, set pessimistically per
+ * instrument class (FX major < FX minor < metals < index CFD < crypto) until
+ * the broker's real quotes are measured via mt5:sync.
+ */
+export const LSE_UNIVERSE: Array<{
+  id: string;
+  lse: string;
+  digits: number;
+  spreadBps: number;
+}> = [
+  { id: "XAUUSD", lse: "XAU/USD", digits: 2, spreadBps: 2.0 },
+  { id: "XAGUSD", lse: "XAG/USD", digits: 3, spreadBps: 6.0 },
+  { id: "EURUSD", lse: "EUR/USD", digits: 5, spreadBps: 1.0 },
+  { id: "GBPUSD", lse: "GBP/USD", digits: 5, spreadBps: 1.4 },
+  { id: "USDJPY", lse: "USD/JPY", digits: 3, spreadBps: 1.4 },
+  { id: "SPX500", lse: "SPX500/USD", digits: 1, spreadBps: 3.0 },
+  { id: "NAS100", lse: "NAS100/USD", digits: 1, spreadBps: 6.0 },
+  { id: "BTCUSD", lse: "BTC/USD", digits: 2, spreadBps: 4.0 },
+];
 
 /**
  * Build an AssetDefinition from stored MT5 export metadata.

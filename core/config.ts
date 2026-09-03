@@ -32,7 +32,7 @@ import type { CostModel } from "./costs";
 import { DEFAULT_STRATEGY_CONFIG, type StrategyConfig } from "./strategy";
 
 /** Where an asset's bars and specifications come from. */
-export type DataSourceKind = "binance" | "mt5";
+export type DataSourceKind = "binance" | "mt5" | "lse";
 
 /**
  * One tradeable instrument, as configured rather than as compiled in.

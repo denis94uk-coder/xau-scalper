@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS trading_ideas (
   status        TEXT    NOT NULL CHECK (
                   status IN ('ACTIVE','TP1_HIT','TP2_HIT','STOPPED','EXPIRED')),
   source        TEXT    NOT NULL DEFAULT 'engine' CHECK (
-                  source IN ('engine','teo','dashboard','experimental')),
+                  source IN ('engine','teo','dashboard','experimental','top10')),
 
   entry_price   REAL    NOT NULL,
   stop_loss     REAL    NOT NULL,

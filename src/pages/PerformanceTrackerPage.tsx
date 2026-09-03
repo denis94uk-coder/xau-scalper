@@ -3,7 +3,6 @@ import {
   BarChart3,
   Bot,
   Flame,
-  FlaskConical,
   Shield,
   Target,
   TrendingDown,
@@ -11,31 +10,151 @@ import {
   User,
 } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
 import { DailyPnlCalendar } from "@/components/dashboard/DailyPnlCalendar";
 import { useLive } from "@/hooks/useLive";
 import { api, type Significance } from "@/lib/api";
 
-type SourceFilter = "all" | "engine" | "dashboard" | "experimental";
+type SourceFilter = "all" | "engine" | "dashboard";
 
 export function PerformanceTrackerPage() {
   const [source, setSource] = useState<SourceFilter>("all");
   // Performance is per asset. Summing points across gold, BTC and LINK would
   // produce a headline number with no unit and no meaning, so the page picks
   // one instrument rather than aggregating them.
+  // Experimental is isolated — it has its own performance inside the Lab so
+  // the main book isn't polluted by XAU paper trades.
   const [asset, setAsset] = useState<string>("");
 
   const assets = useLive(() => api.assets().then(r => r.assets), ["hello"]);
   const byAsset = useLive(
-    () => api.performance().then(r => r.byAsset),
+    () => api.performance({ source: "engine" }).then(r => r.byAsset),
     ["ideas"],
   );
   const allIdeas = useLive(
-    () => api.ideas({ limit: 500 }).then(r => r.ideas),
+    () => api.ideas({ limit: 500, source: "engine" }).then(r => r.ideas),
     ["ideas"],
   );
+  const [toggling, setToggling] = useState(false);
 
-  const selected = asset || byAsset?.[0]?.asset || "";
-  const stats = byAsset?.find(a => a.asset === selected) ?? byAsset?.[0];
+  async function toggleDeadAssets(disable: boolean) {
+    setToggling(true);
+    try {
+      const cfg = await api.config();
+      const tradedSet = new Set(
+        (byAsset ?? []).filter(a => a.closed + a.open > 0).map(a => a.asset),
+      );
+      let changed = 0;
+      for (const a of cfg.assets) {
+        const isDead = !tradedSet.has(a.id) && a.enabled;
+        const shouldToggle = disable ? isDead : !a.enabled;
+        if (shouldToggle) {
+          a.enabled = !disable;
+          changed++;
+        }
+      }
+      if (changed === 0) {
+        toast.info(
+          disable
+            ? "No dead assets to disable"
+            : "No disabled assets to enable",
+        );
+        return;
+      }
+      await api.saveConfig(cfg);
+      toast.success(
+        `${disable ? "Disabled" : "Enabled"} ${changed} asset${changed === 1 ? "" : "s"}`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setToggling(false);
+    }
+  }
+
+  // Only show assets that have trades — 100 pills is a mess.
+  const tradedAssets = (byAsset ?? []).filter(a => a.closed + a.open > 0);
+  const sortedTraded = [...tradedAssets].sort(
+    (a, b) => b.closed + b.open - (a.closed + a.open),
+  );
+  const hasTrades = sortedTraded.length > 0;
+  // "ALL" aggregates across traded assets; otherwise per-asset.
+  const isAll = asset === "ALL" || asset === "";
+  const selected = isAll
+    ? "ALL"
+    : asset || sortedTraded[0]?.asset || byAsset?.[0]?.asset || "";
+  const singleStats = !isAll
+    ? (byAsset?.find(a => a.asset === selected) ?? byAsset?.[0])
+    : null;
+
+  // Aggregated stats for "All" — wins/losses are comparable, points are summed
+  // for reference but not used as a headline (points across assets aren't comparable).
+  const stats =
+    isAll && hasTrades
+      ? (() => {
+          const wins = tradedAssets.reduce((s, a) => s + a.wins, 0);
+          const losses = tradedAssets.reduce((s, a) => s + a.losses, 0);
+          const closed = tradedAssets.reduce((s, a) => s + a.closed, 0);
+          const open = tradedAssets.reduce((s, a) => s + a.open, 0);
+          const grossWin = tradedAssets.reduce(
+            (s, a) => s + a.avgWinPoints * a.wins,
+            0,
+          );
+          const grossLoss = tradedAssets.reduce(
+            (s, a) => s + a.avgLossPoints * a.losses,
+            0,
+          );
+          const totalPnl = tradedAssets.reduce(
+            (s, a) => s + a.totalPnlPoints,
+            0,
+          );
+          const avgWin = wins ? grossWin / wins : 0;
+          const avgLoss = losses ? grossLoss / losses : 0;
+          const winRate = wins + losses ? (wins / (wins + losses)) * 100 : 0;
+          const pf = grossLoss === 0 ? null : grossWin / grossLoss;
+          const maxWinStreak = Math.max(
+            ...tradedAssets.map(a => a.maxWinStreak),
+            0,
+          );
+          const maxLossStreak = Math.max(
+            ...tradedAssets.map(a => a.maxLossStreak),
+            0,
+          );
+          // currentStreak not meaningful aggregated — show 0
+          const breakeven =
+            avgWin + avgLoss > 0 ? (avgLoss / (avgWin + avgLoss)) * 100 : 50;
+          // Recompute significance for the aggregate
+          // We need to import assess locally? Use a simple inline p-value via byAsset's significance not needed — show aggregate counts.
+          return {
+            asset: "ALL",
+            closed,
+            open,
+            wins,
+            losses,
+            expired: tradedAssets.reduce((s, a) => s + a.expired, 0),
+            winRate,
+            totalPnlPoints: totalPnl,
+            avgWinPoints: avgWin,
+            avgLossPoints: avgLoss,
+            avgRR: avgLoss > 0 ? avgWin / avgLoss : null,
+            maxWinStreak,
+            maxLossStreak,
+            currentStreak: 0,
+            profitFactor: pf,
+            significance: {
+              trades: wins + losses,
+              wins,
+              winRate,
+              breakevenRate: breakeven,
+              pValue: 0,
+              interval: { low: 0, high: 100 },
+              verdict: "insufficient_data" as const,
+              tradesNeeded: null,
+              summary: `${wins + losses} trades aggregated across ${tradedAssets.length} assets. Per-asset points aren't comparable — use win rate / profit factor.`,
+            },
+          } as typeof singleStats & { asset: string };
+        })()
+      : singleStats;
 
   if (!stats || !allIdeas) {
     return (
@@ -45,7 +164,8 @@ export function PerformanceTrackerPage() {
     );
   }
 
-  const forAsset = allIdeas.filter(i => i.asset === selected);
+  const forAsset =
+    selected === "ALL" ? allIdeas : allIdeas.filter(i => i.asset === selected);
 
   // Derived here rather than served: it is a running sum of the same resolved
   // ideas already on this page, so a second endpoint could only disagree.
@@ -108,7 +228,6 @@ export function PerformanceTrackerPage() {
               { key: "all", label: "All", icon: null },
               { key: "engine", label: "Engine", icon: Bot },
               { key: "dashboard", label: "Manual", icon: User },
-              { key: "experimental", label: "EXP", icon: FlaskConical },
             ] as const
           ).map(s => (
             <button
@@ -127,24 +246,69 @@ export function PerformanceTrackerPage() {
         </div>
       </div>
 
-      {/* Asset selector — points are only comparable within one instrument */}
+      {/* Asset selector — only traded assets, with All aggregate */}
       <div className="flex flex-wrap items-center gap-1">
-        {(assets ?? [])
-          .filter(a => a.enabled)
-          .map(a => (
+        <button
+          type="button"
+          onClick={() => setAsset("ALL")}
+          className={`px-3 py-1 rounded-md text-[11px] font-mono transition-colors border ${
+            selected === "ALL"
+              ? "bg-[#D4A843] text-black border-[#D4A843] font-medium"
+              : "bg-[#12141A] border-white/5 text-muted-foreground hover:text-white"
+          }`}
+        >
+          All (
+          {tradedAssets.length
+            ? `${tradedAssets.reduce((s, a) => s + a.closed, 0)} trades`
+            : "0"}
+          )
+        </button>
+        {sortedTraded.map(a => {
+          const info = assets?.find(x => x.id === a.asset);
+          return (
             <button
               type="button"
-              key={a.id}
-              onClick={() => setAsset(a.id)}
-              className={`px-2 py-1 rounded-md text-[11px] font-mono transition-colors ${
-                a.id === selected
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-white"
+              key={a.asset}
+              onClick={() => setAsset(a.asset)}
+              className={`px-2 py-1 rounded-md text-[11px] font-mono transition-colors border flex items-center gap-1 ${
+                a.asset === selected
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-[#12141A] border-white/5 text-muted-foreground hover:text-white"
               }`}
+              title={`${a.asset} · ${a.closed + a.open} trades · ${a.wins}W/${a.losses}L`}
             >
-              {a.symbol}
+              {info?.symbol ?? a.asset}
+              <span className="text-[9px] opacity-60">
+                ({a.closed + a.open})
+              </span>
             </button>
-          ))}
+          );
+        })}
+        <div className="ml-2 flex gap-1">
+          <button
+            onClick={() => toggleDeadAssets(true)}
+            disabled={toggling}
+            className="px-2 py-1 rounded-md text-[10px] border border-white/10 bg-[#12141A] text-muted-foreground hover:text-white hover:border-red-500/30 disabled:opacity-50"
+            title="Disable all enabled assets with zero trades"
+          >
+            Disable dead (
+            {(assets ?? []).filter(a => a.enabled).length - tradedAssets.length}
+            )
+          </button>
+          <button
+            onClick={() => toggleDeadAssets(false)}
+            disabled={toggling}
+            className="px-2 py-1 rounded-md text-[10px] border border-white/10 bg-[#12141A] text-muted-foreground hover:text-white hover:border-emerald-500/30 disabled:opacity-50"
+            title="Re-enable all disabled assets"
+          >
+            Enable all
+          </button>
+        </div>
+        {sortedTraded.length === 0 && (
+          <span className="text-xs text-muted-foreground ml-2">
+            No trades yet
+          </span>
+        )}
       </div>
 
       {/* What the numbers below are worth. Placed above them deliberately —
@@ -366,8 +530,8 @@ export function PerformanceTrackerPage() {
         </div>
       )}
 
-      {/* Daily P&L Calendar — shared month-navigating component */}
-      <DailyPnlCalendar byDay={byDay} />
+      {/* Daily P&L Calendar — click a day to see its trades */}
+      <DailyPnlCalendar byDay={byDay} ideas={closed} />
 
       {/* Recent Closed */}
       <div className="bg-[#12141A] border border-white/5 rounded-lg p-3">

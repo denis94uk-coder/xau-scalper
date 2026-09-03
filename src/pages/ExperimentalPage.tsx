@@ -1,6 +1,8 @@
+import { format } from "date-fns";
 import {
   Activity,
   BarChart3,
+  CalendarDays,
   Eye,
   FlaskConical,
   GitBranch,
@@ -8,6 +10,7 @@ import {
   Lightbulb,
   Minus,
   Radio,
+  ScrollText,
   Target,
   TrendingDown,
   TrendingUp,
@@ -21,7 +24,9 @@ import {
   useMemo,
   useState,
 } from "react";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
+import { DailyPnlCalendar } from "@/components/dashboard/DailyPnlCalendar";
 import { MiniChart } from "@/components/dashboard/MultiTimeframeView";
 import { PriceTicker } from "@/components/dashboard/PriceTicker";
 import { Button } from "@/components/ui/button";
@@ -59,7 +64,7 @@ class ErrorBoundary extends Component<
         <div className="flex flex-col items-center justify-center h-screen gap-4 p-6 bg-[#0A0C10] text-white">
           <FlaskConical className="w-8 h-8 text-[#AB47BC]" />
           <span className="text-lg font-mono text-[#AB47BC]">
-            ⚠ Experimental Lab Error
+            ⚠ Teo&apos;D&apos;Or Lab Error
           </span>
           <span className="text-sm text-muted-foreground text-center max-w-md">
             {this.state.error || "Something went wrong."}
@@ -82,7 +87,64 @@ class ErrorBoundary extends Component<
 
 type Timeframe = "1m" | "3m" | "5m" | "15m";
 
+type ExpTab = "lab" | "performance" | "calendar" | "ideas" | "journal";
+
 function ExperimentalContent() {
+  const [searchParams] = useSearchParams();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const pathTab =
+    location.pathname === "/experimental/performance"
+      ? "performance"
+      : location.pathname === "/experimental/calendar"
+        ? "calendar"
+        : location.pathname === "/experimental/ideas"
+          ? "ideas"
+          : location.pathname === "/experimental/journal"
+            ? "journal"
+            : null;
+  const queryTab = searchParams.get("tab") as ExpTab | null;
+  const initialTab = (pathTab as ExpTab | null) ?? queryTab;
+  const [expTab, setExpTab] = useState<ExpTab>(
+    initialTab &&
+      ["lab", "performance", "calendar", "ideas", "journal"].includes(
+        initialTab,
+      )
+      ? initialTab
+      : "lab",
+  );
+  // Keep URL in sync when tab changes via sidebar deep links or browser nav
+  useEffect(() => {
+    const t =
+      (location.pathname === "/experimental/performance"
+        ? "performance"
+        : location.pathname === "/experimental/calendar"
+          ? "calendar"
+          : location.pathname === "/experimental/ideas"
+            ? "ideas"
+            : location.pathname === "/experimental/journal"
+              ? "journal"
+              : null) ?? (searchParams.get("tab") as ExpTab | null);
+    if (
+      t &&
+      ["lab", "performance", "calendar", "ideas", "journal"].includes(t) &&
+      t !== expTab
+    ) {
+      setExpTab(t as ExpTab);
+    } else if (
+      !t &&
+      expTab !== "lab" &&
+      location.pathname === "/experimental"
+    ) {
+      if (!searchParams.get("tab")) setExpTab("lab");
+    }
+  }, [location.pathname, searchParams, expTab]);
+  const handleTab = (t: ExpTab) => {
+    setExpTab(t);
+    if (t === "lab") navigate("/experimental");
+    else navigate(`/experimental/${t}`);
+  };
+
   const [priceData, setPriceData] = useState<PriceData | null>(null);
   const [candles1m, setCandles1m] = useState<Candle[]>([]);
   const [candles3m, setCandles3m] = useState<Candle[]>([]);
@@ -188,7 +250,7 @@ function ExperimentalContent() {
           </div>
           <div>
             <h1 className="text-lg font-semibold flex items-center gap-2">
-              Experimental Lab
+              Teo&apos;D&apos;Or Lab
               <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#AB47BC]/15 text-[#AB47BC] font-mono font-bold">
                 BETA
               </span>
@@ -224,118 +286,157 @@ function ExperimentalContent() {
         </div>
       </div>
 
-      {/* Price Ticker */}
-      <PriceTicker data={priceData} />
-
-      {/* Combined Signal Panel */}
-      {activeExp && (
-        <CombinedSignalPanel analysis={activeExp} timeframe={activeTimeframe} />
-      )}
-
-      {/* Tool Grid — each tool's signal */}
-      {activeExp && <ToolGrid analysis={activeExp} />}
-
-      {/* Entry Ideas */}
-      {activeExp && activeExp.entries.length > 0 && (
-        <ExperimentalEntries
-          entries={activeExp.entries}
-          timeframe={activeTimeframe}
-          bias={activeExp.bias}
-          biasStrength={activeExp.biasStrength}
-        />
-      )}
-
-      {/* Trading Ideas — server-generated XAU/USD signals */}
-      <ExperimentalTradingIdeas />
-
-      {/* Multi-TF Charts */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {[
-          {
-            tf: "1m" as Timeframe,
-            label: "1 MIN",
-            candles: candles1m,
-            exp: exp1m,
-          },
-          {
-            tf: "3m" as Timeframe,
-            label: "3 MIN",
-            candles: candles3m,
-            exp: exp3m,
-          },
-          {
-            tf: "5m" as Timeframe,
-            label: "5 MIN",
-            candles: candles5m,
-            exp: exp5m,
-          },
-          {
-            tf: "15m" as Timeframe,
-            label: "15 MIN",
-            candles: candles15m,
-            exp: exp15m,
-          },
-        ].map(({ tf, label, candles, exp }) => (
-          <div
-            key={tf}
-            role="button"
-            tabIndex={0}
-            className={`cursor-pointer transition-all rounded-xl ${
-              activeTimeframe === tf
-                ? "ring-1 ring-[#AB47BC]/50"
-                : "hover:ring-1 hover:ring-[#AB47BC]/20"
+      {/* Tabs — Journal after Calendar in both sections */}
+      <div className="flex gap-1 bg-[#12141A] rounded-lg p-1 border border-white/5 w-fit flex-wrap">
+        {(
+          [
+            { key: "lab", label: "Lab", icon: FlaskConical },
+            { key: "ideas", label: "Ideas", icon: Lightbulb },
+            { key: "performance", label: "Performance", icon: BarChart3 },
+            { key: "calendar", label: "Calendar", icon: CalendarDays },
+            { key: "journal", label: "Journal", icon: ScrollText },
+          ] as const
+        ).map(t => (
+          <button
+            key={t.key}
+            onClick={() => handleTab(t.key)}
+            className={`px-3 py-1.5 text-xs rounded-md transition-colors flex items-center gap-1.5 ${
+              expTab === t.key
+                ? "bg-[#AB47BC] text-white font-medium"
+                : "text-muted-foreground hover:text-white"
             }`}
-            onClick={() => setActiveTimeframe(tf)}
           >
-            <MiniChart
-              candles={candles}
-              label={label}
-              height={200}
-              showEMA
-              showBB={tf === "15m"}
-            />
-            {/* Supertrend badge on chart */}
-            {exp && (
-              <div className="flex items-center justify-between px-2 py-1 -mt-1">
-                <span
-                  className={`text-[9px] font-mono font-bold ${
-                    exp.supertrend.trend[candles.length - 1] === "UP"
-                      ? "text-[#00E676]"
-                      : "text-[#FF1744]"
-                  }`}
-                >
-                  ST: {exp.supertrend.trend[candles.length - 1]}
-                </span>
-                <span
-                  className={`text-[9px] font-mono ${
-                    exp.squeeze.isSqueezing[candles.length - 1]
-                      ? "text-[#FFD600] animate-pulse"
-                      : "text-muted-foreground/40"
-                  }`}
-                >
-                  {exp.squeeze.isSqueezing[candles.length - 1] ? "🔥 SQZ" : ""}
-                </span>
-              </div>
-            )}
-            {activeTimeframe === tf && (
-              <div className="h-0.5 bg-[#AB47BC] rounded-b-xl -mt-px mx-1" />
-            )}
-          </div>
+            <t.icon className="w-3.5 h-3.5" />
+            {t.label}
+          </button>
         ))}
       </div>
 
-      {/* SMC Zones: Order Blocks + FVGs */}
-      {activeExp && (
-        <SMCZonesPanel analysis={activeExp} price={priceData?.price ?? 0} />
-      )}
+      {expTab === "lab" && (
+        <>
+          {/* Price Ticker */}
+          <PriceTicker data={priceData} />
 
-      {/* Multi-TF Experimental Confluence */}
-      <ExperimentalConfluence
-        exp1m={exp1m}
-        exp3m={exp3m}
-        exp5m={exp5m}
-        exp15m={exp15m}
-      />
+          {/* Combined Signal Panel */}
+          {activeExp && (
+            <CombinedSignalPanel
+              analysis={activeExp}
+              timeframe={activeTimeframe}
+            />
+          )}
+
+          {/* Tool Grid — each tool's signal */}
+          {activeExp && <ToolGrid analysis={activeExp} />}
+
+          {/* Entry Ideas */}
+          {activeExp && activeExp.entries.length > 0 && (
+            <ExperimentalEntries
+              entries={activeExp.entries}
+              timeframe={activeTimeframe}
+              bias={activeExp.bias}
+              biasStrength={activeExp.biasStrength}
+            />
+          )}
+
+          {/* Trading Ideas — server-generated XAU/USD signals */}
+          <ExperimentalTradingIdeas />
+
+          {/* Multi-TF Charts */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {[
+              {
+                tf: "1m" as Timeframe,
+                label: "1 MIN",
+                candles: candles1m,
+                exp: exp1m,
+              },
+              {
+                tf: "3m" as Timeframe,
+                label: "3 MIN",
+                candles: candles3m,
+                exp: exp3m,
+              },
+              {
+                tf: "5m" as Timeframe,
+                label: "5 MIN",
+                candles: candles5m,
+                exp: exp5m,
+              },
+              {
+                tf: "15m" as Timeframe,
+                label: "15 MIN",
+                candles: candles15m,
+                exp: exp15m,
+              },
+            ].map(({ tf, label, candles, exp }) => (
+              <div
+                key={tf}
+                role="button"
+                tabIndex={0}
+                className={`cursor-pointer transition-all rounded-xl ${
+                  activeTimeframe === tf
+                    ? "ring-1 ring-[#AB47BC]/50"
+                    : "hover:ring-1 hover:ring-[#AB47BC]/20"
+                }`}
+                onClick={() => setActiveTimeframe(tf)}
+              >
+                <MiniChart
+                  candles={candles}
+                  label={label}
+                  height={200}
+                  showEMA
+                  showBB={tf === "15m"}
+                />
+                {/* Supertrend badge on chart */}
+                {exp && (
+                  <div className="flex items-center justify-between px-2 py-1 -mt-1">
+                    <span
+                      className={`text-[9px] font-mono font-bold ${
+                        exp.supertrend.trend[candles.length - 1] === "UP"
+                          ? "text-[#00E676]"
+                          : "text-[#FF1744]"
+                      }`}
+                    >
+                      ST: {exp.supertrend.trend[candles.length - 1]}
+                    </span>
+                    <span
+                      className={`text-[9px] font-mono ${
+                        exp.squeeze.isSqueezing[candles.length - 1]
+                          ? "text-[#FFD600] animate-pulse"
+                          : "text-muted-foreground/40"
+                      }`}
+                    >
+                      {exp.squeeze.isSqueezing[candles.length - 1]
+                        ? "🔥 SQZ"
+                        : ""}
+                    </span>
+                  </div>
+                )}
+                {activeTimeframe === tf && (
+                  <div className="h-0.5 bg-[#AB47BC] rounded-b-xl -mt-px mx-1" />
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* SMC Zones: Order Blocks + FVGs */}
+          {activeExp && (
+            <SMCZonesPanel analysis={activeExp} price={priceData?.price ?? 0} />
+          )}
+
+          {/* Multi-TF Experimental Confluence */}
+          <ExperimentalConfluence
+            exp1m={exp1m}
+            exp3m={exp3m}
+            exp5m={exp5m}
+            exp15m={exp15m}
+          />
+        </>
+      )}
+      {expTab === "performance" && <ExperimentalPerformance />}
+      {expTab === "calendar" && <ExperimentalCalendar />}
+      {expTab === "ideas" && <ExperimentalIdeasTab />}
+      {expTab === "journal" && <ExperimentalJournalTab />}
     </div>
   );
 }
@@ -1199,6 +1300,651 @@ function ExperimentalConfluence({
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Experimental Performance — isolated (source=experimental only)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function ExperimentalPerformance() {
+  const byAsset = useLive(
+    () => api.performance({ source: "experimental" }).then(r => r.byAsset),
+    ["ideas"],
+  );
+  const allIdeas = useLive(
+    () => api.ideas({ limit: 500, source: "experimental" }).then(r => r.ideas),
+    ["ideas"],
+  );
+
+  const stats = byAsset?.find(a => a.asset === "PAXGUSDT") ?? byAsset?.[0];
+
+  if (!byAsset || !allIdeas) {
+    return (
+      <div className="rounded-xl border border-[#AB47BC]/20 bg-[#AB47BC]/[0.03] p-4">
+        <div className="flex items-center gap-2 mb-2">
+          <BarChart3 className="w-4 h-4 text-[#AB47BC]" />
+          <span className="text-sm font-semibold">
+            Experimental Performance
+          </span>
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#AB47BC]/15 text-[#AB47BC] font-mono">
+            isolated — experimental only
+          </span>
+        </div>
+        <div className="text-xs text-muted-foreground">
+          Loading performance…
+        </div>
+      </div>
+    );
+  }
+
+  if (!stats || stats.closed + stats.open === 0) {
+    return (
+      <div className="rounded-xl border border-[#AB47BC]/20 bg-[#AB47BC]/[0.03] p-4">
+        <div className="flex items-center gap-2 mb-2">
+          <BarChart3 className="w-4 h-4 text-[#AB47BC]" />
+          <span className="text-sm font-semibold">
+            Experimental Performance
+          </span>
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#AB47BC]/15 text-[#AB47BC] font-mono">
+            isolated
+          </span>
+        </div>
+        <div className="text-xs text-muted-foreground py-4 text-center">
+          No experimental trades yet — log one from the entry cards above or
+          wait for the server&apos;s 8-tool confluence.
+        </div>
+      </div>
+    );
+  }
+
+  const forAsset = allIdeas.filter(i => i.asset === stats.asset);
+  const resolved = forAsset
+    .filter(i => i.pnlPoints !== null)
+    .sort(
+      (a, b) => (a.resolvedAt ?? a.createdAt) - (b.resolvedAt ?? b.createdAt),
+    );
+  let running = 0;
+  const equityCurve = resolved.map(i => {
+    running += i.pnlPoints ?? 0;
+    return { equity: running, at: i.resolvedAt ?? i.createdAt };
+  });
+  const closed = forAsset.filter(
+    i =>
+      i.status === "TP2_HIT" ||
+      i.status === "STOPPED" ||
+      i.status === "EXPIRED",
+  );
+
+  return (
+    <div className="rounded-xl border border-[#AB47BC]/20 bg-[#AB47BC]/[0.03] p-4 space-y-4">
+      <div className="flex items-center gap-2">
+        <BarChart3 className="w-4 h-4 text-[#AB47BC]" />
+        <span className="text-sm font-semibold">Experimental Performance</span>
+        <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#AB47BC]/15 text-[#AB47BC] font-mono">
+          {stats.asset} · isolated
+        </span>
+        <span className="text-[10px] text-muted-foreground ml-auto">
+          {stats.closed} closed · {stats.open} open
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+        <div className="bg-[#12141A] border border-white/5 rounded-lg px-3 py-2">
+          <div className="text-[10px] text-muted-foreground flex items-center gap-1">
+            <Target className="w-3 h-3" /> Win Rate
+          </div>
+          <div
+            className={`text-lg font-bold font-mono ${stats.winRate >= 50 ? "text-emerald-400" : "text-red-400"}`}
+          >
+            {stats.winRate.toFixed(1)}%
+          </div>
+          <div className="text-[10px] text-muted-foreground">
+            {stats.wins}W / {stats.losses}L
+          </div>
+        </div>
+        <div className="bg-[#12141A] border border-white/5 rounded-lg px-3 py-2">
+          <div className="text-[10px] text-muted-foreground flex items-center gap-1">
+            <TrendingUp className="w-3 h-3" /> Profit Factor
+          </div>
+          <div
+            className={`text-lg font-bold font-mono ${(stats.profitFactor ?? 0) >= 1.5 ? "text-emerald-400" : (stats.profitFactor ?? 0) >= 1 ? "text-yellow-400" : "text-red-400"}`}
+          >
+            {(stats.profitFactor ?? 0) >= 999
+              ? "∞"
+              : (stats.profitFactor ?? 0).toFixed(2)}
+          </div>
+          <div className="text-[10px] text-muted-foreground">
+            Gross profit / loss
+          </div>
+        </div>
+        <div className="bg-[#12141A] border border-white/5 rounded-lg px-3 py-2">
+          <div className="text-[10px] text-muted-foreground">Total P&L</div>
+          <div
+            className={`text-lg font-bold font-mono ${stats.totalPnlPoints >= 0 ? "text-emerald-400" : "text-red-400"}`}
+          >
+            {stats.totalPnlPoints >= 0 ? "+" : ""}
+            {stats.totalPnlPoints.toFixed(1)} pts
+          </div>
+          <div className="text-[10px] text-muted-foreground">Points total</div>
+        </div>
+        <div className="bg-[#12141A] border border-white/5 rounded-lg px-3 py-2">
+          <div className="text-[10px] text-muted-foreground">Avg Win</div>
+          <div className="text-lg font-bold font-mono text-emerald-400">
+            +{stats.avgWinPoints.toFixed(1)}
+          </div>
+          <div className="text-[10px] text-muted-foreground">
+            Points per win
+          </div>
+        </div>
+        <div className="bg-[#12141A] border border-white/5 rounded-lg px-3 py-2">
+          <div className="text-[10px] text-muted-foreground">Avg Loss</div>
+          <div className="text-lg font-bold font-mono text-red-400">
+            -{stats.avgLossPoints.toFixed(1)}
+          </div>
+          <div className="text-[10px] text-muted-foreground">
+            Points per loss
+          </div>
+        </div>
+        <div className="bg-[#12141A] border border-white/5 rounded-lg px-3 py-2">
+          <div className="text-[10px] text-muted-foreground">Avg R:R</div>
+          <div className="text-lg font-bold font-mono text-yellow-400">
+            {(stats.avgRR ?? 0).toFixed(2)}
+          </div>
+          <div className="text-[10px] text-muted-foreground">Risk/Reward</div>
+        </div>
+      </div>
+
+      {equityCurve.length > 0 && (
+        <div className="bg-[#12141A] border border-white/5 rounded-lg p-3">
+          <div className="text-xs font-medium mb-3">
+            Equity Curve (Points) — experimental
+          </div>
+          <div className="h-32 flex items-end gap-0.5">
+            {(() => {
+              const data = equityCurve;
+              const maxEquity = Math.max(...data.map(d => d.equity), 0);
+              const minEquity = Math.min(...data.map(d => d.equity), 0);
+              const range = maxEquity - minEquity || 1;
+              return data.map((d, i) => {
+                const isPositive = d.equity >= 0;
+                const height = Math.abs(d.equity) / range;
+                return (
+                  <div
+                    key={i}
+                    className="flex-1 flex flex-col justify-end relative group"
+                    style={{ height: "100%" }}
+                  >
+                    <div
+                      className={`w-full rounded-sm ${isPositive ? "bg-emerald-500/60" : "bg-red-500/60"}`}
+                      style={{ height: `${height * 100}%` }}
+                    />
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 opacity-0 group-hover:opacity-100 transition-opacity bg-[#1A1D27] border border-white/10 rounded px-2 py-1 text-[10px] whitespace-nowrap z-50 pointer-events-none">
+                      Equity: {d.equity.toFixed(1)} pts
+                    </div>
+                  </div>
+                );
+              });
+            })()}
+          </div>
+        </div>
+      )}
+
+      <div className="bg-[#12141A] border border-white/5 rounded-lg p-3">
+        <div className="text-xs font-medium mb-2">
+          Recent Closed — experimental
+        </div>
+        <div className="space-y-1 max-h-64 overflow-y-auto">
+          {closed.length === 0 ? (
+            <div className="text-xs text-muted-foreground text-center py-4">
+              No closed experimental signals yet
+            </div>
+          ) : (
+            closed.slice(0, 20).map(idea => (
+              <div
+                key={idea.id}
+                className="flex items-center gap-2 text-xs py-1 border-b border-white/5"
+              >
+                <span
+                  className={`font-medium px-1.5 rounded ${idea.direction === "LONG" ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"}`}
+                >
+                  {idea.direction}
+                </span>
+                <span className="font-mono">{idea.entryPrice.toFixed(2)}</span>
+                <span
+                  className={`text-[10px] px-1.5 rounded ${idea.status === "TP2_HIT" ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"}`}
+                >
+                  {idea.status.replace("_", " ")}
+                </span>
+                <span
+                  className={`font-mono ml-auto ${(idea.pnlPoints ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}
+                >
+                  {(idea.pnlPoints ?? 0) >= 0 ? "+" : ""}
+                  {(idea.pnlPoints ?? 0).toFixed(1)} pts
+                </span>
+                <span className="text-muted-foreground text-[10px]">
+                  {new Date(
+                    idea.resolvedAt ?? idea.createdAt,
+                  ).toLocaleDateString()}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Experimental Calendar — isolated
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function ExperimentalCalendar() {
+  const allIdeas = useLive(
+    () => api.ideas({ limit: 500, source: "experimental" }).then(r => r.ideas),
+    ["ideas"],
+  );
+
+  if (!allIdeas) {
+    return (
+      <div className="rounded-xl border border-[#AB47BC]/20 bg-[#AB47BC]/[0.03] p-4">
+        <div className="text-sm font-semibold flex items-center gap-2">
+          <CalendarDays className="w-4 h-4 text-[#AB47BC]" /> Experimental
+          Calendar
+        </div>
+        <div className="text-xs text-muted-foreground mt-2">
+          Loading calendar…
+        </div>
+      </div>
+    );
+  }
+
+  const closed = allIdeas.filter(
+    i =>
+      i.status === "TP2_HIT" ||
+      i.status === "STOPPED" ||
+      i.status === "EXPIRED",
+  );
+  const byDay: Record<
+    string,
+    { wins: number; losses: number; pnl: number; count: number }
+  > = {};
+  for (const idea of closed) {
+    const d = format(new Date(idea.resolvedAt ?? idea.createdAt), "yyyy-MM-dd");
+    if (!byDay[d]) byDay[d] = { wins: 0, losses: 0, pnl: 0, count: 0 };
+    byDay[d].count++;
+    byDay[d].pnl += idea.pnlPoints ?? 0;
+    if ((idea.pnlPoints ?? 0) > 0) byDay[d].wins++;
+    else byDay[d].losses++;
+  }
+
+  const days = Object.keys(byDay);
+
+  return (
+    <div className="rounded-xl border border-[#AB47BC]/20 bg-[#AB47BC]/[0.03] p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <CalendarDays className="w-4 h-4 text-[#AB47BC]" />
+        <span className="text-sm font-semibold">Experimental Calendar</span>
+        <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#AB47BC]/15 text-[#AB47BC] font-mono">
+          isolated — experimental only
+        </span>
+        {days.length > 0 && (
+          <span className="text-[10px] text-muted-foreground ml-auto">
+            {days.length} trading days · {closed.length} trades
+          </span>
+        )}
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        Daily realized P&L for experimental XAU/USD only — separate from the
+        main book. Click a day to see its trades.
+      </p>
+      <DailyPnlCalendar byDay={byDay} ideas={closed} />
+      {days.length === 0 && (
+        <div className="text-xs text-muted-foreground text-center py-2">
+          No resolved experimental trades yet — calendar fills as ideas close.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Experimental Ideas — isolated (source=experimental only)
+// Strictly experimental: never mixes with main engine book
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function ExperimentalIdeasTab() {
+  const ideas = useLive(
+    () => api.ideas({ limit: 300, source: "experimental" }).then(r => r.ideas),
+    ["ideas"],
+  );
+  const [filter, setFilter] = useState<string>("ALL");
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+
+  if (!ideas) {
+    return (
+      <div className="rounded-xl border border-[#AB47BC]/20 bg-[#AB47BC]/[0.03] p-4">
+        <div className="text-sm font-semibold flex items-center gap-2">
+          <Lightbulb className="w-4 h-4 text-[#AB47BC]" /> Experimental Ideas
+        </div>
+        <div className="text-xs text-muted-foreground mt-2">Loading ideas…</div>
+      </div>
+    );
+  }
+
+  let filtered = ideas;
+  if (filter !== "ALL") filtered = filtered.filter(i => i.status === filter);
+
+  const active = ideas.filter(
+    i => i.status === "ACTIVE" || i.status === "TP1_HIT",
+  ).length;
+  const wins = ideas.filter(i => (i.pnlPoints ?? 0) > 0).length;
+  const losses = ideas.filter(
+    i => i.pnlPoints !== null && i.pnlPoints <= 0,
+  ).length;
+  const totalPnl = ideas.reduce((s, i) => {
+    if (i.pnlPoints === null || i.entryPrice === 0) return s;
+    return s + (i.pnlPoints / i.entryPrice) * 100;
+  }, 0);
+
+  return (
+    <div className="rounded-xl border border-[#AB47BC]/20 bg-[#AB47BC]/[0.03] p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <Lightbulb className="w-4 h-4 text-[#AB47BC]" />
+        <span className="text-sm font-semibold">Experimental Ideas</span>
+        <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#AB47BC]/15 text-[#AB47BC] font-mono">
+          isolated — experimental only
+        </span>
+        <span className="text-[10px] text-muted-foreground ml-auto">
+          {ideas.length} total · {active} active
+        </span>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <div className="bg-[#12141A] border border-white/5 rounded-lg px-3 py-2">
+          <div className="text-[10px] text-muted-foreground">Active</div>
+          <div className="text-lg font-bold font-mono text-blue-400">
+            {active}
+          </div>
+        </div>
+        <div className="bg-[#12141A] border border-white/5 rounded-lg px-3 py-2">
+          <div className="text-[10px] text-muted-foreground">Wins</div>
+          <div className="text-lg font-bold font-mono text-emerald-400">
+            {wins}
+          </div>
+        </div>
+        <div className="bg-[#12141A] border border-white/5 rounded-lg px-3 py-2">
+          <div className="text-[10px] text-muted-foreground">Losses</div>
+          <div className="text-lg font-bold font-mono text-red-400">
+            {losses}
+          </div>
+        </div>
+        <div className="bg-[#12141A] border border-white/5 rounded-lg px-3 py-2">
+          <div className="text-[10px] text-muted-foreground">Total P&L</div>
+          <div
+            className={`text-lg font-bold font-mono ${totalPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}
+          >
+            {totalPnl >= 0 ? "+" : ""}
+            {totalPnl.toFixed(2)}%
+          </div>
+        </div>
+      </div>
+      <div className="flex gap-1 bg-[#12141A] rounded-lg p-0.5 border border-white/5 w-fit flex-wrap">
+        {["ALL", "ACTIVE", "TP1_HIT", "TP2_HIT", "STOPPED", "EXPIRED"].map(
+          s => (
+            <button
+              key={s}
+              onClick={() => setFilter(s)}
+              className={`px-2.5 py-1 text-xs rounded-md transition-colors ${filter === s ? "bg-[#AB47BC] text-white font-medium" : "text-muted-foreground hover:text-white"}`}
+            >
+              {s.replace("_", " ")}
+            </button>
+          ),
+        )}
+      </div>
+      <div className="space-y-1.5">
+        {filtered.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground text-xs">
+            No experimental ideas for this filter
+          </div>
+        ) : (
+          filtered.map(idea => {
+            const isExpanded = expandedId === idea.id;
+            const pnlPct =
+              idea.pnlPoints !== null && idea.entryPrice !== 0
+                ? (idea.pnlPoints / idea.entryPrice) * 100
+                : null;
+            return (
+              <div
+                key={idea.id}
+                className="bg-[#12141A] border border-white/5 rounded-lg overflow-hidden"
+              >
+                <div
+                  role="button"
+                  tabIndex={0}
+                  className="flex items-center gap-3 px-3 py-2.5 cursor-pointer"
+                  onClick={() => setExpandedId(isExpanded ? null : idea.id)}
+                >
+                  <span
+                    className={`text-xs font-bold px-2 py-0.5 rounded ${idea.direction === "LONG" ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"}`}
+                  >
+                    {idea.direction}
+                  </span>
+                  <span className="text-xs font-mono font-semibold text-[#D4A843]">
+                    PAXGUSDT
+                  </span>
+                  <FlaskConical className="w-3 h-3 text-[#AB47BC]" />
+                  <span className="text-sm font-mono font-medium w-20">
+                    {idea.entryPrice.toFixed(2)}
+                  </span>
+                  <span
+                    className={`text-[10px] font-medium px-2 py-0.5 rounded border ${idea.status === "STOPPED" && (idea.pnlPoints ?? 0) > 0 ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" : idea.status === "ACTIVE" ? "bg-blue-500/20 text-blue-400 border-blue-500/30" : idea.status.includes("TP") ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" : "bg-red-500/20 text-red-400 border-red-500/30"}`}
+                  >
+                    {idea.status.replace("_", " ")}
+                  </span>
+                  <span
+                    className={`text-sm font-mono w-20 text-right ${(idea.pnlPoints ?? 0) > 0 ? "text-emerald-400" : (idea.pnlPoints ?? 0) < 0 ? "text-red-400" : "text-muted-foreground"}`}
+                  >
+                    {pnlPct !== null
+                      ? `${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(2)}%`
+                      : "—"}
+                  </span>
+                  <span className="text-xs text-muted-foreground w-10 text-right">
+                    {idea.confidence}%
+                  </span>
+                </div>
+                {isExpanded && (
+                  <div className="border-t border-white/5 px-3 py-3 space-y-2 bg-[#0E1015] text-xs">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      <div>
+                        <span className="text-muted-foreground">Entry</span>
+                        <div className="font-mono">
+                          {idea.entryPrice.toFixed(2)}
+                        </div>
+                      </div>
+                      <div>
+                        <span className="text-red-400">
+                          {idea.trailingSl ? "Trailing SL" : "Stop Loss"}
+                        </span>
+                        <div className="font-mono text-red-400">
+                          {idea.trailingSl
+                            ? idea.trailingSl.toFixed(2)
+                            : idea.stopLoss.toFixed(2)}
+                        </div>
+                      </div>
+                      <div>
+                        <span className="text-emerald-400">TP1</span>
+                        <div className="font-mono text-emerald-400">
+                          {idea.tp1.toFixed(2)}
+                        </div>
+                      </div>
+                      <div>
+                        <span className="text-green-300">TP2</span>
+                        <div className="font-mono text-green-300">
+                          {idea.tp2.toFixed(2)}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-muted-foreground">{idea.reason}</div>
+                    <div className="text-[10px] text-muted-foreground">
+                      {idea.asset} · {idea.timeframe} ·{" "}
+                      {new Date(idea.createdAt).toLocaleString()}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Experimental Journal — isolated (source=experimental only)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function ExperimentalJournalTab() {
+  const [typeFilter, setTypeFilter] = useState<string>("ALL");
+  const [showEngine, setShowEngine] = useState(false);
+  const journal = useLive(
+    () =>
+      api
+        .journal({
+          limit: 500,
+          source: "experimental",
+          exclude: showEngine ? undefined : ["ENGINE_RUN", "MONITOR_CHECK"],
+        })
+        .then(r => r.entries),
+    ["journal", "ideas"],
+    [showEngine],
+  );
+  const counts = useLive(
+    () => api.journalCounts({ source: "experimental" }),
+    ["journal", "ideas"],
+  );
+
+  if (!journal) {
+    return (
+      <div className="rounded-xl border border-[#AB47BC]/20 bg-[#AB47BC]/[0.03] p-4">
+        <div className="text-sm font-semibold flex items-center gap-2">
+          <ScrollText className="w-4 h-4 text-[#AB47BC]" /> Experimental Journal
+        </div>
+        <div className="text-xs text-muted-foreground mt-2">
+          Loading journal…
+        </div>
+      </div>
+    );
+  }
+
+  let filtered = journal;
+  if (typeFilter !== "ALL")
+    filtered = filtered.filter(e => e.eventType === typeFilter);
+
+  return (
+    <div className="rounded-xl border border-[#AB47BC]/20 bg-[#AB47BC]/[0.03] p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <ScrollText className="w-4 h-4 text-[#AB47BC]" />
+        <span className="text-sm font-semibold">Experimental Journal</span>
+        <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#AB47BC]/15 text-[#AB47BC] font-mono">
+          isolated — experimental only
+        </span>
+      </div>
+      {counts && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div className="bg-[#12141A] border border-white/5 rounded-lg px-3 py-2">
+            <div className="text-[10px] text-muted-foreground">Signals</div>
+            <div className="text-lg font-bold font-mono text-cyan-400">
+              {counts.SIGNAL_GENERATED ?? 0}
+            </div>
+          </div>
+          <div className="bg-[#12141A] border border-white/5 rounded-lg px-3 py-2">
+            <div className="text-[10px] text-muted-foreground">TP Hits</div>
+            <div className="text-lg font-bold font-mono text-emerald-400">
+              {(counts.TP1_HIT ?? 0) + (counts.TP2_HIT ?? 0)}
+            </div>
+          </div>
+          <div className="bg-[#12141A] border border-white/5 rounded-lg px-3 py-2">
+            <div className="text-[10px] text-muted-foreground">SL Hits</div>
+            <div className="text-lg font-bold font-mono text-red-400">
+              {counts.SL_HIT ?? 0}
+            </div>
+          </div>
+          <div className="bg-[#12141A] border border-white/5 rounded-lg px-3 py-2">
+            <div className="text-[10px] text-muted-foreground">Engine Runs</div>
+            <div className="text-lg font-bold font-mono text-yellow-400">
+              {counts.ENGINE_RUN ?? 0}
+            </div>
+          </div>
+        </div>
+      )}
+      <div className="flex gap-2 flex-wrap items-center">
+        <div className="flex gap-1 bg-[#12141A] rounded-lg p-0.5 border border-white/5">
+          {[
+            "ALL",
+            "SIGNAL_GENERATED",
+            "TP1_HIT",
+            "TP2_HIT",
+            "SL_HIT",
+            "ENGINE_RUN",
+          ].map(t => (
+            <button
+              key={t}
+              onClick={() => setTypeFilter(t)}
+              className={`px-2.5 py-1 text-xs rounded-md transition-colors ${typeFilter === t ? "bg-[#AB47BC] text-white font-medium" : "text-muted-foreground hover:text-white"}`}
+            >
+              {t === "ALL" ? "All" : t.replace(/_/g, " ")}
+            </button>
+          ))}
+        </div>
+        <label className="flex items-center gap-1.5 text-xs text-muted-foreground ml-auto cursor-pointer">
+          <input
+            type="checkbox"
+            checked={showEngine}
+            onChange={e => setShowEngine(e.target.checked)}
+            className="rounded border-white/20"
+          />{" "}
+          Show engine runs
+        </label>
+      </div>
+      <div className="space-y-0.5 max-h-[600px] overflow-y-auto">
+        {filtered.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground text-xs">
+            No experimental journal entries for this filter
+          </div>
+        ) : (
+          filtered.map(entry => (
+            <div
+              key={entry.id}
+              className="flex items-start gap-3 px-3 py-2 rounded-lg bg-[#12141A] border border-white/5"
+            >
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-[#AB47BC]">
+                    {entry.eventType.replace(/_/g, " ")}
+                  </span>
+                  {entry.direction && (
+                    <span
+                      className={`text-[10px] px-1.5 py-0 rounded ${entry.direction === "LONG" ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"}`}
+                    >
+                      {entry.direction}
+                    </span>
+                  )}
+                  {entry.price && (
+                    <span className="text-xs font-mono text-muted-foreground">
+                      @ {entry.price.toFixed(2)}
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs text-muted-foreground mt-0.5 truncate">
+                  {entry.details}
+                </div>
+              </div>
+              <div className="text-[10px] text-muted-foreground whitespace-nowrap">
+                {new Date(entry.timestamp).toLocaleString()}
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { fmtPrice } from "@/lib/priceApi";
 
 interface PriceData {
   price: number;
@@ -69,7 +70,7 @@ export function PriceTicker({
           </span>
         </div>
         <span className="text-2xl sm:text-3xl md:text-4xl font-bold tabular-nums font-mono tracking-tight">
-          {data.price.toFixed(2)}
+          {fmtPrice(data.price)}
         </span>
         {/* Change — inline on mobile */}
         <div className="flex flex-col sm:hidden">
@@ -77,7 +78,7 @@ export function PriceTicker({
             className={`text-xs font-semibold tabular-nums font-mono ${isPositive ? "text-[#00E676]" : "text-[#FF1744]"}`}
           >
             {isPositive ? "+" : ""}
-            {data.change24h.toFixed(2)} ({isPositive ? "+" : ""}
+            {fmtPrice(data.change24h)} ({isPositive ? "+" : ""}
             {data.changePct24h.toFixed(2)}%)
           </span>
         </div>
@@ -100,13 +101,13 @@ export function PriceTicker({
         <div className="flex flex-col items-center">
           <span className="text-[10px] text-muted-foreground mb-0.5">BID</span>
           <span className="text-xs sm:text-sm font-mono tabular-nums text-[#00E676]">
-            {data.bid.toFixed(2)}
+            {fmtPrice(data.bid)}
           </span>
         </div>
         <div className="flex flex-col items-center">
           <span className="text-[10px] text-muted-foreground mb-0.5">ASK</span>
           <span className="text-xs sm:text-sm font-mono tabular-nums text-[#FF1744]">
-            {data.ask.toFixed(2)}
+            {fmtPrice(data.ask)}
           </span>
         </div>
         <div className="flex flex-col items-center">
@@ -114,7 +115,7 @@ export function PriceTicker({
             SPREAD
           </span>
           <span className="text-xs sm:text-sm font-mono tabular-nums text-[#D4A843]">
-            {spread.toFixed(2)}
+            {fmtPrice(spread)}
           </span>
         </div>
         <div className="flex flex-col items-center">
@@ -122,7 +123,7 @@ export function PriceTicker({
             24H HIGH
           </span>
           <span className="text-xs sm:text-sm font-mono tabular-nums">
-            {data.high24h.toFixed(2)}
+            {fmtPrice(data.high24h)}
           </span>
         </div>
         <div className="flex flex-col items-center">
@@ -130,7 +131,7 @@ export function PriceTicker({
             24H LOW
           </span>
           <span className="text-xs sm:text-sm font-mono tabular-nums">
-            {data.low24h.toFixed(2)}
+            {fmtPrice(data.low24h)}
           </span>
         </div>
       </div>

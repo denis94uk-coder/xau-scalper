@@ -622,6 +622,36 @@ describe("logging an idea by hand", () => {
       ),
     ).toBe(404);
   });
+
+  test("rejects an inverted ladder so the monitor cannot book a fake win", async () => {
+    // LONG whose targets sit below entry — the Aug-2025 regime bug shape.
+    expect(
+      await status(
+        call("/api/ideas", "POST", {
+          asset: "BTCUSDT",
+          direction: "LONG",
+          entryPrice: 100,
+          stopLoss: 95,
+          tp1: 90,
+          tp2: 88,
+        }),
+      ),
+    ).toBe(422);
+    // And a SHORT whose stop sits below entry (wrong side).
+    expect(
+      await status(
+        call("/api/ideas", "POST", {
+          asset: "BTCUSDT",
+          direction: "SHORT",
+          entryPrice: 100,
+          stopLoss: 95,
+          tp1: 110,
+          tp2: 120,
+        }),
+      ),
+    ).toBe(422);
+    expect(db.listIdeas()).toHaveLength(0);
+  });
 });
 
 /**

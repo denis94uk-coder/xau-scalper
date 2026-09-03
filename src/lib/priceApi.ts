@@ -154,8 +154,12 @@ export async function fetchGoldCandles(
     if (!res.ok) throw new Error(`API returned ${res.status}`);
 
     // The server returns parsed candles; the venue's array format does not
-    // leak past it.
-    return (await res.json()) as Candle[];
+    // leak past it. Guard against upstream returning an error object instead
+    // of an array — without this the dashboard's `candles.map` throws
+    // `n.map is not a function` and the whole page crashes until the next
+    // successful poll.
+    const json = await res.json();
+    return Array.isArray(json) ? (json as Candle[]) : [];
   } catch (e: any) {
     console.error(
       `Failed to fetch candles for ${symbol} (${interval}):`,

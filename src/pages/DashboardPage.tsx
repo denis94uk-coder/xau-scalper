@@ -13,9 +13,9 @@ import { NewsShield } from "@/components/dashboard/NewsShield";
 import { PriceTicker } from "@/components/dashboard/PriceTicker";
 import { RegimeIndicator } from "@/components/dashboard/RegimeIndicator";
 import { ScalpingToolbar } from "@/components/dashboard/ScalpingToolbar";
-import { SessionBar } from "@/components/dashboard/SessionBar";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useLive } from "@/hooks/useLive";
 import { type AssetInfo, api } from "@/lib/api";
 import { APP_NAME } from "@/lib/constants";
 import {
@@ -51,6 +51,9 @@ class ErrorBoundary extends Component<
   static getDerivedStateFromError(error: Error) {
     return { hasError: true, error: error.message };
   }
+  componentDidCatch(error: Error, info: { componentStack: string }) {
+    console.error("[Dashboard ErrorBoundary]", error, info.componentStack);
+  }
   render() {
     if (this.state.hasError) {
       return (
@@ -82,6 +85,13 @@ type Timeframe = "1m" | "3m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d";
 function DashboardContent() {
   const [assets, setAssets] = useState<AssetInfo[]>([]);
   const [symbol, setSymbol] = useState<string>("BTCUSDT");
+  const [showAllAssets, setShowAllAssets] = useState(false);
+  const [assetSearch, setAssetSearch] = useState("");
+  const byAsset = useLive(
+    () =>
+      api.performance({ excludeSource: "experimental" }).then(r => r.byAsset),
+    ["ideas"],
+  );
   const [strategy, setStrategy] = useState<{
     atrSlMultiplier: number;
     tp1R: number;
@@ -101,6 +111,10 @@ function DashboardContent() {
   const [refreshing, setRefreshing] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [dataSource, setDataSource] = useState<string>("");
+  void Button;
+  void refreshing;
+  void lastRefresh;
+  void dataSource;
 
   // The registry of configured assets, for the symbol selector. Defaults to
   // BTC when present — the dashboard follows the crypto focus now.
@@ -108,7 +122,8 @@ function DashboardContent() {
     api
       .assets()
       .then(r => {
-        const enabled = r.assets.filter(
+        const list = Array.isArray(r?.assets) ? r.assets : [];
+        const enabled = list.filter(
           a => a.enabled && a.dataSource === "binance",
         );
         setAssets(enabled);
@@ -337,23 +352,6 @@ function DashboardContent() {
     }
   }, [activeCandles]);
 
-  if (loading) {
-    return (
-      <div className="flex flex-col gap-3 p-3 sm:p-4 max-w-[1440px] mx-auto">
-        <Skeleton className="h-8 w-full rounded-lg" />
-        <Skeleton className="h-16 w-full rounded-xl" />
-        <Skeleton className="h-14 w-full rounded-xl" />
-        <Skeleton className="h-24 w-full rounded-xl" />
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <Skeleton className="h-[200px] rounded-xl" />
-          <Skeleton className="h-[200px] rounded-xl" />
-          <Skeleton className="h-[200px] rounded-xl" />
-          <Skeleton className="h-[200px] rounded-xl" />
-        </div>
-      </div>
-    );
-  }
-
   const activeAnalysis =
     activeTimeframe === "1m"
       ? analysis1m
@@ -371,123 +369,157 @@ function DashboardContent() {
                   ? analysis4h
                   : analysis1d;
 
-  return (
-    <div className="flex flex-col gap-3 p-3 sm:p-4 max-w-[1440px] mx-auto w-full min-w-0 overflow-hidden">
-      {/* ① Session Bar — Kill Zone timeline */}
-      <SessionBar />
+  // Refresh from header's ↻ button (same level as hamburger) — must stay
+  // above the early return to keep hook order stable (React error #310).
+  useEffect(() => {
+    const h = () => loadAll(symbol, true);
+    window.addEventListener("dashboard:refresh", h);
+    return () => window.removeEventListener("dashboard:refresh", h);
+  }, [loadAll, symbol]);
 
-      {/* ② Engine Badge — own row, mobile-responsive */}
+  if (loading) {
+    return (
+      <div className="flex flex-col gap-2 p-2 sm:p-3 max-w-[1440px] mx-auto">
+        <Skeleton className="h-7 w-full rounded-lg" />
+        <Skeleton className="h-12 w-full rounded-xl" />
+        <Skeleton className="h-10 w-full rounded-xl" />
+        <Skeleton className="h-20 w-full rounded-xl" />
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+          <Skeleton className="h-[140px] rounded-xl" />
+          <Skeleton className="h-[140px] rounded-xl" />
+          <Skeleton className="h-[140px] rounded-xl" />
+          <Skeleton className="h-[140px] rounded-xl" />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2 p-2 sm:p-3 max-w-[1440px] mx-auto w-full min-w-0 overflow-hidden">
+      {/* ② Engine Badge — compact */}
       <div
-        className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 rounded-xl border transition-all"
+        className="flex flex-row items-center gap-2 sm:gap-3 px-2 sm:px-3 py-1.5 rounded-lg border"
         style={{
           backgroundColor: "rgba(212,168,67,0.04)",
           borderColor: "rgba(212,168,67,0.13)",
         }}
       >
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="flex items-center gap-1.5 min-w-0">
           <span
-            className="text-base sm:text-lg font-bold font-mono tracking-wide shrink-0"
+            className="text-sm font-bold font-mono tracking-wide shrink-0"
             style={{ color: "#D4A843" }}
           >
             {APP_NAME}
           </span>
           <span
-            className="flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-md shrink-0"
+            className="flex items-center gap-1 text-[9px] font-bold px-1 py-0.5 rounded shrink-0"
             style={{
               backgroundColor: "rgba(212,168,67,0.08)",
               color: "#D4A843",
             }}
           >
             <span
-              className="w-1.5 h-1.5 rounded-full animate-pulse"
+              className="w-1 h-1 rounded-full animate-pulse"
               style={{ backgroundColor: "#D4A843" }}
             />
-            LIVE ENGINE
-          </span>
-          <span className="text-xs text-muted-foreground hidden md:inline truncate">
-            TA Multi-Indicator — ATR Trailing
+            LIVE
           </span>
         </div>
-        <div className="flex items-center gap-2 sm:gap-3 sm:ml-auto flex-wrap">
-          <div className="flex items-center gap-1">
-            <span className="text-[10px] text-muted-foreground">SL</span>
-            <span className="text-[10px] sm:text-[11px] font-mono text-zinc-300">
-              {strategy ? `${strategy.atrSlMultiplier}× ATR` : "ATR"}
-            </span>
-          </div>
-          <div className="w-px h-4 bg-border hidden sm:block" />
-          <div className="flex items-center gap-1">
-            <span className="text-[10px] text-muted-foreground">TP</span>
-            <span className="text-[10px] sm:text-[11px] font-mono text-zinc-300">
-              {strategy ? `${strategy.tp1R}R / ${strategy.tp2R}R` : "TP1/TP2"}
-            </span>
-          </div>
-          <div className="w-px h-4 bg-border hidden sm:block" />
-          <span className="text-[10px] sm:text-[11px] font-mono text-[#D4A843]">
+        <div className="flex items-center gap-2 sm:gap-2.5 ml-auto flex-wrap text-[10px] font-mono">
+          <span className="text-muted-foreground">SL</span>
+          <span className="text-zinc-300">
+            {strategy ? `${strategy.atrSlMultiplier}×` : "ATR"}
+          </span>
+          <span className="w-px h-3 bg-border hidden sm:block" />
+          <span className="text-muted-foreground">TP</span>
+          <span className="text-zinc-300">
+            {strategy ? `${strategy.tp1R}/${strategy.tp2R}R` : "TP"}
+          </span>
+          <span className="w-px h-3 bg-border hidden sm:block" />
+          <span className="hidden md:inline text-[#D4A843] truncate">
             RSI · MACD · EMA · BB · Stoch
           </span>
         </div>
       </div>
 
-      {/* ④ Asset Selector + Price Ticker + Refresh */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full">
-        <div className="flex items-center gap-2 flex-wrap min-w-0">
-          <select
-            value={symbol}
-            onChange={e => setSymbol(e.target.value)}
-            className="h-8 text-xs font-mono bg-card border border-border rounded-md px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#D4A843]/50"
-            aria-label="Asset"
+      {/* ④ Asset Selector + Price Ticker + Refresh — compact */}
+      <div className="flex flex-col gap-2 w-full">
+        {/* Asset pills — Teo'D'Or Lab style */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <input
+            placeholder="Search…"
+            value={assetSearch}
+            onChange={e => setAssetSearch(e.target.value)}
+            className="h-7 w-24 text-xs font-mono bg-[#12141A] border border-white/5 rounded-md px-2 focus:outline-none focus:ring-1 focus:ring-[#D4A843]/50 placeholder:text-muted-foreground/50"
+          />
+          {(() => {
+            const tradedSet = new Set(
+              (byAsset ?? [])
+                .filter(a => a.closed + a.open > 0)
+                .map(a => a.asset),
+            );
+            let list = showAllAssets
+              ? assets.filter(a => a.enabled)
+              : assets.filter(
+                  a => a.enabled && (tradedSet.has(a.id) || a.id === symbol),
+                );
+            if (assetSearch) {
+              const q = assetSearch.toLowerCase();
+              list = list.filter(
+                a =>
+                  a.id.toLowerCase().includes(q) ||
+                  (a.symbol ?? "").toLowerCase().includes(q),
+              );
+            }
+            if (
+              !list.some(a => a.id === symbol) &&
+              assets.some(a => a.id === symbol)
+            ) {
+              const sel = assets.find(a => a.id === symbol)!;
+              list = [sel, ...list];
+            }
+            return list.slice(0, showAllAssets ? 30 : 20).map(a => {
+              const isActive = a.id === symbol;
+              const trades = byAsset?.find(x => x.asset === a.id)?.closed ?? 0;
+              return (
+                <button
+                  key={a.id}
+                  onClick={() => setSymbol(a.id)}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-mono border flex items-center gap-1 transition-colors ${isActive ? "bg-[#D4A843] text-black border-[#D4A843] font-medium" : "bg-[#12141A] border-white/5 text-muted-foreground hover:text-white hover:border-white/10"}`}
+                  title={`${a.id} · ${trades} trades`}
+                >
+                  {a.symbol || a.id}
+                  {tradedSet.has(a.id) && (
+                    <span className="text-[9px] opacity-60">({trades})</span>
+                  )}
+                </button>
+              );
+            });
+          })()}
+          <button
+            onClick={() => setShowAllAssets(v => !v)}
+            className={`h-7 px-2 text-[10px] rounded-md border transition-colors ${showAllAssets ? "bg-[#D4A843] text-black border-[#D4A843]" : "bg-[#12141A] border-white/5 text-muted-foreground hover:text-white"}`}
           >
-            {assets.map(a => (
-              <option key={a.id} value={a.id}>
-                {a.symbol || a.id}
-              </option>
-            ))}
-          </select>
+            {showAllAssets
+              ? "All"
+              : `Traded (${(byAsset ?? []).filter(a => a.closed + a.open > 0).length})`}
+          </button>
         </div>
-        <div className="flex-1 min-w-0 overflow-hidden">
+        <div className="flex flex-1 min-w-0 overflow-hidden">
           <PriceTicker
             data={priceData}
             symbol={assets.find(a => a.id === symbol)?.symbol ?? symbol}
           />
         </div>
-        <div className="flex items-center gap-2 self-end sm:self-center flex-wrap min-w-0 ml-auto">
-          {dataSource && (
-            <span className="text-[10px] text-muted-foreground/50 font-mono">
-              via {dataSource}
-            </span>
-          )}
-          {lastRefresh && (
-            <span className="text-xs text-muted-foreground font-mono">
-              {lastRefresh.toLocaleTimeString()}
-            </span>
-          )}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => loadAll(symbol, true)}
-            disabled={refreshing}
-            className="h-8 text-xs border-border bg-card hover:bg-secondary"
-          >
-            {refreshing ? (
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-3 border-2 border-[#D4A843] border-t-transparent rounded-full animate-spin" />
-                Refreshing
-              </span>
-            ) : (
-              "↻ Refresh"
-            )}
-          </Button>
-        </div>
       </div>
 
-      {/* ⑤ Signal Panel — compact horizontal row */}
+      {/* ⑤ Signal Panel — compact */}
       {signal && activeCandles.length > 50 && (
         <CompactSignalPanel signal={signal} candles={activeCandles} />
       )}
 
-      {/* ⑥ Intel Panels — 2×2 grid on desktop, stacked on mobile */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 min-w-0">
+      {/* ⑥ Intel Panels — 2×2 compact */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 min-w-0">
         <div className="min-w-0 overflow-hidden">
           <RegimeIndicator />
         </div>
@@ -502,7 +534,7 @@ function DashboardContent() {
         </div>
       </div>
 
-      {/* ⑦ Scalping Bias & Entry/Exit Tool */}
+      {/* ⑦ Scalping Bias & Entry/Exit Tool — compact */}
       <ScalpingToolbar
         analysis1m={analysis1m}
         analysis3m={analysis3m}
@@ -515,8 +547,8 @@ function DashboardContent() {
         activeTimeframe={activeTimeframe}
       />
 
-      {/* ⑤ Multi-TF Charts — 8 columns (2 rows on mobile, 4 on desktop) */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      {/* ⑤ Multi-TF Charts — compact 8 */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
         {[
           {
             tf: "1m" as Timeframe,
@@ -571,7 +603,7 @@ function DashboardContent() {
             key={tf}
             role="button"
             tabIndex={0}
-            className={`cursor-pointer transition-all rounded-xl ${
+            className={`cursor-pointer transition-all rounded-lg ${
               activeTimeframe === tf
                 ? "ring-1 ring-[#D4A843]/50"
                 : "hover:ring-1 hover:ring-[#D4A843]/20"
@@ -581,7 +613,7 @@ function DashboardContent() {
             <MiniChart
               candles={candles}
               label={label}
-              height={200}
+              height={140}
               showEMA={true}
               showBB={showBB}
             />

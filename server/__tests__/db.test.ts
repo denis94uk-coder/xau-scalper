@@ -312,4 +312,33 @@ describe("performance", () => {
     expect(p.totalPnlPoints).toBe(0);
     expect(p.profitFactor).toBeNull();
   });
+
+  test("a TP1_HIT is open and not a decided win", () => {
+    // Hitting the first target books a positive pnl on the row, but the
+    // remainder still trails — it must count as open, not as a resolved win.
+    const id = db.createIdea(idea());
+    db.updateIdea(id, { status: "TP1_HIT", pnl_points: 30 });
+
+    const p = db.performance("PAXGUSDT");
+    expect(p.open).toBe(1);
+    expect(p.closed).toBe(0);
+    expect(p.wins).toBe(0);
+    expect(p.losses).toBe(0);
+    expect(p.winRate).toBe(0);
+    expect(p.totalPnlPoints).toBe(0);
+  });
+
+  test("win rate excludes a TP1_HIT that later stops at breakeven", () => {
+    const id = db.createIdea(idea());
+    db.updateIdea(id, { status: "TP1_HIT", pnl_points: 30 });
+    db.updateIdea(id, { status: "STOPPED", pnl_points: -5 });
+
+    const p = db.performance("PAXGUSDT");
+    expect(p.open).toBe(0);
+    expect(p.closed).toBe(1);
+    expect(p.wins).toBe(0);
+    expect(p.losses).toBe(1);
+    expect(p.winRate).toBe(0);
+    expect(p.totalPnlPoints).toBeCloseTo(-5);
+  });
 });

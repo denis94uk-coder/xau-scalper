@@ -1,10 +1,12 @@
 export { CalendarPage } from "./CalendarPage";
 export { default as DashboardPage } from "./DashboardPage";
 export { default as ExperimentalPage } from "./ExperimentalPage";
+export { default as LsePage } from "./LsePage";
 export { PerformanceTrackerPage } from "./PerformanceTrackerPage";
 export { ResearchPage } from "./ResearchPage";
 export { RiskManagerPage } from "./RiskManagerPage";
 export { SettingsPage } from "./SettingsPage";
 export { SignalJournalPage } from "./SignalJournalPage";
 export { StrategyCarpetPage } from "./StrategyCarpetPage";
+export { default as TopTenPage } from "./TopTenPage";
 export { TradingIdeasPage } from "./TradingIdeasPage";

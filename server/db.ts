@@ -24,7 +24,13 @@ export type IdeaStatus =
   | "TP2_HIT"
   | "STOPPED"
   | "EXPIRED";
-export type IdeaSource = "engine" | "teo" | "dashboard" | "experimental";
+export type IdeaSource =
+  | "engine"
+  | "teo"
+  | "dashboard"
+  | "experimental"
+  | "top10"
+  | "lse";
 
 export interface TradingIdea {
   id: number;
@@ -365,8 +371,31 @@ export class Db {
       .all(...OPEN_STATUSES);
   }
 
-  listIdeas(opts: { asset?: string; limit?: number } = {}): TradingIdea[] {
+  listIdeas(
+    opts: {
+      asset?: string;
+      limit?: number;
+      source?: string;
+      excludeSource?: string;
+    } = {},
+  ): TradingIdea[] {
     const limit = opts.limit ?? 100;
+    if (opts.asset && opts.source) {
+      return this.raw
+        .query<TradingIdea, [string, string, number]>(
+          `SELECT * FROM trading_ideas WHERE asset = ? AND source = ?
+           ORDER BY created_at DESC LIMIT ?`,
+        )
+        .all(opts.asset, opts.source, limit);
+    }
+    if (opts.asset && opts.excludeSource) {
+      return this.raw
+        .query<TradingIdea, [string, string, number]>(
+          `SELECT * FROM trading_ideas WHERE asset = ? AND source != ?
+           ORDER BY created_at DESC LIMIT ?`,
+        )
+        .all(opts.asset, opts.excludeSource, limit);
+    }
     if (opts.asset) {
       return this.raw
         .query<TradingIdea, [string, number]>(
@@ -374,6 +403,22 @@ export class Db {
            ORDER BY created_at DESC LIMIT ?`,
         )
         .all(opts.asset, limit);
+    }
+    if (opts.source) {
+      return this.raw
+        .query<TradingIdea, [string, number]>(
+          `SELECT * FROM trading_ideas WHERE source = ?
+           ORDER BY created_at DESC LIMIT ?`,
+        )
+        .all(opts.source, limit);
+    }
+    if (opts.excludeSource) {
+      return this.raw
+        .query<TradingIdea, [string, number]>(
+          `SELECT * FROM trading_ideas WHERE source != ?
+           ORDER BY created_at DESC LIMIT ?`,
+        )
+        .all(opts.excludeSource, limit);
     }
     return this.raw
       .query<TradingIdea, [number]>(
@@ -469,6 +514,8 @@ export class Db {
     opts: {
       asset?: string;
       limit?: number;
+      source?: string;
+      excludeSource?: string;
       /** Event types to leave out — the heartbeat noise (ENGINE_RUN) can bury
        * every real event within any reasonable limit. */
       exclude?: string[];
@@ -480,6 +527,13 @@ export class Db {
     if (opts.asset) {
       where.push("asset = ?");
       params.push(opts.asset);
+    }
+    if (opts.source) {
+      where.push("source = ?");
+      params.push(opts.source);
+    } else if (opts.excludeSource) {
+      where.push("source != ?");
+      params.push(opts.excludeSource);
     }
     if (opts.exclude && opts.exclude.length > 0) {
       where.push(
@@ -498,12 +552,24 @@ export class Db {
   }
 
   /** Counts per event type. An aggregate, not a full-table read into memory. */
-  journalCounts(): Record<string, number> {
+  journalCounts(
+    opts: { source?: string; excludeSource?: string } = {},
+  ): Record<string, number> {
+    const where: string[] = [];
+    const params: string[] = [];
+    if (opts.source) {
+      where.push("source = ?");
+      params.push(opts.source);
+    } else if (opts.excludeSource) {
+      where.push("source != ?");
+      params.push(opts.excludeSource);
+    }
+    const clause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
     const rows = this.raw
-      .query<{ event_type: string; n: number }, []>(
-        `SELECT event_type, COUNT(*) AS n FROM signal_journal GROUP BY event_type`,
+      .query<{ event_type: string; n: number }, string[]>(
+        `SELECT event_type, COUNT(*) AS n FROM signal_journal ${clause} GROUP BY event_type`,
       )
-      .all();
+      .all(...params);
     return Object.fromEntries(rows.map(r => [r.event_type, r.n]));
   }
 
@@ -706,7 +772,10 @@ export class Db {
    * summing gold, BTC and LINK points produces a number with no meaning, which
    * is exactly what the Convex getPerformanceStats did.
    */
-  performance(asset: string): {
+  performance(
+    asset: string,
+    opts: { source?: string; excludeSource?: string } = {},
+  ): {
     asset: string;
     closed: number;
     open: number;
@@ -723,29 +792,38 @@ export class Db {
     currentStreak: number;
     profitFactor: number | null;
   } {
+    const sourceClause = opts.source
+      ? ` AND source = ?`
+      : opts.excludeSource
+        ? ` AND source != ?`
+        : "";
+    const sourceVal = opts.source ?? opts.excludeSource;
+    const params: string[] = sourceVal ? [asset, sourceVal] : [asset];
     const agg = this.raw
-      .query<Record<string, number | null>, [string]>(
+      .query<Record<string, number | null>, string[]>(
         `SELECT
-           COUNT(*) FILTER (WHERE status IN ('TP1_HIT','TP2_HIT','STOPPED','EXPIRED')) AS closed,
-           COUNT(*) FILTER (WHERE status IN ('ACTIVE','TP1_HIT'))                      AS open,
-           COUNT(*) FILTER (WHERE pnl_points > 0)                                      AS wins,
-           COUNT(*) FILTER (WHERE pnl_points <= 0 AND pnl_points IS NOT NULL)          AS losses,
+           COUNT(*) FILTER (WHERE status IN ('TP2_HIT','STOPPED','EXPIRED'))          AS closed,
+           COUNT(*) FILTER (WHERE status IN ('ACTIVE','TP1_HIT'))                     AS open,
+           COUNT(*) FILTER (WHERE status IN ('TP2_HIT','STOPPED','EXPIRED') AND pnl_points > 0)        AS wins,
+           COUNT(*) FILTER (WHERE status IN ('TP2_HIT','STOPPED','EXPIRED') AND pnl_points <= 0 AND pnl_points IS NOT NULL) AS losses,
            COUNT(*) FILTER (WHERE status = 'EXPIRED')                                  AS expired,
-           COALESCE(SUM(pnl_points), 0)                                                AS net,
-           COALESCE(SUM(pnl_points) FILTER (WHERE pnl_points > 0), 0)                  AS gross_win,
-           COALESCE(-SUM(pnl_points) FILTER (WHERE pnl_points <= 0), 0)                AS gross_loss
-         FROM trading_ideas WHERE asset = ?`,
+           COALESCE(SUM(pnl_points) FILTER (WHERE status IN ('TP2_HIT','STOPPED','EXPIRED')), 0) AS net,
+           COALESCE(SUM(pnl_points) FILTER (WHERE status IN ('TP2_HIT','STOPPED','EXPIRED') AND pnl_points > 0), 0)        AS gross_win,
+           COALESCE(-SUM(pnl_points) FILTER (WHERE status IN ('TP2_HIT','STOPPED','EXPIRED') AND pnl_points <= 0), 0)     AS gross_loss
+         FROM trading_ideas WHERE asset = ?${sourceClause}`,
       )
-      .get(asset)!;
+      .get(...params)!;
 
     // Streaks need the resolved sequence in order, which an aggregate cannot give.
+    // Only decided outcomes count — a TP1_HIT is still an open position whose
+    // pnl can flip to a loss when the trailing remainder stops out.
     const resolved = this.raw
-      .query<{ pnl_points: number }, [string]>(
+      .query<{ pnl_points: number }, string[]>(
         `SELECT pnl_points FROM trading_ideas
-         WHERE asset = ? AND pnl_points IS NOT NULL
+         WHERE asset = ? AND status IN ('TP2_HIT','STOPPED','EXPIRED') AND pnl_points IS NOT NULL${sourceClause}
          ORDER BY COALESCE(resolved_at, created_at)`,
       )
-      .all(asset);
+      .all(...params);
 
     let maxWinStreak = 0;
     let maxLossStreak = 0;
@@ -795,12 +873,21 @@ export class Db {
    * one instrument did. `performance()` answers the per-asset question and this
    * one deliberately does not duplicate it.
    */
-  holdingPeriods(): Array<{
+  holdingPeriods(
+    opts: { source?: string; excludeSource?: string } = {},
+  ): Array<{
     asset: string;
     start: number;
     end: number;
     won: boolean;
   }> {
+    const sourceClause = opts.source
+      ? ` AND source = ?`
+      : opts.excludeSource
+        ? ` AND source != ?`
+        : "";
+    const sourceVal = opts.source ?? opts.excludeSource;
+    const params: string[] = sourceVal ? [sourceVal] : [];
     return this.raw
       .query<
         {
@@ -809,13 +896,13 @@ export class Db {
           resolved_at: number | null;
           pnl_points: number;
         },
-        []
+        string[]
       >(
         `SELECT asset, created_at, resolved_at, pnl_points FROM trading_ideas
-         WHERE pnl_points IS NOT NULL
+         WHERE status IN ('TP2_HIT','STOPPED','EXPIRED') AND pnl_points IS NOT NULL${sourceClause}
          ORDER BY created_at`,
       )
-      .all()
+      .all(...params)
       .map(r => ({
         asset: r.asset,
         start: r.created_at,

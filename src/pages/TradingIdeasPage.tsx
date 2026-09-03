@@ -11,6 +11,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { useLive, useMutation } from "@/hooks/useLive";
 import { api, type Idea } from "@/lib/api";
+import { fmtPrice } from "@/lib/priceApi";
 
 const STATUS_COLORS: Record<string, string> = {
   ACTIVE: "bg-blue-500/20 text-blue-400 border-blue-500/30",
@@ -81,7 +82,7 @@ function JourneyTimeline({
                   {entry.event.replace(/_/g, " ")}
                 </div>
                 <div className="text-muted-foreground">
-                  {entry.price.toFixed(2)} ·{" "}
+                  {fmtPrice(entry.price)} ·{" "}
                   {new Date(entry.timestamp).toLocaleTimeString()}
                 </div>
               </div>
@@ -94,8 +95,9 @@ function JourneyTimeline({
 }
 
 export function TradingIdeasPage() {
+  // Main trading ideas — strictly engine (top10 + experimental are isolated).
   const ideas = useLive(
-    () => api.ideas({ limit: 300 }).then(r => r.ideas),
+    () => api.ideas({ limit: 300, source: "engine" }).then(r => r.ideas),
     ["ideas"],
   );
   const [deleteIdea] = useMutation((id: number) => api.deleteIdea(id));
@@ -200,7 +202,7 @@ export function TradingIdeasPage() {
           )}
         </div>
         <div className="flex gap-1 bg-[#12141A] rounded-lg p-0.5 border border-white/5">
-          {["ALL", "engine", "dashboard", "experimental"].map(s => (
+          {["ALL", "engine"].map(s => (
             <button
               key={s}
               onClick={() => setSourceFilter(s)}
@@ -289,7 +291,7 @@ export function TradingIdeasPage() {
 
                   {/* Entry price */}
                   <span className="text-sm font-mono font-medium w-20">
-                    {idea.entryPrice.toFixed(2)}
+                    {fmtPrice(idea.entryPrice)}
                   </span>
 
                   {/* Journey */}
@@ -360,7 +362,7 @@ export function TradingIdeasPage() {
                       <div>
                         <span className="text-muted-foreground">Entry</span>
                         <div className="font-mono">
-                          {idea.entryPrice.toFixed(2)}
+                          {fmtPrice(idea.entryPrice)}
                         </div>
                       </div>
                       <div>
@@ -368,18 +370,18 @@ export function TradingIdeasPage() {
                           {idea.trailingSl ? "Trailing SL" : "Stop Loss"}
                         </span>
                         <div className="font-mono text-red-400">
-                          {(idea.trailingSl ?? idea.stopLoss).toFixed(2)}
+                          {fmtPrice(idea.trailingSl ?? idea.stopLoss)}
                           {idea.trailingSl && (
                             <span className="text-orange-400 ml-1 text-[10px]">
-                              (orig: {idea.stopLoss.toFixed(2)})
+                              (orig: {fmtPrice(idea.stopLoss)})
                             </span>
                           )}
                           {!idea.trailingSl && (
                             <span className="text-muted-foreground ml-1">
                               (
-                              {Math.abs(
-                                idea.entryPrice - idea.stopLoss,
-                              ).toFixed(1)}{" "}
+                              {fmtPrice(
+                                Math.abs(idea.entryPrice - idea.stopLoss),
+                              )}{" "}
                               pts)
                             </span>
                           )}
@@ -388,7 +390,7 @@ export function TradingIdeasPage() {
                       <div>
                         <span className="text-emerald-400">TP1</span>
                         <div className="font-mono text-emerald-400">
-                          {idea.tp1.toFixed(2)}
+                          {fmtPrice(idea.tp1)}
                           <span className="text-muted-foreground ml-1">
                             R:R{" "}
                             {(
@@ -401,7 +403,7 @@ export function TradingIdeasPage() {
                       <div>
                         <span className="text-green-300">TP2</span>
                         <div className="font-mono text-green-300">
-                          {idea.tp2.toFixed(2)}
+                          {fmtPrice(idea.tp2)}
                           <span className="text-muted-foreground ml-1">
                             R:R{" "}
                             {(
@@ -454,7 +456,7 @@ export function TradingIdeasPage() {
                                 {entry.event.replace(/_/g, " ")}
                               </span>
                               <span className="font-mono">
-                                {entry.price.toFixed(2)}
+                                {fmtPrice(entry.price)}
                               </span>
                             </div>
                           ))}

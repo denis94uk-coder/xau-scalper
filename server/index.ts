@@ -26,15 +26,19 @@ import { Db } from "./db";
 import { generateSignals, monitorIdeas, recoverGap } from "./engine";
 import { publish } from "./events";
 import { executeIdea } from "./execution";
+import { updateCotPositioning } from "./intel/cotPositioning";
 import { scanLiquiditySweeps } from "./intel/liquiditySweep";
+import { updateLseCalendar } from "./intel/lseCalendar";
 import { fetchMacroData } from "./intel/macroCorrelation";
 import { updateCalendar } from "./intel/newsCalendar";
 import { recordOpenInterest } from "./intel/oiRecorder";
 import { detectMarketRegime } from "./intel/regime";
+import { generateLseSignals } from "./lse-engine";
 import { syncOnce } from "./mt5bridge";
 import { reconcileState } from "./reconciliation";
 import { RiskManager, riskConfigFromEnv } from "./risk-manager";
 import { runSelfHeal } from "./selfheal";
+import { generateTop10Signals } from "./top10";
 
 const HOST = process.env.TEO_HOST ?? "127.0.0.1";
 const PORT = Number(process.env.TEO_PORT ?? 4000);
@@ -208,12 +212,14 @@ await safely("reconcile", async () => {
   if (ghosts > 0) console.log(`[reconcile] closed ${ghosts} ghost trade(s)`);
 });
 
-/** The four intel engines, run together. One failing must not stop the rest. */
+/** The six intel engines, run together. One failing must not stop the rest. */
 async function runIntel(): Promise<void> {
   await safely("regime", () => detectMarketRegime(db));
   await safely("macro", () => fetchMacroData(db));
   await safely("news", () => updateCalendar(db));
+  await safely("lseNews", () => updateLseCalendar(db));
   await safely("sweeps", () => scanLiquiditySweeps(db));
+  await safely("cot", () => updateCotPositioning(db));
   publish("regime");
 }
 
@@ -256,9 +262,71 @@ async function runMt5(): Promise<void> {
   });
 }
 
+async function runTop10(): Promise<void> {
+  if (!config.get().engine.autoTradingEnabled) return;
+  const before = new Set(
+    db
+      .openIdeas()
+      .filter(i => i.source === "top10")
+      .map(i => i.id),
+  );
+  await generateTop10Signals({
+    db,
+    assets: enabledAssets(config.get()).map(toAssetDefinition),
+    riskManager: risk,
+    limits: { maxRisk: config.get().risk.maxRisk },
+    correlationOptions: {
+      prior: config.get().risk.assumedCorrelation,
+      minSamples: config.get().risk.minCorrelationSamples,
+    },
+  });
+  // Top10 is paper-tracked only (no MT5 execution) — separate book for comparison
+  const after = db
+    .openIdeas()
+    .filter(i => i.source === "top10" && !before.has(i.id));
+  if (after.length > 0)
+    console.log(
+      `[top10] ${after.length} new idea(s): ${after.map(i => `${i.asset} ${i.direction}`).join(", ")}`,
+    );
+}
+
+/**
+ * The LSE book — its own engine, timer and accounting, deliberately apart
+ * from the main engine and top10. The engine builds its own universe from
+ * the `lse:<id>` specs (only instruments with a qualified strategy trade),
+ * so no asset injection happens here.
+ */
+async function runLse(): Promise<void> {
+  if (!config.get().engine.autoTradingEnabled) return;
+  const before = new Set(
+    db
+      .openIdeas()
+      .filter(i => i.source === "lse")
+      .map(i => i.id),
+  );
+  await generateLseSignals({
+    db,
+    riskManager: risk,
+    limits: { maxRisk: config.get().risk.maxRisk },
+    correlationOptions: {
+      prior: config.get().risk.assumedCorrelation,
+      minSamples: config.get().risk.minCorrelationSamples,
+    },
+  });
+  const after = db
+    .openIdeas()
+    .filter(i => i.source === "lse" && !before.has(i.id));
+  if (after.length > 0)
+    console.log(
+      `[lse] ${after.length} new idea(s): ${after.map(i => `${i.asset} ${i.direction}`).join(", ")}`,
+    );
+}
+
 // Prime candles and evaluate immediately rather than idling for a full cycle.
 await safely("mt5", runMt5);
 await safely("signals", runSignals);
+await safely("top10", runTop10);
+await safely("lse", runLse);
 await safely("monitor", () => monitorIdeas(engineDeps()));
 await runIntel();
 
@@ -301,6 +369,14 @@ function scheduleTimers(cfg: AppConfig): void {
     ),
     setInterval(
       () => void safely("signals", runSignals),
+      cfg.engine.signalSeconds * 1000,
+    ),
+    setInterval(
+      () => void safely("top10", runTop10),
+      cfg.engine.signalSeconds * 1000,
+    ),
+    setInterval(
+      () => void safely("lse", runLse),
       cfg.engine.signalSeconds * 1000,
     ),
     setInterval(() => void runIntel(), cfg.engine.intelSeconds * 1000),
