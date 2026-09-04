@@ -371,11 +371,12 @@ async function main() {
   }
 
   if (adopt && Object.keys(store).length) {
-    // also mirror FTSE→UK100 and GER→DE30 aliases so both ids trade identically
+    // Mirror FTSE→UK100 so the alias id stays compatible (DE30 was removed
+    // as GER's alias — one id per underlying, no mirrors).
     if (store["FTSE"] && !store["UK100"]) store["UK100"] = { ...store["FTSE"] };
     if (store["UK100"] && !store["FTSE"]) store["FTSE"] = { ...store["UK100"] };
-    if (store["GER"] && !store["DE30"]) store["DE30"] = { ...store["GER"] };
-    if (store["DE30"] && !store["GER"]) store["GER"] = { ...store["DE30"] };
+    // Drop a stale DE30 mirror if a previous run wrote one.
+    delete store["DE30"];
     db.setSetting(STRATEGIES_KEY, store);
     console.log(
       `\nAdopted ${Object.keys(store).length} entries to ${STRATEGIES_KEY}`,

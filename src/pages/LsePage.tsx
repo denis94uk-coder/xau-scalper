@@ -7,7 +7,7 @@ import {
 import { PriceTicker } from "@/components/dashboard/PriceTicker";
 import { useLive } from "@/hooks/useLive";
 import { type AssetPerformance, api } from "@/lib/api";
-import { fetchGoldPrice, type PriceData } from "@/lib/priceApi";
+import { fetchGoldPrice, fmtPrice, type PriceData } from "@/lib/priceApi";
 
 function usePrice(symbol: string) {
   const [data, setData] = useState<PriceData | null>(null);
@@ -57,6 +57,71 @@ function LseTicker({ symbol }: { symbol: string }) {
       <div className="h-[52px] rounded bg-white/[0.02] border border-white/5 animate-pulse" />
     );
   return <PriceTicker data={data} symbol={symbol} />;
+}
+
+/** Honest age label for a vault bar — staleness stays visible. */
+function barAge(timeSec: number | null): string {
+  if (timeSec === null) return "no data";
+  const s = Math.max(0, Math.floor(Date.now() / 1000) - timeSec);
+  if (s < 90) return "live";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+/** Vault-price ticker strip: the venue can't quote these instruments, so the
+ * latest stored vault bar stands in — labeled vault with its age. */
+function LsePriceStrip({
+  prices,
+}: {
+  prices:
+    | Array<{
+        id: string;
+        symbol: string;
+        price: number | null;
+        time: number | null;
+        interval: string | null;
+      }>
+    | undefined;
+}) {
+  return (
+    <div className="rounded-lg bg-[#12141A] border border-white/5 p-2">
+      <div className="flex items-center gap-2 px-1 mb-2">
+        <span className="text-[10px] text-muted-foreground uppercase tracking-wider">
+          Vault tickers
+        </span>
+        <span
+          className="text-[10px] text-muted-foreground ml-auto"
+          title="Venue feed cannot quote these instruments; latest stored vault bar"
+        >
+          vault · age shown
+        </span>
+      </div>
+      {!prices ? (
+        <div className="text-xs text-muted-foreground text-center py-3">
+          Loading prices…
+        </div>
+      ) : (
+        <div className="flex flex-wrap gap-1.5">
+          {prices.map(p => (
+            <div
+              key={p.id}
+              className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-mono border bg-white/[0.02] border-white/5"
+              title={`${p.symbol} · ${p.interval ?? "—"} bar${p.time ? ` · ${new Date(p.time * 1000).toLocaleString()}` : ""}`}
+            >
+              <span className="font-bold text-white">{p.id}</span>
+              <span className={p.price === null ? "text-muted-foreground" : ""}>
+                {p.price === null ? "—" : fmtPrice(p.price)}
+              </span>
+              <span className="text-[9px] text-muted-foreground">
+                {barAge(p.time)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function LseAssetCard({
@@ -125,6 +190,11 @@ export default function LsePage() {
   // the ones with trades. Each strategy fires ideas for its own asset only.
   const universe = useLive(
     () => api.lseUniverse().then(r => r.assets),
+    ["ideas", "engine"],
+  );
+  // Vault tickers — venue can't quote LSE instruments.
+  const vaultPrices = useLive(
+    () => api.lsePrices().then(r => r.prices),
     ["ideas", "engine"],
   );
 
@@ -466,7 +536,8 @@ export default function LsePage() {
 
       {/* Calendar + Tickers */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-2">
-        <div className="lg:col-span-2">
+        <div className="lg:col-span-2 space-y-2">
+          <LsePriceStrip prices={vaultPrices} />
           <DailyPnlCalendar
             byDay={byDay}
             ideas={

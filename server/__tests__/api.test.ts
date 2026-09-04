@@ -1140,3 +1140,40 @@ describe("strategy carpet", () => {
     );
   });
 });
+
+describe("lse", () => {
+  test("universe lists every instrument with its own strategy status", async () => {
+    const b = await body<{
+      assets: Array<{
+        id: string;
+        symbol: string;
+        aliasOf: string | null;
+        strategy: { family: string; interval: string } | null;
+        qualified: boolean;
+        trading: boolean;
+        reason: string;
+      }>;
+    }>(call("/api/lse/universe"));
+    // DE30 deleted — one id per underlying.
+    expect(b.assets.map(a => a.id)).not.toContain("DE30");
+    expect(b.assets.find(a => a.id === "UK100")?.aliasOf).toBe("FTSE");
+    for (const a of b.assets) {
+      expect(typeof a.reason).toBe("string");
+      if (a.trading) expect(a.qualified).toBe(true);
+    }
+  });
+
+  test("prices serve the latest vault bar per instrument", async () => {
+    const b = await body<{
+      prices: Array<{
+        id: string;
+        symbol: string;
+        price: number | null;
+        time: number | null;
+        interval: string | null;
+      }>;
+    }>(call("/api/lse/prices"));
+    expect(b.prices.map(p => p.id)).not.toContain("DE30");
+    expect(b.prices.find(p => p.id === "XAUUSD")?.symbol).toBe("XAU/USD");
+  });
+});

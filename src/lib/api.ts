@@ -583,6 +583,18 @@ export const api = {
 
   lseUniverse: () => get<{ assets: LseAssetStatus[] }>("/api/lse/universe"),
 
+  /** Latest vault bar per LSE instrument (venue can't quote them). */
+  lsePrices: () =>
+    get<{
+      prices: Array<{
+        id: string;
+        symbol: string;
+        price: number | null;
+        time: number | null;
+        interval: string | null;
+      }>;
+    }>("/api/lse/prices"),
+
   candles: (asset: string, interval = "5m", limit = 200) =>
     get<{ asset: string; interval: string; candles: Candle[] }>(
       `/api/candles${q({ asset, interval, limit })}`,

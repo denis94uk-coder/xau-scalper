@@ -170,9 +170,8 @@ describe("strategyIsQualified", () => {
 });
 
 describe("aliases", () => {
-  test("UK100 mirrors FTSE, DE30 mirrors GER, others stand alone", () => {
+  test("UK100 mirrors FTSE, others stand alone", () => {
     expect(lseCanonicalId("UK100")).toBe("FTSE");
-    expect(lseCanonicalId("DE30")).toBe("GER");
     expect(lseCanonicalId("FTSE")).toBe("FTSE");
     expect(lseCanonicalId("NAS100")).toBe("NAS100");
   });

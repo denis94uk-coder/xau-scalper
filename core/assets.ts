@@ -389,9 +389,9 @@ export const LSE_UNIVERSE: Array<{
   // majors expose, while FTSE is the common name for UK100.
   { id: "FTSE", lse: "UK100/GBP", digits: 1, spreadBps: 3.0 },
   { id: "GER", lse: "DE30/EUR", digits: 1, spreadBps: 3.0 },
-  // Canonical ids for cross-tool compatibility (same instrument, alias id)
+  // Canonical id for cross-tool compatibility (same instrument, alias id).
+  // NOTE: DE30 was removed as GER's alias — one id per underlying, no mirrors.
   { id: "UK100", lse: "UK100/GBP", digits: 1, spreadBps: 3.0 },
-  { id: "DE30", lse: "DE30/EUR", digits: 1, spreadBps: 3.0 },
 ];
 
 /**

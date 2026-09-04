@@ -11,8 +11,7 @@
  *     ONLY its own discovered edge — the family, config and interval the
  *     data qualified for that instrument, never a book-wide template. An
  *     entry that fails the strict gate (p > 0.05, relaxed, failed verdict)
- *     does not trade. Aliases (UK100→FTSE, DE30→GER) mirror the canonical
- *     instrument and never trade themselves.
+ *     does not trade. The UK100 alias mirrors FTSE and never trades itself.
  *   * GOLD fallback: XAUUSD hand-qualified 1h breakout (20y, PF 1.24,
  *     p = 0.006, 4/4 folds) until discovery adopts its own entry.
  *   * GOLD: breakout family on 1h — the family/interval the data chose.
@@ -119,13 +118,13 @@ export interface LseStrategy {
 const STRATEGIES_KEY = "lse:strategies";
 
 /**
- * Alias → canonical instrument. FTSE/UK100 are the same index (UK100/GBP),
- * GER/DE30 the same (DE30/EUR): one underlying, one trader. Without this the
- * book opens two identical positions on the same market move.
+ * Alias → canonical instrument. UK100 is the FTSE 100 (UK100/GBP): one
+ * underlying, one trader. Without this the book opens two identical
+ * positions on the same market move. (DE30 was removed as GER's alias —
+ * one id per underlying, no mirrors.)
  */
 export const LSE_CANONICAL: Record<string, string> = {
   UK100: "FTSE",
-  DE30: "GER",
 };
 
 /** Canonical id an instrument trades under (itself, unless an alias). */
@@ -288,7 +287,7 @@ function lseUniverse(db: Db): AssetDefinition[] {
   const assets: AssetDefinition[] = [];
   const seenUnderlying = new Set<string>();
   for (const inst of LSE_UNIVERSE) {
-    // One trader per underlying: FTSE before UK100, GER before DE30.
+    // One trader per underlying: FTSE before UK100.
     if (seenUnderlying.has(inst.lse)) continue;
     if (!lseStrategyFor(db, inst.id)) continue;
     seenUnderlying.add(inst.lse);

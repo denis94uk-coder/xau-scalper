@@ -11,7 +11,12 @@
  * token check here first — see the README.
  */
 
-import { ASSETS, DEFAULT_ASSET_ID, type ScoringModel } from "../core/assets";
+import {
+  ASSETS,
+  DEFAULT_ASSET_ID,
+  LSE_UNIVERSE,
+  type ScoringModel,
+} from "../core/assets";
 import type { AssetConfig } from "../core/config";
 import {
   defaultConfig,
@@ -532,6 +537,31 @@ export async function handleApi(
   // trading. Aliases mirror the canonical instrument, never themselves.
   if (path === "/api/lse/universe" && req.method === "GET") {
     return json({ assets: lseUniverseStatus(db) });
+  }
+
+  // ─── LSE vault prices ───
+  // Latest stored vault bar per instrument (newest across 1m/15m/30m/1h).
+  // The venue feed cannot quote these instruments, so the vault is the
+  // book's price source — labeled as such, with the bar time so staleness
+  // (weekends, closed sessions) is visible, never hidden.
+  if (path === "/api/lse/prices" && req.method === "GET") {
+    const prices = LSE_UNIVERSE.map(inst => {
+      let best: { price: number; time: number; interval: string } | null = null;
+      for (const interval of ["1m", "15m", "30m", "1h"]) {
+        const bar = db.getCandles(inst.id, interval, 1).at(-1);
+        if (bar && (!best || bar.time > best.time)) {
+          best = { price: bar.close, time: bar.time, interval };
+        }
+      }
+      return {
+        id: inst.id,
+        symbol: inst.lse,
+        price: best?.price ?? null,
+        time: best?.time ?? null,
+        interval: best?.interval ?? null,
+      };
+    });
+    return json({ prices });
   }
 
   // ─── Candles ───
