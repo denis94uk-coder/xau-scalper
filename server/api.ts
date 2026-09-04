@@ -29,6 +29,7 @@ import { type AppEvent, publish, subscribe } from "./events";
 import { fetchCandles, fetchTickers } from "./market";
 import { findExportDir } from "./mt5";
 import { status as mt5Status, syncOnce } from "./mt5bridge";
+import { lseUniverseStatus } from "./lse-engine";
 import { cancelRun, getRun, listRuns, startRun } from "./research";
 import type { RiskManager } from "./risk-manager";
 import { buildSymbolUniverse, fetchUsdtPairs } from "./symbols";
@@ -467,6 +468,14 @@ export async function handleApi(
         significance: assessSignificance(effectiveWins, effective, 50),
       },
     });
+  }
+
+  // ─── LSE universe ───
+  // Every instrument under the LSE book with its INDEPENDENT strategy:
+  // family@interval qualified for that instrument alone, or why it is not
+  // trading. Aliases mirror the canonical instrument, never themselves.
+  if (path === "/api/lse/universe" && req.method === "GET") {
+    return json({ assets: lseUniverseStatus(db) });
   }
 
   // ─── Candles ───

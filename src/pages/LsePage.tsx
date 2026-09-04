@@ -59,6 +59,57 @@ function LseTicker({ symbol }: { symbol: string }) {
   return <PriceTicker data={data} symbol={symbol} />;
 }
 
+function LseAssetCard({
+  asset,
+}: {
+  asset: import("@/lib/api").LseAssetStatus;
+}) {
+  const status = asset.trading
+    ? { label: "TRADING", cls: "bg-emerald-500/15 text-emerald-400" }
+    : asset.aliasOf
+      ? { label: "ALIAS", cls: "bg-yellow-500/15 text-yellow-400" }
+      : asset.strategy
+        ? { label: "BLOCKED", cls: "bg-red-500/15 text-red-400" }
+        : { label: "NO EDGE", cls: "bg-white/5 text-muted-foreground" };
+  return (
+    <div
+      className="rounded-md border border-white/5 bg-white/[0.02] p-1.5 min-w-0"
+      title={asset.reason}
+    >
+      <div className="flex items-center gap-1.5">
+        <span className="text-[11px] font-mono font-bold truncate">
+          {asset.id}
+        </span>
+        <span className="text-[10px] text-muted-foreground font-mono truncate">
+          {asset.symbol}
+        </span>
+        <span
+          className={`text-[9px] px-1 py-0.5 rounded font-mono ml-auto shrink-0 ${status.cls}`}
+        >
+          {status.label}
+        </span>
+      </div>
+      <div className="text-[10px] font-mono text-muted-foreground truncate mt-0.5">
+        {asset.strategy
+          ? `${asset.strategy.family}@${asset.strategy.interval}${asset.strategy.confirm ? `+${asset.strategy.confirm}` : ""}`
+          : asset.aliasOf
+            ? `mirrors ${asset.aliasOf}`
+            : "no strategy"}
+      </div>
+      <div className="text-[10px] font-mono flex items-center gap-1 mt-0.5">
+        {asset.strategy && (
+          <span className="text-muted-foreground">
+            p={asset.strategy.adjustedP.toExponential(1)}
+          </span>
+        )}
+        {asset.openIdeas > 0 && (
+          <span className="text-blue-400 ml-auto">{asset.openIdeas} open</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function LsePage() {
   const [selectedTicker, setSelectedTicker] = useState<string>("PAXGUSDT");
   // Strictly the LSE book — isolated from the main engine and top10
@@ -69,6 +120,12 @@ export default function LsePage() {
   const ideas = useLive(
     () => api.ideas({ limit: 500, source: "lse" }).then(r => r.ideas),
     ["ideas"],
+  );
+  // Every instrument under the book with its INDEPENDENT strategy — not just
+  // the ones with trades. Each strategy fires ideas for its own asset only.
+  const universe = useLive(
+    () => api.lseUniverse().then(r => r.assets),
+    ["ideas", "engine"],
   );
 
   const traded = useMemo(
@@ -159,12 +216,12 @@ export default function LsePage() {
           <h1 className="text-sm font-bold flex items-center gap-2">
             LSE{" "}
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-mono">
-              BREAKOUT ENGINE · 1h · 1% daily
+              PER-ASSET ENGINES · 1% daily
             </span>
           </h1>
           <p className="text-[10px] text-muted-foreground truncate">
-            Real-market instruments (XAU/USD vault data) — gold 1h breakout, 20y
-            qualified edge · COT + calendar hedges · isolated book
+            Real-market instruments (vault data) — each asset trades only its
+            own qualified strategy · COT + calendar hedges · isolated book
           </p>
         </div>
         <div className="ml-auto flex items-center gap-1.5 text-[10px] font-mono">
@@ -231,6 +288,30 @@ export default function LsePage() {
           {dailyTarget.pct >= 0 ? "+" : ""}
           {dailyTarget.pct.toFixed(2)}% / 1.00%
         </span>
+      </div>
+
+      {/* Assets under LSE — each with its independent strategy */}
+      <div className="rounded-lg bg-[#12141A] border border-white/5 p-2">
+        <div className="flex items-center gap-2 px-1 mb-2">
+          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">
+            Assets under LSE · independent strategy each
+          </span>
+          <span className="text-[10px] text-muted-foreground ml-auto font-mono">
+            {(universe ?? []).filter(a => a.trading).length} trading ·{" "}
+            {universe?.length ?? "…"} instruments
+          </span>
+        </div>
+        {universe ? (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-1.5">
+            {universe.map(a => (
+              <LseAssetCard key={a.id} asset={a} />
+            ))}
+          </div>
+        ) : (
+          <div className="text-xs text-muted-foreground text-center py-4">
+            Loading instruments…
+          </div>
+        )}
       </div>
 
       {/* Universe pills */}

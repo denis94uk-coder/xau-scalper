@@ -904,8 +904,14 @@ export function lseMonitoredAssets(db: Db): AssetDefinition[] {
   const open = db.openIdeas().filter(i => i.source === "lse");
   if (open.length === 0) return [];
   const out: AssetDefinition[] = [];
+  const seenUnderlying = new Set<string>();
   for (const inst of LSE_UNIVERSE) {
-    if (!open.some(i => i.asset === inst.id)) continue;
+    const holdsOpen = open.some(i => i.asset === inst.id);
+    // One pricer per underlying — except an alias holding legacy open
+    // positions must stay monitored until they resolve, or they orphan.
+    if (seenUnderlying.has(inst.lse) && !holdsOpen) continue;
+    if (!holdsOpen) continue;
+    seenUnderlying.add(inst.lse);
     const meta = db.getSetting<{
       symbol: string;
       digits: number;

@@ -7,10 +7,14 @@
  * signal, or a journal row with the main engine or top10.
  *
  * What lives here:
- *   * UNIVERSE: LSE instruments with a QUALIFIED discovery config. Only
- *     XAUUSD qualifies today (gold 1h breakout, 20y backtest, 4/4 folds);
- *     the rest are candidates until research promotes them — no config,
- *     no trades, no exceptions.
+ *   * PER-ASSET STRATEGIES (`lse:strategies` store): each instrument trades
+ *     ONLY its own discovered edge — the family, config and interval the
+ *     data qualified for that instrument, never a book-wide template. An
+ *     entry that fails the strict gate (p > 0.05, relaxed, failed verdict)
+ *     does not trade. Aliases (UK100→FTSE, DE30→GER) mirror the canonical
+ *     instrument and never trade themselves.
+ *   * GOLD fallback: XAUUSD hand-qualified 1h breakout (20y, PF 1.24,
+ *     p = 0.006, 4/4 folds) until discovery adopts its own entry.
  *   * GOLD: breakout family on 1h — the family/interval the data chose.
  *     Reversion on real gold produced nothing.
  *   * HEDGES: COT crowd gate (never join a ≥90th/≤10th percentile fund
@@ -106,9 +110,40 @@ export interface LseStrategy {
   confirm: string | null;
   adjustedP: number;
   adoptedAt: number;
+  /** Set when adopted via --adopt-relaxed: best-effort, not an edge. */
+  relaxed?: boolean;
+  /** Discovery verdict at adoption ("qualified" or the failure mode). */
+  verdict?: string;
 }
 
 const STRATEGIES_KEY = "lse:strategies";
+
+/**
+ * Alias → canonical instrument. FTSE/UK100 are the same index (UK100/GBP),
+ * GER/DE30 the same (DE30/EUR): one underlying, one trader. Without this the
+ * book opens two identical positions on the same market move.
+ */
+export const LSE_CANONICAL: Record<string, string> = {
+  UK100: "FTSE",
+  DE30: "GER",
+};
+
+/** Canonical id an instrument trades under (itself, unless an alias). */
+export function lseCanonicalId(assetId: string): string {
+  return LSE_CANONICAL[assetId] ?? assetId;
+}
+
+/**
+ * Strict gate: a strategy trades its instrument only if it is a qualified
+ * edge — Šidák-adjusted p ≤ 0.05 and no relaxed/failed verdict. Legacy store
+ * entries (adopted before verdict tagging) pass on p alone; anything adopted
+ * via --adopt-relaxed never trades, no matter its p.
+ */
+export function strategyIsQualified(s: LseStrategy): boolean {
+  if (s.relaxed) return false;
+  if (s.verdict !== undefined && s.verdict !== "qualified") return false;
+  return (s.adjustedP ?? 1) <= 0.05;
+}
 
 /** Interval → its confirmation interval (the next one up). */
 export function confirmFor(interval: string): string | null {
@@ -138,14 +173,20 @@ export function lseRegimeBlocks(
 }
 
 /**
- * The strategy an instrument trades. A discovered entry wins when present;
- * otherwise the hand-qualified fallbacks above apply; an instrument with
- * neither has no edge and must not trade.
+ * The strategy an instrument trades: its OWN discovered edge, gated strict.
+ * A discovered entry wins when present AND qualified; otherwise the
+ * hand-qualified fallbacks apply; an instrument with neither — or with an
+ * unqualified entry — has no edge and must not trade. A strategy NEVER
+ * applies to another instrument: callers always look up by their own id and
+ * open ideas only under that same id.
  */
 export function lseStrategyFor(db: Db, assetId: string): LseStrategy | null {
   const store = db.getSetting<Record<string, LseStrategy>>(STRATEGIES_KEY);
   const discovered = store?.[assetId];
-  if (discovered?.config) return discovered;
+  if (discovered?.config) {
+    if (!strategyIsQualified(discovered)) return null;
+    return discovered;
+  }
   const qualified = LSE_STRATEGIES[assetId];
   if (!qualified) return null;
   return {
@@ -157,11 +198,93 @@ export function lseStrategyFor(db: Db, assetId: string): LseStrategy | null {
   };
 }
 
-/** Universe: LSE instruments that HAVE a strategy (discovered or qualified). */
+/** One row of the "assets under LSE" board: instrument + its own edge. */
+export interface LseAssetStatus {
+  id: string;
+  symbol: string;
+  digits: number;
+  /** Null for canonical instruments; the canonical id for aliases. */
+  aliasOf: string | null;
+  strategy: {
+    family: Family;
+    interval: string;
+    confirm: string | null;
+    adjustedP: number;
+    verdict?: string;
+    relaxed?: boolean;
+    adoptedAt: number;
+  } | null;
+  qualified: boolean;
+  /** Actually trading: qualified, canonical, and vault spec present. */
+  trading: boolean;
+  hasSpec: boolean;
+  openIdeas: number;
+  reason: string;
+}
+
+/**
+ * Every LSE instrument with its independent strategy status — the data
+ * behind the LSE page's asset board. An instrument trades only its own
+ * strategy; aliases mirror the canonical instrument's status and never
+ * trade themselves.
+ */
+export function lseUniverseStatus(db: Db): LseAssetStatus[] {
+  const store = db.getSetting<Record<string, LseStrategy>>(STRATEGIES_KEY);
+  const open = db.openIdeas().filter(i => i.source === "lse");
+  const seenUnderlying = new Set<string>();
+  return LSE_UNIVERSE.map(inst => {
+    const aliasOf = LSE_CANONICAL[inst.id] ?? null;
+    const raw = store?.[inst.id];
+    const strategy = raw?.config
+      ? {
+          family: raw.family,
+          interval: raw.interval,
+          confirm: raw.confirm,
+          adjustedP: raw.adjustedP,
+          verdict: raw.verdict,
+          relaxed: raw.relaxed,
+          adoptedAt: raw.adoptedAt,
+        }
+      : null;
+    const qualified =
+      strategy !== null && strategyIsQualified(raw as LseStrategy);
+    const hasSpec = db.getSetting(`lse:${inst.id}`) !== null;
+    const isDuplicate = seenUnderlying.has(inst.lse);
+    seenUnderlying.add(inst.lse);
+    const trading = qualified && !isDuplicate;
+    const openIdeas = open.filter(i => i.asset === inst.id).length;
+    const reason = isDuplicate
+      ? `Alias of ${lseCanonicalId(inst.id)} — mirrors it, never trades itself`
+      : !strategy
+        ? "No discovered edge yet — research earns a place, nothing else"
+        : !qualified
+          ? raw?.relaxed
+            ? "Relaxed best-effort, not a qualified edge — blocked"
+            : `Unqualified (p=${raw?.adjustedP}) — blocked`
+          : `Qualified ${strategy.family}@${strategy.interval} (p=${strategy.adjustedP})`;
+    return {
+      id: inst.id,
+      symbol: inst.lse,
+      digits: inst.digits,
+      aliasOf,
+      strategy,
+      qualified,
+      trading,
+      hasSpec,
+      openIdeas,
+      reason,
+    };
+  });
+}
+/** Universe: instruments with a qualified strategy of their own. */
 function lseUniverse(db: Db): AssetDefinition[] {
   const assets: AssetDefinition[] = [];
+  const seenUnderlying = new Set<string>();
   for (const inst of LSE_UNIVERSE) {
+    // One trader per underlying: FTSE before UK100, GER before DE30.
+    if (seenUnderlying.has(inst.lse)) continue;
     if (!lseStrategyFor(db, inst.id)) continue;
+    seenUnderlying.add(inst.lse);
     const meta = db.getSetting<{
       symbol: string;
       digits: number;

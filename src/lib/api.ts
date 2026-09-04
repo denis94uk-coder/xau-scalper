@@ -143,6 +143,28 @@ export interface PortfolioPosition {
   weight?: number;
 }
 
+/** One instrument under the LSE book with its independent strategy status. */
+export interface LseAssetStatus {
+  id: string;
+  symbol: string;
+  digits: number;
+  aliasOf: string | null;
+  strategy: {
+    family: string;
+    interval: string;
+    confirm: string | null;
+    adjustedP: number;
+    verdict?: string;
+    relaxed?: boolean;
+    adoptedAt: number;
+  } | null;
+  qualified: boolean;
+  trading: boolean;
+  hasSpec: boolean;
+  openIdeas: number;
+  reason: string;
+}
+
 export interface PairCorrelation {
   a: string;
   b: string;
@@ -558,6 +580,8 @@ export const api = {
 
   portfolio: (opts: { source?: string; excludeSource?: string } = {}) =>
     get<Portfolio>(`/api/portfolio${q(opts)}`),
+
+  lseUniverse: () => get<{ assets: LseAssetStatus[] }>("/api/lse/universe"),
 
   candles: (asset: string, interval = "5m", limit = 200) =>
     get<{ asset: string; interval: string; candles: Candle[] }>(
