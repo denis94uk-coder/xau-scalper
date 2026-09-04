@@ -204,4 +204,24 @@ describe("aliases", () => {
     expect(nas100.qualified).toBe(false);
     db.close();
   });
+
+  test("a blocked store entry is reported as BLOCKED, not missing", () => {
+    const db = new Db(":memory:");
+    db.setSetting("lse:strategies", {
+      NAS100: {
+        family: "reversion",
+        config: DEFAULT_STRATEGY_CONFIG,
+        interval: "1h",
+        confirm: null,
+        adjustedP: 0.9999,
+        adoptedAt: 1,
+      },
+    });
+    const nas100 = lseUniverseStatus(db).find(r => r.id === "NAS100")!;
+    expect(nas100.strategy).not.toBeNull();
+    expect(nas100.strategy!.family).toBe("reversion");
+    expect(nas100.trading).toBe(false);
+    expect(nas100.reason).toContain("blocked");
+    db.close();
+  });
 });

@@ -234,34 +234,41 @@ export function lseUniverseStatus(db: Db): LseAssetStatus[] {
   const seenUnderlying = new Set<string>();
   return LSE_UNIVERSE.map(inst => {
     const aliasOf = LSE_CANONICAL[inst.id] ?? null;
+    // Resolve through the same gate the signal path uses, so the board can
+    // never disagree with it — including the hand-qualified fallbacks.
+    // Blocked entries are still reported (with qualified=false) so the board
+    // shows BLOCKED rather than pretending no research exists.
+    const effective = lseStrategyFor(db, inst.id);
     const raw = store?.[inst.id];
-    const strategy = raw?.config
+    const shown = raw?.config ? raw : effective;
+    const strategy = shown
       ? {
-          family: raw.family,
-          interval: raw.interval,
-          confirm: raw.confirm,
-          adjustedP: raw.adjustedP,
-          verdict: raw.verdict,
-          relaxed: raw.relaxed,
-          adoptedAt: raw.adoptedAt,
+          family: shown.family,
+          interval: shown.interval,
+          confirm: shown.confirm,
+          adjustedP: shown.adjustedP,
+          verdict: shown.verdict,
+          relaxed: shown.relaxed,
+          adoptedAt: shown.adoptedAt,
         }
       : null;
-    const qualified =
-      strategy !== null && strategyIsQualified(raw as LseStrategy);
+    const qualified = effective !== null;
     const hasSpec = db.getSetting(`lse:${inst.id}`) !== null;
     const isDuplicate = seenUnderlying.has(inst.lse);
     seenUnderlying.add(inst.lse);
     const trading = qualified && !isDuplicate;
     const openIdeas = open.filter(i => i.asset === inst.id).length;
+    // strategy and qualified stand together, except blocked entries which
+    // report their research with qualified=false.
     const reason = isDuplicate
       ? `Alias of ${lseCanonicalId(inst.id)} — mirrors it, never trades itself`
-      : !strategy
-        ? "No discovered edge yet — research earns a place, nothing else"
-        : !qualified
-          ? raw?.relaxed
+      : qualified && strategy
+        ? `Qualified ${strategy.family}@${strategy.interval} (p=${strategy.adjustedP})${raw ? "" : " · hand-qualified fallback"}`
+        : strategy
+          ? strategy.relaxed
             ? "Relaxed best-effort, not a qualified edge — blocked"
-            : `Unqualified (p=${raw?.adjustedP}) — blocked`
-          : `Qualified ${strategy.family}@${strategy.interval} (p=${strategy.adjustedP})`;
+            : `Unqualified (p=${strategy.adjustedP}) — blocked`
+          : "No discovered edge yet — research earns a place, nothing else";
     return {
       id: inst.id,
       symbol: inst.lse,
