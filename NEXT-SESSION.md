@@ -270,3 +270,17 @@ pre-cleanup). All pushed to `jcode` remote
 - Open question from last check: main `engine` book holds few/no open
   positions — everything open sits in satellite books.
 - UI requires FULL browser reload (new bundle) — in-app clicks keep old JS.
+
+## 9. Frontier discovery + adoption (10y window, seed 42, 800+400)
+- General sweep over the six non-trading assets, 10y (`--days 3650`) per
+  operator direction (modern economy only). Full log: `tmp/tune-frontier.log`.
+- SURVIVORS (strict): XAGUSD momentum@1h (PF 1.76, 165tr, p=0.0075 raw →
+  p=0.00015 refined, 3/4 folds) and BTCUSD momentum@1h (PF 1.22→1.28,
+  284tr, p=0.0385→0.0093 refined, 4/4 folds). Full-history verify: XAG
+  PF 1.27/1620tr, BTC PF 1.29/1033tr.
+- NULLS (honest, not adopted): EURUSD, GBPUSD, USDJPY, SPX500 — all p≈1.0;
+  full-history nets 0/−1/+10/+3176 confirm noise.
+- ADOPTED both (operator choice) from carpet pins 149/151 into
+  `lse:strategies` — no relaxed flags. Book now trades
+  XAUUSD + XAGUSD + BTCUSD + FTSE + GER; NAS100 blocked.
+- DB backup pre-adoption: `tmp/teo.db.backup-20260904-adopt-xag-btc`.
