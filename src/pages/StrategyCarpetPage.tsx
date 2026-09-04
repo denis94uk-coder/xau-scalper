@@ -21,12 +21,22 @@ import { api, type DiscoveredStrategy } from "@/lib/api";
  * windows, the walk-forward folds and the search-size correction. A strategy
  * on this page is evidence, not a guarantee — but everything NOT on this page
  * failed a check that was designed to be hard to pass.
+ *
+ * Topped by the live framework: every signal engine with the strategies it
+ * runs right now, read live from the server — adding a strategy or asset
+ * anywhere in the app shows up here on the next fetch.
  */
 export function StrategyCarpetPage() {
   const [busyId, setBusyId] = useState<number | null>(null);
   const carpet = useLive(
     () => api.discoveredStrategies().then(r => r.strategies),
     ["research", "hello"],
+  );
+  // Live framework — refetches on engine/config/research activity, so newly
+  // added strategies and assets appear without a code change here.
+  const framework = useLive(
+    () => api.engines().then(r => r.engines),
+    ["research", "ideas", "engine", "config"],
   );
 
   if (!carpet) {
@@ -87,21 +97,167 @@ export function StrategyCarpetPage() {
     }
   };
 
+  // Pins grouped per engine — a new pin lands in its engine's group
+  // automatically via its run-id prefix.
+  const groups = groupPins(carpet);
+
   return (
     <div className="max-w-[1100px] mx-auto p-3 sm:p-4 space-y-4">
       <Header count={carpet.length} />
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-        {carpet.map(s => (
-          <StrategyCard
-            key={s.id}
-            strategy={s}
-            busy={busyId === s.id}
-            onAdopt={() => adopt(s)}
-            onRemove={() => remove(s)}
-          />
-        ))}
-      </div>
+      <FrameworkBoard framework={framework} />
+      {groups.map(
+        g =>
+          g.pins.length > 0 && (
+            <section key={g.id} className="space-y-3">
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-semibold">{g.label}</h2>
+                <Badge variant="outline" className="text-[10px] font-mono">
+                  {g.pins.length} pinned
+                </Badge>
+                <span className="text-[11px] text-muted-foreground">
+                  {g.hint}
+                </span>
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                {g.pins.map(s => (
+                  <StrategyCard
+                    key={s.id}
+                    strategy={s}
+                    busy={busyId === s.id}
+                    onAdopt={() => adopt(s)}
+                    onRemove={() => remove(s)}
+                  />
+                ))}
+              </div>
+            </section>
+          ),
+      )}
     </div>
+  );
+}
+
+/** Research pins bucketed by owning engine (run-id prefix), in engine order. */
+function groupPins(carpet: DiscoveredStrategy[]): Array<{
+  id: string;
+  label: string;
+  hint: string;
+  pins: DiscoveredStrategy[];
+}> {
+  const bucket = (s: DiscoveredStrategy): string => {
+    const r = s.runId ?? "";
+    if (r.startsWith("lse-")) return "lse";
+    if (r.startsWith("top10-")) return "top10";
+    return "engine";
+  };
+  const defs = [
+    {
+      id: "engine",
+      label: "Main Engine",
+      hint: "batch discoveries on the crypto book",
+    },
+    {
+      id: "top10",
+      label: "Top 10",
+      hint: "top-10 universe discoveries",
+    },
+    {
+      id: "lse",
+      label: "LSE",
+      hint: "vault-data discoveries, per-asset edges",
+    },
+  ];
+  return defs.map(d => ({
+    ...d,
+    pins: carpet.filter(s => bucket(s) === d.id),
+  }));
+}
+
+function FrameworkBoard({
+  framework,
+}: {
+  framework:
+    | Array<{
+        id: string;
+        label: string;
+        template?: string;
+        strategies: Array<{
+          asset: string;
+          family: string | null;
+          status: string;
+        }>;
+      }>
+    | undefined;
+}) {
+  return (
+    <section className="space-y-2">
+      <div className="flex items-center gap-2">
+        <h2 className="text-sm font-semibold">Live framework</h2>
+        <Badge
+          variant="outline"
+          className="text-[10px] font-mono text-emerald-500 border-emerald-500/30"
+        >
+          {framework
+            ? `${framework.reduce((s, e) => s + e.strategies.filter(t => t.status === "trading").length, 0)} firing`
+            : "loading…"}
+        </Badge>
+        <span className="text-[11px] text-muted-foreground">
+          every engine, right now — updates itself when strategies are added
+        </span>
+      </div>
+      {!framework ? (
+        <Card>
+          <CardContent className="py-6 text-center text-xs text-muted-foreground">
+            Loading live strategies…
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {framework.map(e => (
+            <Card key={e.id}>
+              <CardHeader className="pb-2">
+                <div className="flex items-center gap-2">
+                  <CardTitle className="text-sm">{e.label}</CardTitle>
+                  <Badge variant="secondary" className="text-[10px] font-mono">
+                    {e.strategies.filter(t => t.status === "trading").length}/
+                    {e.strategies.length}
+                  </Badge>
+                  {e.template && (
+                    <span className="text-[10px] text-muted-foreground font-mono truncate">
+                      {e.template}
+                    </span>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent className="pb-3">
+                {e.strategies.length === 0 ? (
+                  <p className="text-[11px] text-muted-foreground">
+                    No strategies running.
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-1">
+                    {e.strategies.map(t => (
+                      <span
+                        key={`${e.id}:${t.asset}`}
+                        className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${
+                          t.status === "trading"
+                            ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+                            : t.status === "blocked"
+                              ? "bg-red-500/10 border-red-500/20 text-red-400"
+                              : "bg-white/5 border-white/10 text-muted-foreground"
+                        }`}
+                        title={`${t.asset} · ${t.family ?? "no edge yet"} · ${t.status}`}
+                      >
+                        {t.asset} · {t.family ?? "no edge"}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 

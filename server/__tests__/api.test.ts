@@ -1164,6 +1164,37 @@ describe("strategy carpet", () => {
 });
 
 describe("lse", () => {
+  test("engines expose the live framework for the carpet board", async () => {
+    const b = await body<{
+      engines: Array<{
+        id: string;
+        label: string;
+        strategies: Array<{
+          asset: string;
+          family: string;
+          status: string;
+        }>;
+      }>;
+    }>(call("/api/engines"));
+    expect(b.engines.map(e => e.id)).toEqual([
+      "engine",
+      "experimental",
+      "top10",
+      "lse",
+    ]);
+    // Main book follows the live config, not a snapshot.
+    expect(
+      b.engines.find(e => e.id === "engine")!.strategies.length,
+    ).toBeGreaterThan(0);
+    // LSE group mirrors the universe endpoint one-to-one on ids.
+    const uni = await body<{ assets: Array<{ id: string }> }>(
+      call("/api/lse/universe"),
+    );
+    const lseIds = new Set(
+      b.engines!.find(e => e.id === "lse")!.strategies.map(s => s.asset),
+    );
+    for (const u of uni.assets) expect(lseIds.has(u.id)).toBe(true);
+  });
   test("universe lists every instrument with its own strategy status", async () => {
     const b = await body<{
       assets: Array<{

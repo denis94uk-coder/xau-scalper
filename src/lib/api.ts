@@ -595,6 +595,21 @@ export const api = {
       }>;
     }>("/api/lse/prices"),
 
+  /** Live strategy framework: every engine with the strategies it runs. */
+  engines: () =>
+    get<{
+      engines: Array<{
+        id: string;
+        label: string;
+        template?: string;
+        strategies: Array<{
+          asset: string;
+          family: string | null;
+          status: string;
+        }>;
+      }>;
+    }>("/api/engines"),
+
   candles: (asset: string, interval = "5m", limit = 200) =>
     get<{ asset: string; interval: string; candles: Candle[] }>(
       `/api/candles${q({ asset, interval, limit })}`,

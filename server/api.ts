@@ -35,6 +35,7 @@ import { fetchCandles, fetchTickers } from "./market";
 import { findExportDir } from "./mt5";
 import { status as mt5Status, syncOnce } from "./mt5bridge";
 import { lseUniverseStatus } from "./lse-engine";
+import { top10Universe } from "./top10";
 import { cancelRun, getRun, listRuns, startRun } from "./research";
 import type { RiskManager } from "./risk-manager";
 import { buildSymbolUniverse, fetchUsdtPairs } from "./symbols";
@@ -574,6 +575,53 @@ export async function handleApi(
     return json({ prices });
   }
 
+  // ─── Engines ───
+  // The live framework: every signal engine with the strategies it runs
+  // right now. Read live on each call (config + LSE store + top-10
+  // universe), so boards built on it can never go stale when a strategy or
+  // asset is added — the next fetch simply includes it.
+  if (path === "/api/engines" && req.method === "GET") {
+    const main = enabledAssets(cfg).map(a => ({
+      asset: a.id,
+      family: a.model ?? "combined",
+      status: "trading",
+    }));
+    const goldOn = cfg.assets.some(a => a.id === "PAXGUSDT" && a.enabled);
+    return json({
+      engines: [
+        { id: "engine", label: "Crypto Engine", strategies: main },
+        {
+          id: "experimental",
+          label: "Experimental XAU",
+          strategies: goldOn
+            ? [{ asset: "PAXGUSDT", family: "confluence", status: "trading" }]
+            : [],
+        },
+        {
+          id: "top10",
+          label: "Top 10",
+          template: "reversion 15m+30m confirm",
+          strategies: top10Universe(db).map(id => ({
+            asset: id,
+            family: "reversion 15m+30m",
+            status: "trading",
+          })),
+        },
+        {
+          id: "lse",
+          label: "LSE",
+          strategies: lseUniverseStatus(db).map(s => ({
+            asset: s.id,
+            family: s.strategy
+              ? `${s.strategy.family}@${s.strategy.interval}`
+              : null,
+            status: s.trading ? "trading" : s.strategy ? "blocked" : "idle",
+          })),
+        },
+      ],
+    });
+  }
+
   // ─── Candles ───
   if (path === "/api/candles") {
     const asset = assetParam(url);
@@ -956,6 +1004,8 @@ export async function handleApi(
         }
         throw e;
       }
+      // Config changed — framework boards and asset lists refetch.
+      publish("config");
       return json({
         adopted: true,
         assetId: targetId,
@@ -1168,6 +1218,8 @@ export async function handleApi(
         }
         throw e;
       }
+      // Config changed — framework boards and asset lists refetch.
+      publish("config");
       return json({
         adopted: true,
         assetId: targetId,
