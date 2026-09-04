@@ -235,7 +235,19 @@ async function main() {
   const seedBase = Number(flag("seed") ?? 42);
 
   const db = new Db();
-  const universe = ["NAS100", "FTSE", "GER"];
+  // Decided books first (NAS100 blocked, FTSE/GER trading), then the
+  // unresearched frontier. Narrow with --only ASSET1,ASSET2.
+  const universe = [
+    "NAS100",
+    "FTSE",
+    "GER",
+    "XAGUSD",
+    "EURUSD",
+    "GBPUSD",
+    "USDJPY",
+    "SPX500",
+    "BTCUSD",
+  ];
   const targets = only ? universe.filter(u => only.includes(u)) : universe;
 
   console.log(
