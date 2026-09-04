@@ -226,6 +226,28 @@ describe("performance", () => {
     expect(row.significance.summary).toContain("too few");
   });
 
+  test("books outside the main registry appear with their own assets", async () => {
+    // XAUUSD is not a configured asset, but the LSE book must still report it.
+    const id = db.createIdea({
+      asset: "XAUUSD",
+      direction: "LONG",
+      source: "lse",
+      entryPrice: 4400,
+      stopLoss: 4350,
+      tp1: 4450,
+      tp2: 4500,
+      spotPrice: 4400,
+    });
+    db.updateIdea(id, { status: "TP2_HIT", pnl_points: 100 });
+    const b = await body<{
+      byAsset: Array<{ asset: string; closed: number; totalPnlPoints: number }>;
+    }>(call("/api/performance?source=lse"));
+    const row = b.byAsset.find(r => r.asset === "XAUUSD");
+    expect(row).toBeDefined();
+    expect(row!.closed).toBe(1);
+    expect(row!.totalPnlPoints).toBe(100);
+  });
+
   test("an asset with no trades still reports a verdict rather than omitting it", async () => {
     const b = await body<{
       byAsset: Array<{ significance: { verdict: string } }>;
@@ -1154,9 +1176,10 @@ describe("lse", () => {
         reason: string;
       }>;
     }>(call("/api/lse/universe"));
-    // DE30 deleted — one id per underlying.
+    // UK100 and DE30 deleted — one id per underlying, no alias mirrors.
     expect(b.assets.map(a => a.id)).not.toContain("DE30");
-    expect(b.assets.find(a => a.id === "UK100")?.aliasOf).toBe("FTSE");
+    expect(b.assets.map(a => a.id)).not.toContain("UK100");
+    expect(b.assets.find(a => a.id === "FTSE")).toBeDefined();
     for (const a of b.assets) {
       expect(typeof a.reason).toBe("string");
       if (a.trading) expect(a.qualified).toBe(true);

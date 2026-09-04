@@ -387,11 +387,9 @@ export const LSE_UNIVERSE: Array<{
   // ── Index expansion: FTSE 100 (UK100/GBP) + DAX (DE30/EUR) ──
   // GER is the DAX; stored id "GER" matches the brokercfd name most MT5
   // majors expose, while FTSE is the common name for UK100.
+  // One id per underlying — UK100 and DE30 were removed as alias mirrors.
   { id: "FTSE", lse: "UK100/GBP", digits: 1, spreadBps: 3.0 },
   { id: "GER", lse: "DE30/EUR", digits: 1, spreadBps: 3.0 },
-  // Canonical id for cross-tool compatibility (same instrument, alias id).
-  // NOTE: DE30 was removed as GER's alias — one id per underlying, no mirrors.
-  { id: "UK100", lse: "UK100/GBP", digits: 1, spreadBps: 3.0 },
 ];
 
 /**

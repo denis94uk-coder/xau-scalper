@@ -830,6 +830,30 @@ export class Db {
    * summing gold, BTC and LINK points produces a number with no meaning, which
    * is exactly what the Convex getPerformanceStats did.
    */
+  /**
+   * Distinct assets holding ideas in a book. Books whose instruments live
+   * outside the main registry (LSE) would otherwise vanish from
+   * /api/performance, which iterates configured assets only.
+   */
+  ideaAssets(opts: { source?: string; excludeSource?: string } = {}): string[] {
+    const where: string[] = [];
+    const params: string[] = [];
+    if (opts.source) {
+      where.push("source = ?");
+      params.push(opts.source);
+    } else if (opts.excludeSource) {
+      where.push("source != ?");
+      params.push(opts.excludeSource);
+    }
+    const clause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+    return this.raw
+      .query<{ asset: string }, string[]>(
+        `SELECT DISTINCT asset FROM trading_ideas ${clause} ORDER BY asset`,
+      )
+      .all(...params)
+      .map(r => r.asset);
+  }
+
   performance(
     asset: string,
     opts: { source?: string; excludeSource?: string } = {},

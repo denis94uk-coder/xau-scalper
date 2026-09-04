@@ -371,11 +371,9 @@ async function main() {
   }
 
   if (adopt && Object.keys(store).length) {
-    // Mirror FTSE→UK100 so the alias id stays compatible (DE30 was removed
-    // as GER's alias — one id per underlying, no mirrors).
-    if (store["FTSE"] && !store["UK100"]) store["UK100"] = { ...store["FTSE"] };
-    if (store["UK100"] && !store["FTSE"]) store["FTSE"] = { ...store["UK100"] };
-    // Drop a stale DE30 mirror if a previous run wrote one.
+    // No alias mirrors — one id per underlying. Drop stale mirrors if a
+    // previous run wrote them (UK100→FTSE, DE30→GER).
+    delete store["UK100"];
     delete store["DE30"];
     db.setSetting(STRATEGIES_KEY, store);
     console.log(

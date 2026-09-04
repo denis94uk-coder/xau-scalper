@@ -11,7 +11,7 @@
  *     ONLY its own discovered edge — the family, config and interval the
  *     data qualified for that instrument, never a book-wide template. An
  *     entry that fails the strict gate (p > 0.05, relaxed, failed verdict)
- *     does not trade. The UK100 alias mirrors FTSE and never trades itself.
+ *     does not trade. One id per underlying — no alias mirrors.
  *   * GOLD fallback: XAUUSD hand-qualified 1h breakout (20y, PF 1.24,
  *     p = 0.006, 4/4 folds) until discovery adopts its own entry.
  *   * GOLD: breakout family on 1h — the family/interval the data chose.
@@ -118,21 +118,6 @@ export interface LseStrategy {
 const STRATEGIES_KEY = "lse:strategies";
 
 /**
- * Alias → canonical instrument. UK100 is the FTSE 100 (UK100/GBP): one
- * underlying, one trader. Without this the book opens two identical
- * positions on the same market move. (DE30 was removed as GER's alias —
- * one id per underlying, no mirrors.)
- */
-export const LSE_CANONICAL: Record<string, string> = {
-  UK100: "FTSE",
-};
-
-/** Canonical id an instrument trades under (itself, unless an alias). */
-export function lseCanonicalId(assetId: string): string {
-  return LSE_CANONICAL[assetId] ?? assetId;
-}
-
-/**
  * Strict gate: a strategy trades its instrument only if it is a qualified
  * edge — Šidák-adjusted p ≤ 0.05 and no relaxed/failed verdict. Legacy store
  * entries (adopted before verdict tagging) pass on p alone; anything adopted
@@ -223,16 +208,13 @@ export interface LseAssetStatus {
 
 /**
  * Every LSE instrument with its independent strategy status — the data
- * behind the LSE page's asset board. An instrument trades only its own
- * strategy; aliases mirror the canonical instrument's status and never
- * trade themselves.
+ * behind the LSE page's asset board. One id per underlying, no aliases:
+ * an instrument trades only its own qualified strategy.
  */
 export function lseUniverseStatus(db: Db): LseAssetStatus[] {
   const store = db.getSetting<Record<string, LseStrategy>>(STRATEGIES_KEY);
   const open = db.openIdeas().filter(i => i.source === "lse");
-  const seenUnderlying = new Set<string>();
   return LSE_UNIVERSE.map(inst => {
-    const aliasOf = LSE_CANONICAL[inst.id] ?? null;
     // Resolve through the same gate the signal path uses, so the board can
     // never disagree with it — including the hand-qualified fallbacks.
     // Blocked entries are still reported (with qualified=false) so the board
@@ -253,15 +235,12 @@ export function lseUniverseStatus(db: Db): LseAssetStatus[] {
       : null;
     const qualified = effective !== null;
     const hasSpec = db.getSetting(`lse:${inst.id}`) !== null;
-    const isDuplicate = seenUnderlying.has(inst.lse);
-    seenUnderlying.add(inst.lse);
-    const trading = qualified && !isDuplicate;
+    const trading = qualified;
     const openIdeas = open.filter(i => i.asset === inst.id).length;
     // strategy and qualified stand together, except blocked entries which
     // report their research with qualified=false.
-    const reason = isDuplicate
-      ? `Alias of ${lseCanonicalId(inst.id)} — mirrors it, never trades itself`
-      : qualified && strategy
+    const reason =
+      qualified && strategy
         ? `Qualified ${strategy.family}@${strategy.interval} (p=${strategy.adjustedP})${raw ? "" : " · hand-qualified fallback"}`
         : strategy
           ? strategy.relaxed
@@ -272,7 +251,7 @@ export function lseUniverseStatus(db: Db): LseAssetStatus[] {
       id: inst.id,
       symbol: inst.lse,
       digits: inst.digits,
-      aliasOf,
+      aliasOf: null,
       strategy,
       qualified,
       trading,
@@ -285,12 +264,8 @@ export function lseUniverseStatus(db: Db): LseAssetStatus[] {
 /** Universe: instruments with a qualified strategy of their own. */
 function lseUniverse(db: Db): AssetDefinition[] {
   const assets: AssetDefinition[] = [];
-  const seenUnderlying = new Set<string>();
   for (const inst of LSE_UNIVERSE) {
-    // One trader per underlying: FTSE before UK100.
-    if (seenUnderlying.has(inst.lse)) continue;
     if (!lseStrategyFor(db, inst.id)) continue;
-    seenUnderlying.add(inst.lse);
     const meta = db.getSetting<{
       symbol: string;
       digits: number;

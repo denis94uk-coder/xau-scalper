@@ -369,8 +369,18 @@ export async function handleApi(
       return bad("use either source or excludeSource, not both", 400);
     }
     // Per asset always. A combined total would sum points across instruments,
-    // which is not a meaningful quantity.
-    const assets = asset ? [asset] : enabledAssets(cfg).map(a => a.id);
+    // which is not a meaningful quantity. Union configured assets with every
+    // asset holding ideas in the requested book — LSE instruments live
+    // outside the main registry and would otherwise never appear.
+    const configured = asset ? [asset] : enabledAssets(cfg).map(a => a.id);
+    const assets = asset
+      ? configured
+      : [
+          ...new Set([
+            ...configured,
+            ...db.ideaAssets({ source, excludeSource }),
+          ]),
+        ];
     return json({
       byAsset: assets.map(a => {
         const perf = db.performance(a, { source, excludeSource });

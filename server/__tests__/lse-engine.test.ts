@@ -9,7 +9,6 @@ import { DEFAULT_STRATEGY_CONFIG } from "../../core/strategy";
 import { Db } from "../db";
 import {
   confirmFor,
-  lseCanonicalId,
   lseRegimeBlocks,
   lseStrategyFor,
   lseUniverseStatus,
@@ -169,14 +168,18 @@ describe("strategyIsQualified", () => {
   });
 });
 
-describe("aliases", () => {
-  test("UK100 mirrors FTSE, others stand alone", () => {
-    expect(lseCanonicalId("UK100")).toBe("FTSE");
-    expect(lseCanonicalId("FTSE")).toBe("FTSE");
-    expect(lseCanonicalId("NAS100")).toBe("NAS100");
+describe("no alias mirrors", () => {
+  test("one id per underlying — UK100 and DE30 are gone", () => {
+    const db = new Db(":memory:");
+    const ids = lseUniverseStatus(db).map(r => r.id);
+    expect(ids).not.toContain("UK100");
+    expect(ids).not.toContain("DE30");
+    expect(ids).toContain("FTSE");
+    expect(ids).toContain("GER");
+    db.close();
   });
 
-  test("universe status marks aliases non-trading with a reason", () => {
+  test("universe status reports a qualified entry as trading", () => {
     const db = new Db(":memory:");
     db.setSetting("lse:strategies", {
       FTSE: {
@@ -191,12 +194,8 @@ describe("aliases", () => {
     });
     const rows = lseUniverseStatus(db);
     const ftse = rows.find(r => r.id === "FTSE")!;
-    const uk100 = rows.find(r => r.id === "UK100")!;
     expect(ftse.trading).toBe(true);
     expect(ftse.aliasOf).toBeNull();
-    expect(uk100.trading).toBe(false);
-    expect(uk100.aliasOf).toBe("FTSE");
-    expect(uk100.reason).toContain("FTSE");
     // NAS100's unqualified entry is reported, not trading.
     const nas100 = rows.find(r => r.id === "NAS100")!;
     expect(nas100.trading).toBe(false);
