@@ -380,10 +380,14 @@ export function validateConfig(input: unknown): ValidationIssue[] {
         }
         seen.add(a.id);
       }
-      if (a.dataSource !== "binance" && a.dataSource !== "mt5") {
+      if (
+        a.dataSource !== "binance" &&
+        a.dataSource !== "mt5" &&
+        a.dataSource !== "lse"
+      ) {
         issues.push({
           path: `${p}.dataSource`,
-          message: 'must be "binance" or "mt5"',
+          message: 'must be "binance", "mt5" or "lse"',
         });
       }
       if (a.model !== undefined) {

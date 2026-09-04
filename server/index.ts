@@ -175,6 +175,15 @@ console.log(`
   Settings   http://${HOST}:${PORT}/settings — everything is editable there
   Feed       public market data (no account, no key)
 `);
+if (HOST !== "127.0.0.1" && HOST !== "localhost" && HOST !== "::1") {
+  // The API has no auth (see api.ts header) — a LAN bind exposes mutating
+  // endpoints to the whole network. Loud warning, not a crash: phone-on-LAN
+  // is a supported setup, but it must be a conscious choice.
+  console.warn(
+    `[security] TEO_HOST=${HOST} binds beyond loopback — the API has NO auth. ` +
+      `Anyone on the network can change config/trades. Bind 127.0.0.1 unless you need LAN access.`,
+  );
+}
 
 /**
  * Engine dependencies built from the CURRENT configuration.
@@ -220,7 +229,9 @@ async function runIntel(): Promise<void> {
   await safely("lseNews", () => updateLseCalendar(db));
   await safely("sweeps", () => scanLiquiditySweeps(db));
   await safely("cot", () => updateCotPositioning(db));
-  publish("regime");
+  await safely("regime-publish", async () => {
+    publish("regime");
+  });
 }
 
 /**

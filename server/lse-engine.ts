@@ -190,16 +190,22 @@ function lseOpenExposures(db: Db): Exposure[] {
 }
 
 function dailyPnlPercent(db: Db, source: string): number {
+  // UTC midnight — must match RiskManager.utcMidnight/todayKey, otherwise the
+  // daily breaker resets in a different window than the kill-switch on
+  // non-UTC hosts.
   const start = new Date();
-  start.setHours(0, 0, 0, 0);
+  start.setUTCHours(0, 0, 0, 0);
   const rows = db.raw
     .query<{ pnl_points: number; entry_price: number }, [number, string]>(
       `SELECT pnl_points, entry_price FROM trading_ideas WHERE source = ? AND status IN ('TP2_HIT','STOPPED','EXPIRED') AND resolved_at >= ? AND pnl_points IS NOT NULL`,
     )
     .all(start.getTime(), source) as any[];
   let pct = 0;
-  for (const r of rows)
-    if (r.entry_price) pct += (r.pnl_points / r.entry_price) * 100;
+  for (const r of rows) {
+    if (!Number.isFinite(r.entry_price) || r.entry_price <= 0) continue;
+    if (!Number.isFinite(r.pnl_points)) continue;
+    pct += (r.pnl_points / r.entry_price) * 100;
+  }
   return pct;
 }
 

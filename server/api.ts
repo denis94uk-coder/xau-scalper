@@ -513,6 +513,24 @@ export async function handleApi(
       if (body.direction !== "LONG" && body.direction !== "SHORT") {
         return bad("direction must be LONG or SHORT");
       }
+      if (!(entryPrice > 0)) return bad("entryPrice must be > 0", 422);
+      if (!(lotSize > 0)) return bad("lotSize must be > 0", 422);
+      if (!Number.isFinite(stopLoss) || !Number.isFinite(takeProfit)) {
+        return bad("stopLoss and takeProfit must be finite numbers");
+      }
+      // Refuse an inverted SL/TP ladder — same guard as the ideas path.
+      // Manual trades carry a single TP, so check direction geometry directly
+      // (ladderIsSane requires tp2 > tp1 and would reject every equal pair).
+      const manualSane =
+        body.direction === "LONG"
+          ? stopLoss < entryPrice && takeProfit > entryPrice
+          : stopLoss > entryPrice && takeProfit < entryPrice;
+      if (!manualSane) {
+        return bad(
+          `inverted SL/TP geometry: SL ${stopLoss} | TP ${takeProfit} must point away from entry ${entryPrice} for ${body.direction}`,
+          422,
+        );
+      }
       const asset = (body.asset as string) ?? DEFAULT_ASSET_ID;
       if (!findAsset(asset)) return bad(`unknown asset "${asset}"`, 404);
 
@@ -549,6 +567,7 @@ export async function handleApi(
       if (body instanceof Response) return body;
       const exitPrice = num(body, "exitPrice");
       if (exitPrice instanceof Response) return exitPrice;
+      if (!(exitPrice > 0)) return bad("exitPrice must be > 0", 422);
       // P&L is derived server-side from the stored entry — see db.closeManualTrade.
       db.closeManualTrade(id, exitPrice);
       publish("trades");

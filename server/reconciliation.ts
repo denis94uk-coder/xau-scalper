@@ -80,7 +80,7 @@ export async function reconcileState(deps: EngineDeps): Promise<number> {
       // ── Ghost trade: current price is definitively past the stop loss ────────
       // For a LONG, price being below SL right now means it had to pass through
       // SL at some point. Same logic mirrored for SHORT.
-      const slBreached = isLong ? price < effectiveSL : price > effectiveSL;
+      const slBreached = isLong ? price <= effectiveSL : price >= effectiveSL;
       if (slBreached) {
         const pnl = r(
           isLong
@@ -116,7 +116,7 @@ export async function reconcileState(deps: EngineDeps): Promise<number> {
       // ── TP2 cleared: current price is definitively beyond the second target ──
       // If price is currently past TP2, TP2 must have been touched at some
       // point, so we book the full target regardless of current status.
-      const tp2Cleared = isLong ? price > idea.tp2 : price < idea.tp2;
+      const tp2Cleared = isLong ? price >= idea.tp2 : price <= idea.tp2;
       if (tp2Cleared) {
         const pnl = r(
           isLong ? idea.tp2 - idea.entry_price : idea.entry_price - idea.tp2,
