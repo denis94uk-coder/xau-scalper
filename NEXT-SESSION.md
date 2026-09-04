@@ -162,3 +162,111 @@ bun run test && bun run typecheck && bun run check
 
 Expect: clean tree at `36b0269`, 373 TS tests pass, 104 Python tests pass, no lint
 errors, latest CI success. If all of that holds, go straight to Item 1.
+
+---
+
+# SESSION LOG — 2026-09-04 (audit → journal rescues → go-live reliability)
+
+Backup before everything: branch+tag `backup/pre-audit-20260903-225317`
+(intact). DB rescue dump: `tmp/teo.db.backup-20260904-journal-rescue` (875M,
+pre-cleanup). All pushed to `jcode` remote
+(`https://github.com/denis94uk-coder/Jcode-xau-scalper.git`, branch `main`).
+
+## 1. End-to-end audit + critical fixes (`83c7a54`)
+- `scripts/lse-per-asset-tune.ts`: RELAXED fallback adopted non-significant /
+  failed-walk-forward strategies to the live store under plain `--adopt`.
+  Now requires explicit `--adopt --adopt-relaxed`, tags entries
+  `relaxed`+`verdict`. Fixed `sanitizeCandles` (off-by-one median, close-only
+  check → close/high/low true median + loud warnings).
+- `core/config.ts`: validator rejected legal `dataSource: "lse"`.
+- `server/api.ts`: manual-trade creation had no range/geometry checks (now
+  `entryPrice/lotSize/exitPrice > 0` + directional SL/TP, 422 on inversion).
+- `server/reconciliation.ts`: strict `<`/`>` left price-exactly-at-level
+  ghosts open forever (now `<=`/`>=`).
+- `server/lse-engine.ts` + `server/top10.ts`: daily breaker used LOCAL
+  midnight vs RiskManager UTC (now UTC) + NaN/Infinity `entry_price` guard.
+- `src/components/ErrorBoundary.tsx`: full `error.stack` rendered to users
+  (now message-only in prod, stack in DEV).
+- `server/index.ts`: loud `[security]` warning on non-loopback bind;
+  `publish("regime")` moved inside `safely()`.
+- Downgraded non-issues with evidence: no SQL injection (all bound), no CORS
+  headers at all, path traversal mitigated, no hardcoded secrets. Open item:
+  secrets once committed in git history still need rotation by operator.
+
+## 2. Same-numbers-across-books (`cde7898`)
+- Root cause: `TradingIdeasPage` fetched per-`source` but never declared
+  `source` in `useLive` deps; router reuses the instance across
+  `/ideas`→`/top10/ideas`→`/lse/ideas`, so every book showed the first-loaded
+  book. Fixed with `[source]` dep. Server/DB filtering verified correct.
+- Lesson learned twice: the server serves prebuilt `dist/` — **frontend
+  fixes are invisible until `vite build` reruns AND the browser takes the new
+  shell** (SPA clicks never refetch index.html; SW kept the old bundle
+  alive). Bumped SW `v1`→`v2` to force migration.
+
+## 3. Journal corruption rescue (300k bogus rows)
+- Sep 3, 21:15–21:28: first LSE vault-monitor run replayed an unbounded
+  vault fetch with no resolved-guard → 300,007 duplicate `SL_HIT` rows for
+  ideas 291/292/297 (~400/sec). `e359261` fixed the loop 1 min later; rows
+  stayed and poisoned every journal number (SL Hits showed 300,258 vs 137
+  real signals).
+- Deleted 300,006 bogus `SL_HIT` + 3 `TP1_HIT` dupes (+3 journey dupes),
+  kept 291's one legitimate scratch exit. 292/297 correctly remain ACTIVE
+  (false stops on garbage data). Journal: 489,559 → 189,602 rows.
+- Hardened: LSE monitor loop tracks refreshed state; `applyPrice` exits now
+  carry `source: idea.source` (LSE/top10 exits previously inflated engine
+  counts); `/api/journal/counts` allowlist extended to top10/lse.
+
+## 4. EXP journal zeros
+- Causes: exits logged as `engine` (fixed in §3), `generateExperimentalSignal`
+  never wrote `ENGINE_RUN` (heartbeat added), 188 history rows reattributed
+  to `experimental` by idea-book join. EXP now reads ~138 signals / 65 TP /
+  89 SL / ticking runs. "Signals" (136) is a row count incl. 36 legacy
+  duplicate signal rows for the same 100 ideas.
+
+## 5. Server restarts (operator-approved)
+- Old server (Sep 3 21:26, no `--watch`) replaced twice to activate fixes:
+  `kill <pid>` (graceful, WAL checkpoint) + `bun ./server/index.ts`
+  (direct binary — the `bun run` wrapper intermittently fails in this shell
+  with `CouldntReadCurrentDirectory`). Same pattern if needed again.
+- NOTE: `bun run` wrapper broken in the agent shell only; direct
+  `./node_modules/.bin/tsc|vite|biome` + `bun test` all work.
+
+## 6. Performance Daily/Total % (`cde7898`)
+- Performance page grid leads with Daily P&L % (local midnight, same rule as
+  Ideas + calendar) and Total P&L %, both honoring asset+source filters.
+
+## 7. LSE strict per-asset book (`5de6175`, `09e5265`)
+- New `GET /api/lse/universe` + LSE page "Assets under LSE" board (12
+  instruments, strategy/p/status/open each). Live: XAUUSD breakout@1h,
+  FTSE + GER reversion@1h TRADING; NAS100 BLOCKED (p≈1.0, was live);
+  UK100→FTSE, DE30→GER ALIAS mirrors; rest NO EDGE.
+- `strategyIsQualified` gate in `lseStrategyFor` (p≤0.05, no relaxed/failed
+  verdict); one-trader-per-underlying in signal + monitor universes (legacy
+  alias positions stay monitored). 9 new tests.
+
+## 8. Go-live reliability pass (`0807118`, 613→620 tests green)
+- Backend: one-book `/api/portfolio` (positions+correlations+evidence share
+  the filter); monitor covers disabled-asset orphans (registry fallback +
+  warn); reconciliation covers LSE via vault bars; `applyPrice` re-reads the
+  row (concurrent-tick double-exits closed); prune/intel/midnight timers
+  guarded; signal health fails when all assets fail; `/ideas/open` +
+  `/journal/counts` honor/validate filters. New `reconciliation.test.ts` (4)
+  + API filter tests (3).
+- Frontend: `++x%` signs fixed; TP1 legs no longer counted closed;
+  null-PnL rows never phantom losses; `%` sums no longer labeled `pts`
+  (Calendar/Top10/LSE); PF null → `∞` (not `0.00`); Performance cards honor
+  the source toggle (derived from filtered view); R:R + entryPrice guards;
+  EXP ideas server-side source filter; no silent asset substitution;
+  ticker sub-cent precision; BID/ASK/SPREAD marked indicative*; RM $ labels.
+- Repo: 5 wrongly-tracked `tmp/` files untracked (stay on disk).
+- Deliberately deferred: scratch-0-as-loss (moves all win rates — operator
+  call), shared risk kill-switch across books, top10-vs-performance win-rate
+  definitions, unknown-param 400s, source-file/dep deletions (dead list
+  ready: framer-motion, 8 components, 9 scripts — separate pass).
+
+## Live state at log time
+- Server on new code, health OK, 13 open (2 exp + 4 LSE + 5 top10 + engine).
+  Books pure: engine 131 / top10 93 / lse 5 / experimental 102.
+- Open question from last check: main `engine` book holds few/no open
+  positions — everything open sits in satellite books.
+- UI requires FULL browser reload (new bundle) — in-app clicks keep old JS.
