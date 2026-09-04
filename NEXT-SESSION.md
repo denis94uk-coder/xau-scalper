@@ -284,3 +284,10 @@ pre-cleanup). All pushed to `jcode` remote
   `lse:strategies` — no relaxed flags. Book now trades
   XAUUSD + XAGUSD + BTCUSD + FTSE + GER; NAS100 blocked.
 - DB backup pre-adoption: `tmp/teo.db.backup-20260904-adopt-xag-btc`.
+
+## 10. FTSE/GER clean re-check (10y sanitized, seed 42)
+- Log: `tmp/tune-ftse-ger-recheck.log`. FTSE: 0 qualified (relaxed only,
+  p≈1.0; full-history PF 1.00, net −303 — dead flat). GER: live
+  reversion@1h not reproduced; NEW momentum@30m qualified (PF 1.78, 242tr,
+  p=0.032, 3/4 folds; carpet pin 153; full-history PF 1.14, net +18282).
+- OPERATOR DECISION: change nothing — both live edges stay as-is.
