@@ -103,7 +103,6 @@ export function DailyPnlCalendar({
                 className={`font-mono text-xs px-1.5 py-0.5 rounded ${monthPnl >= 0 ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400"}`}
               >
                 {monthPnl >= 0 ? "+" : ""}
-                {monthPnl >= 0 ? "+" : ""}
                 {monthPnl.toFixed(2)}% · {monthTrades} trades
               </span>
             ) : (
@@ -119,7 +118,6 @@ export function DailyPnlCalendar({
               }
             >
               {yearPrefix} YTD: {yearPnl >= 0 ? "+" : ""}
-              {yearPnl >= 0 ? "+" : ""}
               {yearPnl.toFixed(2)}%
             </span>
             <span>·</span>
@@ -215,7 +213,6 @@ export function DailyPnlCalendar({
                       <span
                         className={`font-mono font-medium ${data.pnl > 0 ? "text-emerald-400" : data.pnl < 0 ? "text-red-400" : "text-muted-foreground"}`}
                       >
-                        {data.pnl >= 0 ? "+" : ""}
                         {data.pnl >= 0 ? "+" : ""}
                         {data.pnl.toFixed(1)}
                       </span>

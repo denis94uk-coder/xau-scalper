@@ -486,7 +486,7 @@ function DashboardContent() {
                   key={a.id}
                   onClick={() => setSymbol(a.id)}
                   className={`px-2.5 py-1 rounded-md text-[11px] font-mono border flex items-center gap-1 transition-colors ${isActive ? "bg-[#D4A843] text-black border-[#D4A843] font-medium" : "bg-[#12141A] border-white/5 text-muted-foreground hover:text-white hover:border-white/10"}`}
-                  title={`${a.id} · ${trades} trades`}
+                  title={`${a.id} · ${trades} closed trades`}
                 >
                   {a.symbol || a.id}
                   {tradedSet.has(a.id) && (

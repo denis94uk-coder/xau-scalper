@@ -120,6 +120,16 @@ function camelAll(rows: object[]): Record<string, unknown>[] {
   return rows.map(camel);
 }
 
+/** Idea/journal books the API filters on. Shared so every route agrees. */
+const validSources = new Set([
+  "engine",
+  "teo",
+  "dashboard",
+  "experimental",
+  "top10",
+  "lse",
+]);
+
 /**
  * Per-request config stores, keyed by database.
  *
@@ -201,14 +211,6 @@ export async function handleApi(
     if (asset instanceof Response) return asset;
     const source = url.searchParams.get("source") ?? undefined;
     const excludeSource = url.searchParams.get("excludeSource") ?? undefined;
-    const validSources = new Set([
-      "engine",
-      "teo",
-      "dashboard",
-      "experimental",
-      "top10",
-      "lse",
-    ]);
     if (source && !validSources.has(source)) {
       return bad(`unknown source "${source}"`, 400);
     }
@@ -229,7 +231,26 @@ export async function handleApi(
   if (path === "/api/ideas/open") {
     const asset = assetParam(url);
     if (asset instanceof Response) return asset;
-    return json({ ideas: camelAll(db.openIdeas(asset)) });
+    const openSource = url.searchParams.get("source") ?? undefined;
+    const openExclude = url.searchParams.get("excludeSource") ?? undefined;
+    if (openSource && !validSources.has(openSource)) {
+      return bad(`unknown source "${openSource}"`, 400);
+    }
+    if (openExclude && !validSources.has(openExclude)) {
+      return bad(`unknown excludeSource "${openExclude}"`, 400);
+    }
+    if (openSource && openExclude) {
+      return bad("use either source or excludeSource, not both", 400);
+    }
+    const openLimit = intParam(url, "limit", 500, 1000);
+    const open = db
+      .openIdeas(asset)
+      .filter(
+        i =>
+          (!openSource || i.source === openSource) &&
+          (!openExclude || i.source !== openExclude),
+      );
+    return json({ ideas: camelAll(open.slice(0, openLimit)) });
   }
 
   const ideaMatch = path.match(/^\/api\/ideas\/(\d+)$/);
@@ -289,6 +310,8 @@ export async function handleApi(
   }
 
   if (path === "/api/journal/counts") {
+    const jAsset = assetParam(url);
+    if (jAsset instanceof Response) return jAsset;
     const jSource = url.searchParams.get("source") ?? undefined;
     const jExclude = url.searchParams.get("excludeSource") ?? undefined;
     const validJ = new Set([
@@ -308,7 +331,13 @@ export async function handleApi(
     if (jSource && jExclude) {
       return bad("use either source or excludeSource, not both", 400);
     }
-    return json(db.journalCounts({ source: jSource, excludeSource: jExclude }));
+    return json(
+      db.journalCounts({
+        asset: jAsset ?? undefined,
+        source: jSource,
+        excludeSource: jExclude,
+      }),
+    );
   }
 
   // ─── Performance ───
@@ -390,12 +419,65 @@ export async function handleApi(
 
   // ─── Portfolio ───
   if (path === "/api/portfolio") {
-    const assets = enabledAssets(cfg).map(toAssetDefinition);
+    const portfolioSource = url.searchParams.get("source") ?? undefined;
+    const portfolioExclude = url.searchParams.get("excludeSource") ?? undefined;
+    const _validPortfolioSources = new Set([
+      "engine",
+      "teo",
+      "dashboard",
+      "experimental",
+      "top10",
+      "lse",
+    ]);
+    if (portfolioSource && !_validPortfolioSources.has(portfolioSource)) {
+      return bad(`unknown source "${portfolioSource}"`, 400);
+    }
+    if (portfolioExclude && !_validPortfolioSources.has(portfolioExclude)) {
+      return bad(`unknown excludeSource "${portfolioExclude}"`, 400);
+    }
+    if (portfolioSource && portfolioExclude) {
+      return bad("use either source or excludeSource, not both", 400);
+    }
+    const inBook = portfolioSource ?? portfolioExclude !== undefined;
+    // One book throughout: when filtered, positions, correlations AND
+    // evidence all describe the same book (previously the book ignored the
+    // filter while only the evidence honored it).
+    const allAssets = enabledAssets(cfg).map(toAssetDefinition);
+    const periods = db.holdingPeriods(
+      portfolioSource
+        ? { source: portfolioSource }
+        : portfolioExclude
+          ? { excludeSource: portfolioExclude }
+          : {},
+    );
+    const open = portfolioSource
+      ? openExposures(db, portfolioSource)
+      : portfolioExclude
+        ? openExposures(db).filter(e => {
+            // openExposures carries no source; resolve via the open ideas.
+            // Same asset+direction can exist in several books, so keep the
+            // exposure only if NO open idea of the excluded book matches it.
+            return !db
+              .openIdeas()
+              .some(
+                o =>
+                  o.asset === e.asset &&
+                  o.direction === e.direction &&
+                  o.source === portfolioExclude,
+              );
+          })
+        : openExposures(db);
+    const bookIds = new Set<string>([
+      ...open.map(e => e.asset),
+      ...periods.map(p => p.asset),
+    ]);
+    const assets = inBook
+      ? allAssets.filter(a => bookIds.has(a.id))
+      : allAssets;
     const matrix = correlationsFrom(db, assets, {
       prior: cfg.risk.assumedCorrelation,
       minSamples: cfg.risk.minCorrelationSamples,
     });
-    const open = openExposures(db);
     const book = summarise(open, matrix, { maxRisk: cfg.risk.maxRisk });
 
     // Every distinct pair, so a refusal in the journal can be traced to the
@@ -418,32 +500,6 @@ export async function handleApi(
     // How much independent evidence the whole record actually carries. The
     // per-asset verdicts on /api/performance count every trade as its own
     // result; across a correlated book, many of them are the same result.
-    const portfolioSource = url.searchParams.get("source") ?? undefined;
-    const portfolioExclude = url.searchParams.get("excludeSource") ?? undefined;
-    const _validPortfolioSources = new Set([
-      "engine",
-      "teo",
-      "dashboard",
-      "experimental",
-      "top10",
-      "lse",
-    ]);
-    if (portfolioSource && !_validPortfolioSources.has(portfolioSource)) {
-      return bad(`unknown source "${portfolioSource}"`, 400);
-    }
-    if (portfolioExclude && !_validPortfolioSources.has(portfolioExclude)) {
-      return bad(`unknown excludeSource "${portfolioExclude}"`, 400);
-    }
-    if (portfolioSource && portfolioExclude) {
-      return bad("use either source or excludeSource, not both", 400);
-    }
-    const periods = db.holdingPeriods(
-      portfolioSource
-        ? { source: portfolioSource }
-        : portfolioExclude
-          ? { excludeSource: portfolioExclude }
-          : {},
-    );
     const wins = periods.filter(p => p.won).length;
     const concurrency = averageConcurrency(periods);
     const rho = Math.max(0, matrix.average());

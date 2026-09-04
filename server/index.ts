@@ -390,7 +390,10 @@ function scheduleTimers(cfg: AppConfig): void {
       () => void safely("lse", runLse),
       cfg.engine.signalSeconds * 1000,
     ),
-    setInterval(() => void runIntel(), cfg.engine.intelSeconds * 1000),
+    setInterval(
+      () => void safely("intel", runIntel),
+      cfg.engine.intelSeconds * 1000,
+    ),
     setInterval(() => void safely("mt5", runMt5), cfg.mt5.syncSeconds * 1000),
     ...(SELFHEAL_ON
       ? [
@@ -416,11 +419,16 @@ function scheduleTimers(cfg: AppConfig): void {
         ]
       : []),
     setInterval(() => {
-      const removed = db.pruneJournal(config.get().engine.journalRetentionDays);
-      if (removed > 0) {
-        console.log(`[prune] removed ${removed} journal row(s)`);
-        publish("journal");
-      }
+      void safely("prune", async () => {
+        const removed = db.pruneJournal(
+          config.get().engine.journalRetentionDays,
+        );
+        db.recordRun("prune", true);
+        if (removed > 0) {
+          console.log(`[prune] removed ${removed} journal row(s)`);
+          publish("journal");
+        }
+      });
     }, PRUNE_MS),
   ];
 }
@@ -441,10 +449,15 @@ function msUntilMidnight(): number {
 }
 
 // Fire once at the next UTC midnight, then every 24 h, to reset the kill switch
-// daily loss accounting for the new trading day.
+// daily loss accounting for the new trading day. Guarded like every other
+// timer: an unguarded throw here would silently kill all future resets.
 setTimeout(() => {
-  risk.dailyReset();
-  timers.push(setInterval(() => risk.dailyReset(), 24 * 60 * 60_000));
+  const reset = () =>
+    safely("risk-reset", async () => {
+      risk.dailyReset();
+    });
+  void reset();
+  timers.push(setInterval(() => void reset(), 24 * 60 * 60_000));
 }, msUntilMidnight());
 
 function shutdown(signal: string) {

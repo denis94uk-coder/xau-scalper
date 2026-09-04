@@ -202,7 +202,13 @@ export function TradingIdeasPage({
         <StatCard
           label="Daily P&L"
           value={`${dailyPnl >= 0 ? "+" : ""}${dailyPnl.toFixed(2)}%`}
-          color={dailyPnl > 0 ? "text-emerald-400" : dailyPnl < 0 ? "text-red-400" : "text-muted-foreground"}
+          color={
+            dailyPnl > 0
+              ? "text-emerald-400"
+              : dailyPnl < 0
+                ? "text-red-400"
+                : "text-muted-foreground"
+          }
           icon={<Target className="w-3.5 h-3.5" />}
         />
         <StatCard
@@ -431,10 +437,12 @@ export function TradingIdeasPage({
                           {fmtPrice(idea.tp1)}
                           <span className="text-muted-foreground ml-1">
                             R:R{" "}
-                            {(
-                              Math.abs(idea.tp1 - idea.entryPrice) /
-                              Math.abs(idea.entryPrice - idea.stopLoss)
-                            ).toFixed(1)}
+                            {Math.abs(idea.entryPrice - idea.stopLoss) > 0
+                              ? (
+                                  Math.abs(idea.tp1 - idea.entryPrice) /
+                                  Math.abs(idea.entryPrice - idea.stopLoss)
+                                ).toFixed(1)
+                              : "—"}
                           </span>
                         </div>
                       </div>
@@ -444,10 +452,12 @@ export function TradingIdeasPage({
                           {fmtPrice(idea.tp2)}
                           <span className="text-muted-foreground ml-1">
                             R:R{" "}
-                            {(
-                              Math.abs(idea.tp2 - idea.entryPrice) /
-                              Math.abs(idea.entryPrice - idea.stopLoss)
-                            ).toFixed(1)}
+                            {Math.abs(idea.entryPrice - idea.stopLoss) > 0
+                              ? (
+                                  Math.abs(idea.tp2 - idea.entryPrice) /
+                                  Math.abs(idea.entryPrice - idea.stopLoss)
+                                ).toFixed(1)
+                              : "—"}
                           </span>
                         </div>
                       </div>

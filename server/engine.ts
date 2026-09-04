@@ -26,6 +26,7 @@
 import {
   type AssetDefinition,
   DEFAULT_ASSET_ID,
+  getAsset,
   getEnabledAssets,
   LSE_UNIVERSE,
   lseAsset,
@@ -162,9 +163,10 @@ export function correlationsFrom(
 }
 
 /** Open positions, as the portfolio model sees them. */
-export function openExposures(db: Db): Exposure[] {
+export function openExposures(db: Db, source?: string): Exposure[] {
   return db
     .openIdeas()
+    .filter(i => !source || i.source === source)
     .map(i => ({ asset: i.asset, direction: i.direction }) as Exposure);
 }
 
@@ -452,6 +454,7 @@ export async function generateForAsset(
 
 export async function generateSignals(deps: EngineDeps): Promise<void> {
   const assets = deps.assets ?? getEnabledAssets();
+  let evaluated = 0;
   for (const asset of assets) {
     try {
       // Rebuilt each iteration: the previous asset may have just synced fresh
@@ -467,6 +470,7 @@ export async function generateSignals(deps: EngineDeps): Promise<void> {
         },
         asset,
       );
+      evaluated++;
       if (id !== null) publish("ideas");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -490,7 +494,13 @@ export async function generateSignals(deps: EngineDeps): Promise<void> {
       console.error(`[engine] experimental:`, msg);
     }
   }
-  deps.db.recordRun("signals", true);
+  deps.db.recordRun(
+    "signals",
+    evaluated > 0,
+    evaluated === 0 && assets.length > 0
+      ? "all assets failed to evaluate (venue down?)"
+      : undefined,
+  );
   publish("engine");
 }
 
@@ -635,6 +645,14 @@ export function applyPrice(
   bar: { high: number; low: number; close: number },
   currentATR: number,
 ): boolean {
+  // Re-read before touching anything: callers snapshot open ideas, then
+  // await network fetches — a concurrent tick may have resolved this idea in
+  // between, and applying a stale snapshot re-fires its exit + journal.
+  // Resolved rows are never re-processed.
+  const live = db.getIdea(idea.id);
+  if (!live || (live.status !== "ACTIVE" && live.status !== "TP1_HIT"))
+    return false;
+  idea = live;
   const r = (n: number) => roundTo(n, asset.pricePrecision);
   const isLong = idea.direction === "LONG";
   const effectiveSL = idea.trailing_sl ?? idea.stop_loss;
@@ -778,6 +796,19 @@ export async function monitorIdeas(deps: EngineDeps): Promise<void> {
   }
 
   const active = assets.filter(a => open.some(i => i.asset === a.id));
+  // Orphan guard: an idea whose asset was later disabled (or dropped from
+  // the registry) still holds risk and must still be priced — otherwise it
+  // sits open forever, blocking cooldowns and the risk budget silently.
+  for (const idea of open) {
+    if (idea.source === "lse") continue; // priced off vault bars below
+    if (active.some(a => a.id === idea.asset)) continue;
+    const def = getAsset(idea.asset);
+    if (def && !active.some(a => a.id === def.id)) active.push(def);
+    else if (!def)
+      console.warn(
+        `[monitor] idea #${idea.id} on unknown asset "${idea.asset}" — no definition to price it, left open`,
+      );
+  }
   if (active.length === 0 && lseMonitoredAssets(db).length === 0) {
     db.recordRun("monitor", true);
     return;

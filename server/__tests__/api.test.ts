@@ -145,6 +145,41 @@ describe("journal", () => {
       SL_HIT: 1,
     });
   });
+
+  test("counts honor the asset dimension like the list does", async () => {
+    db.logJournal({ eventType: "SL_HIT", asset: "PAXGUSDT" });
+    db.logJournal({ eventType: "SL_HIT", asset: "BTCUSDT" });
+    expect(
+      await body<Record<string, number>>(
+        call("/api/journal/counts?asset=PAXGUSDT"),
+      ),
+    ).toEqual({ SL_HIT: 1 });
+    expect(await status(call("/api/journal/counts?asset=NOTREAL"))).toBe(404);
+  });
+
+  test("open ideas honor source filters instead of silently ignoring them", async () => {
+    idea({ source: "engine" });
+    idea({ source: "top10" });
+    const b = await body<{ ideas: Array<{ id: number }> }>(
+      call("/api/ideas/open?source=top10"),
+    );
+    expect(b.ideas).toHaveLength(1);
+    expect(await status(call("/api/ideas/open?source=bogus"))).toBe(400);
+  });
+});
+
+describe("portfolio", () => {
+  test("the book honors source filters, not just the evidence", async () => {
+    idea({ asset: "PAXGUSDT", source: "engine" });
+    idea({ asset: "BTCUSDT", source: "top10" });
+    const all = await body<{ positions: unknown[] }>(call("/api/portfolio"));
+    expect(all.positions).toHaveLength(2);
+    const one = await body<{ positions: Array<{ asset: string }> }>(
+      call("/api/portfolio?source=top10"),
+    );
+    expect(one.positions).toHaveLength(1);
+    expect(one.positions[0].asset).toBe("BTCUSDT");
+  });
 });
 
 describe("performance", () => {

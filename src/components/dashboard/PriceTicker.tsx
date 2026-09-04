@@ -90,29 +90,43 @@ export function PriceTicker({
           className={`text-sm font-semibold tabular-nums font-mono ${isPositive ? "text-[#00E676]" : "text-[#FF1744]"}`}
         >
           {isPositive ? "+" : ""}
-          {data.change24h.toFixed(2)} ({isPositive ? "+" : ""}
+          {fmtPrice(data.change24h)} ({isPositive ? "+" : ""}
           {data.changePct24h.toFixed(2)}%)
         </span>
         <span className="text-xs text-muted-foreground">24h Change</span>
       </div>
 
-      {/* Bid / Ask / Spread + High / Low — combined row on mobile */}
+      {/* Bid / Ask / Spread + High / Low — combined row on mobile.
+          Bid/ask/spread are indicative (±0.015% off mid), not venue quotes. */}
       <div className="flex items-center gap-3 sm:gap-4 sm:ml-auto flex-wrap">
         <div className="flex flex-col items-center">
-          <span className="text-[10px] text-muted-foreground mb-0.5">BID</span>
+          <span
+            className="text-[10px] text-muted-foreground mb-0.5"
+            title="Indicative — derived from mid price, not a venue quote"
+          >
+            BID*
+          </span>
           <span className="text-xs sm:text-sm font-mono tabular-nums text-[#00E676]">
             {fmtPrice(data.bid)}
           </span>
         </div>
         <div className="flex flex-col items-center">
-          <span className="text-[10px] text-muted-foreground mb-0.5">ASK</span>
+          <span
+            className="text-[10px] text-muted-foreground mb-0.5"
+            title="Indicative — derived from mid price, not a venue quote"
+          >
+            ASK*
+          </span>
           <span className="text-xs sm:text-sm font-mono tabular-nums text-[#FF1744]">
             {fmtPrice(data.ask)}
           </span>
         </div>
         <div className="flex flex-col items-center">
-          <span className="text-[10px] text-muted-foreground mb-0.5">
-            SPREAD
+          <span
+            className="text-[10px] text-muted-foreground mb-0.5"
+            title="Indicative — derived from mid price, not a venue quote"
+          >
+            SPREAD*
           </span>
           <span className="text-xs sm:text-sm font-mono tabular-nums text-[#D4A843]">
             {fmtPrice(spread)}

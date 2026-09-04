@@ -607,10 +607,14 @@ export class Db {
 
   /** Counts per event type. An aggregate, not a full-table read into memory. */
   journalCounts(
-    opts: { source?: string; excludeSource?: string } = {},
+    opts: { asset?: string; source?: string; excludeSource?: string } = {},
   ): Record<string, number> {
     const where: string[] = [];
     const params: string[] = [];
+    if (opts.asset) {
+      where.push("asset = ?");
+      params.push(opts.asset);
+    }
     if (opts.source) {
       where.push("source = ?");
       params.push(opts.source);

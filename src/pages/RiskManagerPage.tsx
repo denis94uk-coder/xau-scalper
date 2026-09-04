@@ -130,13 +130,16 @@ export function RiskManagerPage() {
         />
         <RMCard
           label="Profit Factor"
+          // Server null means "no losses" (best), never 0.00 (worst).
           value={
-            (stats.profitFactor ?? 0) === Infinity
-              ? "∞"
-              : (stats.profitFactor ?? 0).toFixed(2)
+            stats.totalTrades === 0
+              ? "—"
+              : stats.profitFactor === null
+                ? "∞"
+                : stats.profitFactor.toFixed(2)
           }
           color={
-            (stats.profitFactor ?? 0) >= 1.5
+            stats.profitFactor === null || stats.profitFactor >= 1.5
               ? "text-emerald-400"
               : "text-yellow-400"
           }
@@ -149,13 +152,13 @@ export function RiskManagerPage() {
           }
         />
         <RMCard
-          label="Avg Win"
-          value={`+${stats.avgWinDollars.toFixed(1)}`}
+          label="Avg Win $"
+          value={`+$${stats.avgWinDollars.toFixed(1)}`}
           color="text-emerald-400"
         />
         <RMCard
-          label="Avg Loss"
-          value={`-${stats.avgLossDollars.toFixed(1)}`}
+          label="Avg Loss $"
+          value={`-$${stats.avgLossDollars.toFixed(1)}`}
           color="text-red-400"
         />
       </div>

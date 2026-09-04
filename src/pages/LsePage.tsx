@@ -144,7 +144,6 @@ export default function LsePage() {
       (s, a) => s + a.avgLossPoints * a.losses,
       0,
     );
-    const totalPnl = traded.reduce((s, a) => s + a.totalPnlPoints, 0);
     return {
       wins,
       losses,
@@ -152,9 +151,26 @@ export default function LsePage() {
       open,
       winRate: wins + losses ? (wins / (wins + losses)) * 100 : 0,
       profitFactor: grossLoss === 0 ? null : grossWin / grossLoss,
-      totalPnl,
     };
   }, [traded]);
+
+  // Total P&L as % of entry — points can't be summed across instruments, so
+  // the headline aggregates per-trade % like every other book.
+  const lseResolved = useMemo(
+    () =>
+      (ideas ?? []).filter(
+        i =>
+          (i.status === "TP2_HIT" ||
+            i.status === "STOPPED" ||
+            i.status === "EXPIRED") &&
+          i.pnlPoints !== null,
+      ),
+    [ideas],
+  );
+  const lseTotalPct = useMemo(
+    () => lseResolved.reduce((s, i) => s + (pnlPct(i) ?? 0), 0),
+    [lseResolved],
+  );
 
   const lseIdeas = ideas ?? [];
 
@@ -168,26 +184,31 @@ export default function LsePage() {
       i.status === "STOPPED" ||
       i.status === "EXPIRED",
   )) {
+    // Rows without realized P&L carry no result — never a phantom loss.
+    if (idea.pnlPoints === null) continue;
     const d = new Date(idea.resolvedAt ?? idea.createdAt).toLocaleDateString(
       "en-CA",
     );
     if (!byDay[d]) byDay[d] = { wins: 0, losses: 0, pnl: 0, count: 0 };
     byDay[d].count++;
     byDay[d].pnl += pnlPct(idea) ?? 0;
-    if ((idea.pnlPoints ?? 0) > 0) byDay[d].wins++;
+    if (idea.pnlPoints > 0) byDay[d].wins++;
     else byDay[d].losses++;
   }
 
   const dailyTarget = useMemo(() => {
+    // UTC midnight — this bar mirrors the engine's daily gate, which resets
+    // on UTC midnight (server/lse-engine.ts). Local midnight would disagree.
     const start = new Date();
-    start.setHours(0, 0, 0, 0);
+    start.setUTCHours(0, 0, 0, 0);
     const todayIdeas = lseIdeas.filter(
       i =>
         (i.status === "TP2_HIT" ||
           i.status === "STOPPED" ||
           i.status === "EXPIRED") &&
         (i.resolvedAt ?? i.createdAt) >= start.getTime() &&
-        i.pnlPoints !== null,
+        i.pnlPoints !== null &&
+        i.entryPrice > 0,
     );
     let pct = 0;
     for (const idea of todayIdeas)
@@ -248,11 +269,11 @@ export default function LsePage() {
               <span className="text-white/20">·</span>
               <span
                 className={
-                  aggregated.totalPnl >= 0 ? "text-emerald-400" : "text-red-400"
+                  lseTotalPct >= 0 ? "text-emerald-400" : "text-red-400"
                 }
               >
-                {aggregated.totalPnl >= 0 ? "+" : ""}
-                {aggregated.totalPnl.toFixed(1)} pts
+                {lseTotalPct >= 0 ? "+" : ""}
+                {lseTotalPct.toFixed(1)}%
               </span>
             </>
           )}

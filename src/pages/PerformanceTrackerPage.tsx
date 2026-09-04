@@ -186,13 +186,59 @@ export function PerformanceTrackerPage() {
     source === "all"
       ? forAsset
       : forAsset.filter(i => (i.source ?? "dashboard") === source);
+  // TP1_HIT is still open (server open-set is ACTIVE + TP1_HIT) — listing it
+  // as closed inflates counts and books open legs as results.
   const closed = filtered.filter(
     i =>
-      i.status === "TP1_HIT" ||
       i.status === "TP2_HIT" ||
       i.status === "STOPPED" ||
       i.status === "EXPIRED",
   );
+
+  // Headline cards honor the asset + source filter above: derived from the
+  // same filtered ideas the lists below show. (The server aggregates are
+  // engine-book only and ignore the toggle.)
+  const scored = closed.filter(i => i.pnlPoints !== null);
+  const vWins = scored.filter(i => (i.pnlPoints ?? 0) > 0).length;
+  const vLosses = scored.length - vWins;
+  const vGrossWin = scored.reduce(
+    (s, i) => s + Math.max(0, i.pnlPoints ?? 0),
+    0,
+  );
+  const vGrossLoss = scored.reduce(
+    (s, i) => s + Math.max(0, -(i.pnlPoints ?? 0)),
+    0,
+  );
+  const vWinRate = scored.length > 0 ? (vWins / scored.length) * 100 : 0;
+  const vPf =
+    scored.length === 0
+      ? null
+      : vGrossLoss === 0
+        ? null
+        : vGrossWin / vGrossLoss;
+  const vAvgWin = vWins > 0 ? vGrossWin / vWins : 0;
+  const vAvgLoss = vLosses > 0 ? vGrossLoss / vLosses : 0;
+  const vAvgRR = vAvgLoss > 0 ? vAvgWin / vAvgLoss : null;
+  const vTotalPts = vGrossWin - vGrossLoss;
+  const vOpen = filtered.filter(
+    i => i.status === "ACTIVE" || i.status === "TP1_HIT",
+  ).length;
+  const vExpired = filtered.filter(i => i.status === "EXPIRED").length;
+  const byTime = [...scored].sort(
+    (a, b) => (a.resolvedAt ?? a.createdAt) - (b.resolvedAt ?? b.createdAt),
+  );
+  let vCur = 0;
+  let vMaxWin = 0;
+  let vMaxLoss = 0;
+  for (const i of byTime) {
+    if ((i.pnlPoints ?? 0) > 0) {
+      vCur = vCur >= 0 ? vCur + 1 : 1;
+      vMaxWin = Math.max(vMaxWin, vCur);
+    } else {
+      vCur = vCur <= 0 ? vCur - 1 : -1;
+      vMaxLoss = Math.max(vMaxLoss, -vCur);
+    }
+  }
 
   // % of entry — same convention as the Ideas pages and the calendar above:
   // points can't be summed across assets, per-trade % can. Honors the same
@@ -214,12 +260,15 @@ export function PerformanceTrackerPage() {
     { wins: number; losses: number; pnl: number; count: number }
   > = {};
   for (const idea of closed) {
+    // Rows without realized P&L carry no result — counting them as losses
+    // invents red days out of data gaps.
+    if (idea.pnlPoints === null) continue;
     const d = format(new Date(idea.resolvedAt ?? idea.createdAt), "yyyy-MM-dd");
     if (!byDay[d]) byDay[d] = { wins: 0, losses: 0, pnl: 0, count: 0 };
     byDay[d].count++;
     byDay[d].pnl += pnlPct(idea) ?? 0;
     // By realized P&L, not status — a STOPPED exit can still be a trailed win.
-    if ((idea.pnlPoints ?? 0) > 0) byDay[d].wins++;
+    if (idea.pnlPoints > 0) byDay[d].wins++;
     else byDay[d].losses++;
   }
 
@@ -331,7 +380,7 @@ export function PerformanceTrackerPage() {
           a win rate read before its sample size is the error this prevents. */}
       <SignificanceBanner sig={stats.significance} />
 
-      {/* Main Stats Grid */}
+      {/* Main Stats Grid — derived from the filtered view above */}
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-4 gap-2">
         <PerfCard
           label="Daily P&L %"
@@ -361,36 +410,36 @@ export function PerformanceTrackerPage() {
         />
         <PerfCard
           label="Win Rate"
-          value={`${stats.winRate.toFixed(1)}%`}
-          color={stats.winRate >= 50 ? "text-emerald-400" : "text-red-400"}
+          value={`${vWinRate.toFixed(1)}%`}
+          color={vWinRate >= 50 ? "text-emerald-400" : "text-red-400"}
           icon={<Target className="w-4 h-4" />}
-          detail={`${stats.wins}W / ${stats.losses}L`}
+          detail={`${vWins}W / ${vLosses}L`}
         />
         <PerfCard
           label="Profit Factor"
           value={
-            (stats.profitFactor ?? 0) >= 999
-              ? "∞"
-              : (stats.profitFactor ?? 0).toFixed(2)
+            scored.length === 0 ? "—" : vPf === null ? "∞" : vPf.toFixed(2)
           }
           color={
-            (stats.profitFactor ?? 0) >= 1.5
-              ? "text-emerald-400"
-              : (stats.profitFactor ?? 0) >= 1
-                ? "text-yellow-400"
-                : "text-red-400"
+            scored.length === 0 || vPf === null
+              ? vPf === null && scored.length > 0
+                ? "text-emerald-400"
+                : "text-muted-foreground"
+              : vPf >= 1.5
+                ? "text-emerald-400"
+                : vPf >= 1
+                  ? "text-yellow-400"
+                  : "text-red-400"
           }
           icon={<TrendingUp className="w-4 h-4" />}
           detail="Gross profit / loss"
         />
         <PerfCard
           label="Total P&L"
-          value={`${stats.totalPnlPoints >= 0 ? "+" : ""}${stats.totalPnlPoints.toFixed(1)}`}
-          color={
-            stats.totalPnlPoints >= 0 ? "text-emerald-400" : "text-red-400"
-          }
+          value={`${vTotalPts >= 0 ? "+" : ""}${vTotalPts.toFixed(1)}`}
+          color={vTotalPts >= 0 ? "text-emerald-400" : "text-red-400"}
           icon={
-            stats.totalPnlPoints >= 0 ? (
+            vTotalPts >= 0 ? (
               <TrendingUp className="w-4 h-4" />
             ) : (
               <TrendingDown className="w-4 h-4" />
@@ -400,23 +449,27 @@ export function PerformanceTrackerPage() {
         />
         <PerfCard
           label="Avg Win"
-          value={`+${stats.avgWinPoints.toFixed(1)}`}
+          value={`+${vAvgWin.toFixed(1)}`}
           color="text-emerald-400"
           icon={<TrendingUp className="w-4 h-4" />}
           detail="Points per win"
         />
         <PerfCard
           label="Avg Loss"
-          value={`-${stats.avgLossPoints.toFixed(1)}`}
+          value={`-${vAvgLoss.toFixed(1)}`}
           color="text-red-400"
           icon={<TrendingDown className="w-4 h-4" />}
           detail="Points per loss"
         />
         <PerfCard
           label="Avg R:R"
-          value={(stats.avgRR ?? 0).toFixed(2)}
+          value={vAvgRR === null ? "—" : vAvgRR.toFixed(2)}
           color={
-            (stats.avgRR ?? 0) >= 1.5 ? "text-emerald-400" : "text-yellow-400"
+            vAvgRR === null
+              ? "text-muted-foreground"
+              : vAvgRR >= 1.5
+                ? "text-emerald-400"
+                : "text-yellow-400"
           }
           icon={<Shield className="w-4 h-4" />}
           detail="Risk/Reward ratio"
@@ -433,26 +486,18 @@ export function PerformanceTrackerPage() {
           <div className="space-y-1 text-xs">
             <div className="flex justify-between">
               <span className="text-muted-foreground">Best Win Streak</span>
-              <span className="text-emerald-400 font-mono">
-                {stats.maxWinStreak}
-              </span>
+              <span className="text-emerald-400 font-mono">{vMaxWin}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Worst Loss Streak</span>
-              <span className="text-red-400 font-mono">
-                {stats.maxLossStreak}
-              </span>
+              <span className="text-red-400 font-mono">{vMaxLoss}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Current</span>
               <span
-                className={`font-mono ${stats.currentStreak > 0 ? "text-emerald-400" : stats.currentStreak < 0 ? "text-red-400" : "text-muted-foreground"}`}
+                className={`font-mono ${vCur > 0 ? "text-emerald-400" : vCur < 0 ? "text-red-400" : "text-muted-foreground"}`}
               >
-                {stats.currentStreak > 0
-                  ? `${stats.currentStreak}W`
-                  : stats.currentStreak < 0
-                    ? `${Math.abs(stats.currentStreak)}L`
-                    : "—"}
+                {vCur > 0 ? `${vCur}W` : vCur < 0 ? `${Math.abs(vCur)}L` : "—"}
               </span>
             </div>
           </div>
@@ -463,19 +508,19 @@ export function PerformanceTrackerPage() {
           <div className="space-y-1 text-xs">
             <div className="flex justify-between">
               <span className="text-muted-foreground">Total</span>
-              <span className="font-mono">{stats.closed + stats.open}</span>
+              <span className="font-mono">{closed.length + vOpen}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Active</span>
-              <span className="font-mono text-blue-400">{stats.open}</span>
+              <span className="font-mono text-blue-400">{vOpen}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Closed</span>
-              <span className="font-mono">{stats.closed}</span>
+              <span className="font-mono">{closed.length}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Expired</span>
-              <span className="font-mono text-gray-400">{stats.expired}</span>
+              <span className="font-mono text-gray-400">{vExpired}</span>
             </div>
           </div>
         </div>
@@ -485,18 +530,18 @@ export function PerformanceTrackerPage() {
           <div className="text-sm font-medium mb-2">Win/Loss Breakdown</div>
           <div className="space-y-2">
             <div className="h-4 rounded-full overflow-hidden bg-white/5 flex">
-              {stats.closed > 0 && (
+              {closed.length > 0 && (
                 <>
                   <div
                     className="bg-emerald-500 h-full transition-all"
                     style={{
-                      width: `${(stats.wins / stats.closed) * 100}%`,
+                      width: `${(vWins / closed.length) * 100}%`,
                     }}
                   />
                   <div
                     className="bg-red-500 h-full transition-all"
                     style={{
-                      width: `${(stats.losses / stats.closed) * 100}%`,
+                      width: `${(vLosses / closed.length) * 100}%`,
                     }}
                   />
                 </>
@@ -504,16 +549,16 @@ export function PerformanceTrackerPage() {
             </div>
             <div className="flex justify-between text-[10px]">
               <span className="text-emerald-400">
-                {stats.wins} wins (
-                {stats.closed > 0
-                  ? Math.round((stats.wins / stats.closed) * 100)
+                {vWins} wins (
+                {closed.length > 0
+                  ? Math.round((vWins / closed.length) * 100)
                   : 0}
                 %)
               </span>
               <span className="text-red-400">
-                {stats.losses} losses (
-                {stats.closed > 0
-                  ? Math.round((stats.losses / stats.closed) * 100)
+                {vLosses} losses (
+                {closed.length > 0
+                  ? Math.round((vLosses / closed.length) * 100)
                   : 0}
                 %)
               </span>

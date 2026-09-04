@@ -27,7 +27,7 @@
 
 import { getEnabledAssets } from "../core/assets";
 import { roundTo } from "../core/strategy";
-import type { EngineDeps } from "./engine";
+import { type EngineDeps, lseMonitoredAssets } from "./engine";
 import { publish } from "./events";
 import { fetchPrices, venueSymbols } from "./market";
 
@@ -39,7 +39,15 @@ import { fetchPrices, venueSymbols } from "./market";
  */
 export async function reconcileState(deps: EngineDeps): Promise<number> {
   const { db } = deps;
-  const assets = deps.assets ?? getEnabledAssets();
+  // Main registry AND the LSE book: LSE positions are priced off vault bars
+  // by the monitor, but a ghost check only needs the current price — leaving
+  // the LSE book out strands long-downtime ghosts recoverGap can't replay.
+  const assets = [
+    ...(deps.assets ?? getEnabledAssets()),
+    ...lseMonitoredAssets(db).filter(
+      lse => !(deps.assets ?? getEnabledAssets()).some(a => a.id === lse.id),
+    ),
+  ];
 
   console.log("[reconcile] Starting state reconciliation...");
 
@@ -67,7 +75,15 @@ export async function reconcileState(deps: EngineDeps): Promise<number> {
   const now = deps.now?.() ?? Date.now();
 
   for (const asset of active) {
-    const price = prices.get(asset.dataSourceSymbol);
+    const live = prices.get(asset.dataSourceSymbol);
+    // LSE instruments have no venue quote — fall back to the newest stored
+    // vault bar, the same "live tick" stand-in the monitor uses. Without
+    // this the LSE book is invisible to ghost reconciliation.
+    const vault =
+      live === undefined && asset.dataSource === "lse"
+        ? db.getCandles(asset.id, "1m", 1).at(-1)?.close
+        : undefined;
+    const price = live ?? vault;
     if (price === undefined) continue;
 
     const r = (n: number) => roundTo(n, asset.pricePrecision);

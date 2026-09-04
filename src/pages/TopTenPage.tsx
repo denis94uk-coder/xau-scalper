@@ -103,7 +103,6 @@ export default function TopTenPage() {
     const open = top10.reduce((s, a) => s + a.open, 0);
     const grossWin = top10.reduce((s, a) => s + a.avgWinPoints * a.wins, 0);
     const grossLoss = top10.reduce((s, a) => s + a.avgLossPoints * a.losses, 0);
-    const totalPnl = top10.reduce((s, a) => s + a.totalPnlPoints, 0);
     return {
       wins,
       losses,
@@ -111,9 +110,26 @@ export default function TopTenPage() {
       open,
       winRate: wins + losses ? (wins / (wins + losses)) * 100 : 0,
       profitFactor: grossLoss === 0 ? null : grossWin / grossLoss,
-      totalPnl,
     };
   }, [top10]);
+
+  // Total P&L as % of entry — points can't be summed across BTC and sub-cent
+  // alts, so the headline aggregates per-trade % like every other book.
+  const resolvedIdeas = useMemo(
+    () =>
+      topIdeas.filter(
+        i =>
+          (i.status === "TP2_HIT" ||
+            i.status === "STOPPED" ||
+            i.status === "EXPIRED") &&
+          i.pnlPoints !== null,
+      ),
+    [topIdeas],
+  );
+  const totalPnlPct = useMemo(
+    () => resolvedIdeas.reduce((s, i) => s + (pnlPct(i) ?? 0), 0),
+    [resolvedIdeas],
+  );
 
   const byDay: Record<
     string,
@@ -125,26 +141,31 @@ export default function TopTenPage() {
       i.status === "STOPPED" ||
       i.status === "EXPIRED",
   )) {
+    // Rows without realized P&L carry no result — never a phantom loss.
+    if (idea.pnlPoints === null) continue;
     const d = new Date(idea.resolvedAt ?? idea.createdAt).toLocaleDateString(
       "en-CA",
     ); // local yyyy-MM-dd matches DailyPnlCalendar's format(day)
     if (!byDay[d]) byDay[d] = { wins: 0, losses: 0, pnl: 0, count: 0 };
     byDay[d].count++;
     byDay[d].pnl += pnlPct(idea) ?? 0;
-    if ((idea.pnlPoints ?? 0) > 0) byDay[d].wins++;
+    if (idea.pnlPoints > 0) byDay[d].wins++;
     else byDay[d].losses++;
   }
 
   const dailyTarget = useMemo(() => {
+    // UTC midnight — this bar mirrors the engine's daily gate, which resets
+    // on UTC midnight (server/top10.ts). Local midnight would disagree.
     const start = new Date();
-    start.setHours(0, 0, 0, 0);
+    start.setUTCHours(0, 0, 0, 0);
     const todayIdeas = topIdeas.filter(
       i =>
         (i.status === "TP2_HIT" ||
           i.status === "STOPPED" ||
           i.status === "EXPIRED") &&
         (i.resolvedAt ?? i.createdAt) >= start.getTime() &&
-        i.pnlPoints !== null,
+        i.pnlPoints !== null &&
+        i.entryPrice > 0,
     );
     let pct = 0;
     for (const idea of todayIdeas)
@@ -205,11 +226,11 @@ export default function TopTenPage() {
               <span className="text-white/20">·</span>
               <span
                 className={
-                  aggregated.totalPnl >= 0 ? "text-emerald-400" : "text-red-400"
+                  totalPnlPct >= 0 ? "text-emerald-400" : "text-red-400"
                 }
               >
-                {aggregated.totalPnl >= 0 ? "+" : ""}
-                {aggregated.totalPnl.toFixed(1)} pts
+                {totalPnlPct >= 0 ? "+" : ""}
+                {totalPnlPct.toFixed(1)}%
               </span>
             </>
           )}

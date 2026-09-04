@@ -57,8 +57,9 @@ export function CalendarPage() {
     view === "all" ? allIdeas : allIdeas.filter(i => i.asset === selected);
 
   const closed = inScope.filter(
+    // TP1_HIT is still open (server open-set is ACTIVE + TP1_HIT) — counting
+    // it here books open legs as resolved and phantom losses (TP1 pnl is null).
     i =>
-      i.status === "TP1_HIT" ||
       i.status === "TP2_HIT" ||
       i.status === "STOPPED" ||
       i.status === "EXPIRED",
@@ -66,12 +67,15 @@ export function CalendarPage() {
 
   const byDay: Record<string, DayStats> = {};
   for (const idea of closed) {
+    // Rows without realized P&L carry no result — counting them as losses
+    // invents red days out of data gaps.
+    if (idea.pnlPoints === null) continue;
     const d = format(new Date(idea.resolvedAt ?? idea.createdAt), "yyyy-MM-dd");
     if (!byDay[d]) byDay[d] = { wins: 0, losses: 0, pnl: 0, count: 0 };
     byDay[d].count++;
     byDay[d].pnl += pnlPct(idea) ?? 0;
     // By realized P&L, not status — a STOPPED exit can still be a trailed win.
-    if ((idea.pnlPoints ?? 0) > 0) byDay[d].wins++;
+    if (idea.pnlPoints > 0) byDay[d].wins++;
     else byDay[d].losses++;
   }
 
@@ -92,9 +96,10 @@ export function CalendarPage() {
     closed.reduce<
       Record<string, { pnl: number; wins: number; losses: number }>
     >((acc, idea) => {
+      if (idea.pnlPoints === null) return acc;
       if (!acc[idea.asset]) acc[idea.asset] = { pnl: 0, wins: 0, losses: 0 };
       acc[idea.asset].pnl += pnlPct(idea) ?? 0;
-      if ((idea.pnlPoints ?? 0) > 0) acc[idea.asset].wins++;
+      if (idea.pnlPoints > 0) acc[idea.asset].wins++;
       else acc[idea.asset].losses++;
       return acc;
     }, {}),
@@ -207,7 +212,7 @@ export function CalendarPage() {
           />
           <SummaryCard
             label="Total P&L"
-            value={`${totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(1)} pts`}
+            value={`${totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(1)}%`}
             icon={<Target className="w-4 h-4" />}
             color={totalPnl >= 0 ? "text-emerald-400" : "text-red-400"}
           />
@@ -221,7 +226,7 @@ export function CalendarPage() {
             label="Best Day"
             value={
               bestDay
-                ? `${byDay[bestDay].pnl >= 0 ? "+" : ""}${byDay[bestDay].pnl.toFixed(1)}`
+                ? `${byDay[bestDay].pnl >= 0 ? "+" : ""}${byDay[bestDay].pnl.toFixed(1)}%`
                 : "—"
             }
             icon={<Target className="w-4 h-4" />}
@@ -291,7 +296,7 @@ export function CalendarPage() {
                       }`}
                     >
                       {r.pnl >= 0 ? "+" : ""}
-                      {r.pnl.toFixed(1)} pts
+                      {r.pnl.toFixed(1)}%
                     </span>
                   </button>
                 );

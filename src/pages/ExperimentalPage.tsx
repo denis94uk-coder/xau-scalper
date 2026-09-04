@@ -852,15 +852,18 @@ function ExperimentalEntries({
 const SIGNAL_ASSET = "PAXGUSDT";
 
 function ExperimentalTradingIdeas() {
+  // Filter server-side on asset AND source: client-side filtering of the 30
+  // newest PAXG rows silently drops experimental ideas whenever the newest
+  // rows belong to another book.
   const ideas = useLive(
-    () => api.ideas({ asset: SIGNAL_ASSET, limit: 30 }).then(r => r.ideas),
+    () =>
+      api
+        .ideas({ asset: SIGNAL_ASSET, limit: 100, source: "experimental" })
+        .then(r => r.ideas),
     ["ideas"],
   );
 
-  const expIdeas = useMemo(
-    () => (ideas ?? []).filter(i => i.source === "experimental"),
-    [ideas],
-  );
+  const expIdeas = useMemo(() => ideas ?? [], [ideas]);
 
   return (
     <div className="rounded-xl border border-[#AB47BC]/20 bg-[#AB47BC]/[0.03] p-4">
@@ -1321,7 +1324,8 @@ function ExperimentalPerformance() {
     ["ideas"],
   );
 
-  const stats = byAsset?.find(a => a.asset === "PAXGUSDT") ?? byAsset?.[0];
+  // PAXGUSDT only — never silently substitute another asset's record.
+  const stats = byAsset?.find(a => a.asset === "PAXGUSDT");
 
   if (!byAsset || !allIdeas) {
     return (
@@ -1412,11 +1416,9 @@ function ExperimentalPerformance() {
             <TrendingUp className="w-3 h-3" /> Profit Factor
           </div>
           <div
-            className={`text-lg font-bold font-mono ${(stats.profitFactor ?? 0) >= 1.5 ? "text-emerald-400" : (stats.profitFactor ?? 0) >= 1 ? "text-yellow-400" : "text-red-400"}`}
+            className={`text-lg font-bold font-mono ${stats.profitFactor === null ? "text-emerald-400" : stats.profitFactor >= 1.5 ? "text-emerald-400" : stats.profitFactor >= 1 ? "text-yellow-400" : "text-red-400"}`}
           >
-            {(stats.profitFactor ?? 0) >= 999
-              ? "∞"
-              : (stats.profitFactor ?? 0).toFixed(2)}
+            {stats.profitFactor === null ? "∞" : stats.profitFactor.toFixed(2)}
           </div>
           <div className="text-[10px] text-muted-foreground">
             Gross profit / loss
