@@ -519,6 +519,20 @@ export async function generateExperimentalSignal(
 
   const candles = await syncCandles(deps, asset, SIGNAL_INTERVAL);
   const analysis = analyzeExperimental(candles);
+  // Heartbeat for this book: without it the experimental journal's "Engine
+  // Runs" card is structurally zero — this path never logged one, so the
+  // book looked dead even while generating signals every tick.
+  const expDir = analysis?.experimentalSignal.direction;
+  db.logJournal({
+    eventType: "ENGINE_RUN",
+    asset: asset.id,
+    source: "experimental",
+    direction: expDir === "LONG" || expDir === "SHORT" ? expDir : undefined,
+    price: candles.at(-1)?.close ?? 0,
+    details:
+      `[${asset.displaySymbol}] EXP run ${expDir ?? "N/A"} ` +
+      `(${analysis?.experimentalSignal.confidence ?? 0}%)`,
+  });
   if (!analysis) return null;
   const sig = analysis.experimentalSignal;
   if (
@@ -554,6 +568,7 @@ export async function generateExperimentalSignal(
     db.logJournal({
       eventType: "SIGNAL_BLOCKED",
       asset: asset.id,
+      source: "experimental",
       direction: sig.direction,
       price: entry.entryPrice,
       details:
@@ -643,6 +658,7 @@ export function applyPrice(
     db.logJournal({
       eventType: "SL_HIT",
       asset: asset.id,
+      source: idea.source,
       ideaId: idea.id,
       direction: idea.direction,
       price: effectiveSL,
@@ -668,6 +684,7 @@ export function applyPrice(
       db.logJournal({
         eventType: "TP2_HIT",
         asset: asset.id,
+        source: idea.source,
         ideaId: idea.id,
         direction: idea.direction,
         price: idea.tp2,
@@ -704,6 +721,7 @@ export function applyPrice(
   db.logJournal({
     eventType: "TP1_HIT",
     asset: asset.id,
+    source: idea.source,
     ideaId: idea.id,
     direction: idea.direction,
     price: idea.tp1,
@@ -731,6 +749,7 @@ export function applyPrice(
     db.logJournal({
       eventType: "TP2_HIT",
       asset: asset.id,
+      source: idea.source,
       ideaId: idea.id,
       direction: idea.direction,
       price: idea.tp2,
@@ -819,22 +838,27 @@ export async function monitorIdeas(deps: EngineDeps): Promise<void> {
       });
       if (fresh.length > 0) db.saveCandles(asset.id, "1m", fresh);
       // No new bar yet — the newest stored bar stands in as the live tick.
-      const bars =
-        fresh.length > 0 ? fresh : db.getCandles(asset.id, "1m", 1);
+      const bars = fresh.length > 0 ? fresh : db.getCandles(asset.id, "1m", 1);
       const atr = lseAtr(db, asset);
       for (const idea of mine) {
         // Only bars AFTER the position opened may resolve it — the vault's
         // date-granular fetch returns the whole day, and pre-entry bars
         // (different price regime entirely) would false-stop the position.
         const openedSec = Math.floor(idea.created_at / 1000);
+        // Track live state, not the tick-start snapshot: after a TP1 the
+        // stored row is TP1_HIT-with-trailing-stop, but `idea` still says
+        // ACTIVE with the original stop — replaying it re-fires TP1/SL for
+        // every remaining bar (Sep 3: 300k duplicate exit rows).
+        let state = idea;
         for (const bar of bars) {
           if (bar.time < openedSec) continue;
-          if (applyPrice(db, asset, idea, bar, atr)) {
+          if (applyPrice(db, asset, state, bar, atr)) {
             changed++;
             // Once a position resolves, further bars must not touch it —
             // replaying a resolved idea fires its exit over and over.
-            const state = db.getIdea(idea.id);
-            if (!state || state.resolved_at !== null) break;
+            const refreshed = db.getIdea(idea.id);
+            if (!refreshed || refreshed.resolved_at !== null) break;
+            state = refreshed;
           }
         }
       }
@@ -861,18 +885,13 @@ const LSE_STRATEGIES_KEY = "lse:strategies";
  * when adopted, the 1h gold default otherwise.
  */
 function lseIntervalFor(db: Db, assetId: string): string {
-  const store = db.getSetting<Record<string, { interval?: string }>>(
-    LSE_STRATEGIES_KEY,
-  );
+  const store =
+    db.getSetting<Record<string, { interval?: string }>>(LSE_STRATEGIES_KEY);
   return store?.[assetId]?.interval ?? "1h";
 }
 
 function lseAtr(db: Db, asset: AssetDefinition): number {
-  const candles = db.getCandles(
-    asset.id,
-    lseIntervalFor(db, asset.id),
-    60,
-  );
+  const candles = db.getCandles(asset.id, lseIntervalFor(db, asset.id), 60);
   if (candles.length < asset.config.atrPeriod + 1) return 0;
   return calcATR(candles, asset.config.atrPeriod).at(-1) ?? 0;
 }
@@ -928,7 +947,10 @@ function latestATR(db: Db, asset: AssetDefinition): number {
  */
 export async function recoverGap(deps: EngineDeps): Promise<number> {
   const { db } = deps;
-  const assets = [...(deps.assets ?? getEnabledAssets()), ...lseMonitoredAssets(db)];
+  const assets = [
+    ...(deps.assets ?? getEnabledAssets()),
+    ...lseMonitoredAssets(db),
+  ];
   const open = db.openIdeas();
   if (open.length === 0) return 0;
 
@@ -953,7 +975,9 @@ export async function recoverGap(deps: EngineDeps): Promise<number> {
     // LSE instruments replay their own strategy interval off the vault; the
     // main registry replays the engine's 5m signal bar.
     const interval =
-      asset.dataSource === "lse" ? lseIntervalFor(db, asset.id) : SIGNAL_INTERVAL;
+      asset.dataSource === "lse"
+        ? lseIntervalFor(db, asset.id)
+        : SIGNAL_INTERVAL;
 
     let bars: Candle[];
     try {

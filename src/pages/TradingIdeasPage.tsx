@@ -109,9 +109,13 @@ export function TradingIdeasPage({
 } = {}) {
   // Main trading ideas default to the engine book; /top10/ideas and
   // /lse/ideas pass their own source so each book shows only itself.
+  // `source` MUST be a live-dep: the router reuses this component instance
+  // across /ideas, /top10/ideas and /lse/ideas, so without it the effect never
+  // refires and every book keeps showing the first-loaded book's numbers.
   const ideas = useLive(
     () => api.ideas({ limit: 300, source }).then(r => r.ideas),
     ["ideas"],
+    [source],
   );
   const [deleteIdea] = useMutation((id: number) => api.deleteIdea(id));
   const [filter, setFilter] = useState<string>("ALL");

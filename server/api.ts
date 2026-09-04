@@ -290,7 +290,14 @@ export async function handleApi(
   if (path === "/api/journal/counts") {
     const jSource = url.searchParams.get("source") ?? undefined;
     const jExclude = url.searchParams.get("excludeSource") ?? undefined;
-    const validJ = new Set(["engine", "teo", "dashboard", "experimental"]);
+    const validJ = new Set([
+      "engine",
+      "teo",
+      "dashboard",
+      "experimental",
+      "top10",
+      "lse",
+    ]);
     if (jSource && !validJ.has(jSource)) {
       return bad(`unknown source "${jSource}"`, 400);
     }

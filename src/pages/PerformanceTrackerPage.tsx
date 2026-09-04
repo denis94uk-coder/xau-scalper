@@ -194,6 +194,19 @@ export function PerformanceTrackerPage() {
       i.status === "EXPIRED",
   );
 
+  // % of entry — same convention as the Ideas pages and the calendar above:
+  // points can't be summed across assets, per-trade % can. Honors the same
+  // asset + source filter as the sections below.
+  const totalPnlPct = closed.reduce((s, i) => s + (pnlPct(i) ?? 0), 0);
+  // Today's realized % — trades resolved since local midnight, the same
+  // local-day rule the Ideas "Daily P&L" stat and the calendar use.
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const todayClosed = closed.filter(
+    i => (i.resolvedAt ?? i.createdAt) >= startOfToday.getTime(),
+  );
+  const dailyPnlPct = todayClosed.reduce((s, i) => s + (pnlPct(i) ?? 0), 0);
+
   // Group by day for calendar. Local-date keys, not UTC — an evening-resolved
   // trade belongs on the day the operator saw it happen.
   const byDay: Record<
@@ -319,7 +332,33 @@ export function PerformanceTrackerPage() {
       <SignificanceBanner sig={stats.significance} />
 
       {/* Main Stats Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-4 gap-2">
+        <PerfCard
+          label="Daily P&L %"
+          value={`${dailyPnlPct >= 0 ? "+" : ""}${dailyPnlPct.toFixed(2)}%`}
+          color={
+            dailyPnlPct > 0
+              ? "text-emerald-400"
+              : dailyPnlPct < 0
+                ? "text-red-400"
+                : "text-muted-foreground"
+          }
+          icon={<Target className="w-4 h-4" />}
+          detail={`Today · ${todayClosed.length} trade${todayClosed.length === 1 ? "" : "s"}`}
+        />
+        <PerfCard
+          label="Total P&L %"
+          value={`${totalPnlPct >= 0 ? "+" : ""}${totalPnlPct.toFixed(2)}%`}
+          color={totalPnlPct >= 0 ? "text-emerald-400" : "text-red-400"}
+          icon={
+            totalPnlPct >= 0 ? (
+              <TrendingUp className="w-4 h-4" />
+            ) : (
+              <TrendingDown className="w-4 h-4" />
+            )
+          }
+          detail={`Sum of % · ${closed.length} trades`}
+        />
         <PerfCard
           label="Win Rate"
           value={`${stats.winRate.toFixed(1)}%`}
