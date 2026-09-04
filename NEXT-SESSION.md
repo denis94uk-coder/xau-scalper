@@ -291,3 +291,10 @@ pre-cleanup). All pushed to `jcode` remote
   reversion@1h not reproduced; NEW momentum@30m qualified (PF 1.78, 242tr,
   p=0.032, 3/4 folds; carpet pin 153; full-history PF 1.14, net +18282).
 - OPERATOR DECISION: change nothing — both live edges stay as-is.
+
+## 11. GER adopted momentum@30m (operator reversal)
+- Operator adopted carpet pin 153 (momentum@30m, p=0.032, 3/4 folds,
+  confirm 1h), replacing reversion@1h. Verified TRADING live, no restart
+  needed. The 3 open GER SHORTs (reversion-era) stay monitored under the
+  strategy-independent monitor.
+- DB backup pre-swap: `tmp/teo.db.backup-20260904-adopt-ger-mom`.
