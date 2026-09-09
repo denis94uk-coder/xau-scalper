@@ -1,5 +1,6 @@
 import { Award, BarChart3, Target, Zap } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import {
   DailyPnlCalendar,
   pnlPct,
@@ -129,13 +130,56 @@ function LseAssetCard({
 }: {
   asset: import("@/lib/api").LseAssetStatus;
 }) {
-  const status = asset.trading
-    ? { label: "TRADING", cls: "bg-emerald-500/15 text-emerald-400" }
-    : asset.aliasOf
-      ? { label: "ALIAS", cls: "bg-yellow-500/15 text-yellow-400" }
-      : asset.strategy
-        ? { label: "BLOCKED", cls: "bg-red-500/15 text-red-400" }
-        : { label: "NO EDGE", cls: "bg-white/5 text-muted-foreground" };
+  const hasStrategies = asset.strategies.length > 0;
+  const hasPaused = asset.strategies.some(s => s.disabled);
+  const tradingQualified = asset.strategies.some(s => s.qualified && s.trades);
+  const tradingExperimental = asset.strategies.some(
+    s => !s.qualified && s.trades,
+  );
+  const status = hasPaused && !tradingQualified && !tradingExperimental
+    ? { label: "PAUSED", cls: "bg-white/10 text-muted-foreground" }
+    : tradingQualified
+      ? { label: "TRADING", cls: "bg-emerald-500/15 text-emerald-400" }
+      : tradingExperimental
+        ? { label: "EXP", cls: "bg-amber-500/15 text-amber-400" }
+        : hasStrategies
+          ? { label: "BLOCKED", cls: "bg-red-500/15 text-red-400" }
+          : { label: "NO EDGE", cls: "bg-white/5 text-muted-foreground" };
+
+  const addFromPins = useCallback(async () => {
+    try {
+      const pins = await api.discoveredStrategies();
+      const assetPins = pins.strategies.filter(p => p.assetId === asset.id);
+      let added = 0;
+      for (const pin of assetPins) {
+        // Check if this family+interval already exists
+        const exists = asset.strategies.some(
+          s => s.family === pin.model && s.interval === pin.interval,
+        );
+        if (!exists) {
+          await api.lseAddStrategy({
+            assetId: asset.id,
+            family: pin.model!,
+            interval: pin.interval,
+            config: { ...pin.config } as Record<string, unknown>,
+            adjustedP: pin.adjustedP,
+            verdict: "qualified",
+            relaxed: false,
+            experimental: false,
+          });
+          added++;
+        }
+      }
+      toast.success(
+        added > 0
+          ? `Added ${added} pin(s) to ${asset.id} carpet.`
+          : "No new pins to add.",
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to add from pins");
+    }
+  }, [asset]);
+
   return (
     <div
       className="rounded-md border border-white/5 bg-white/[0.02] p-1.5 min-w-0"
@@ -154,23 +198,126 @@ function LseAssetCard({
           {status.label}
         </span>
       </div>
-      <div className="text-[10px] font-mono text-muted-foreground truncate mt-0.5">
-        {asset.strategy
-          ? `${asset.strategy.family}@${asset.strategy.interval}${asset.strategy.confirm ? `+${asset.strategy.confirm}` : ""}`
-          : asset.aliasOf
-            ? `mirrors ${asset.aliasOf}`
-            : "no strategy"}
-      </div>
-      <div className="text-[10px] font-mono flex items-center gap-1 mt-0.5">
-        {asset.strategy && (
-          <span className="text-muted-foreground">
-            p={asset.strategy.adjustedP.toExponential(1)}
-          </span>
-        )}
-        {asset.openIdeas > 0 && (
-          <span className="text-blue-400 ml-auto">{asset.openIdeas} open</span>
-        )}
-      </div>
+
+      {hasStrategies ? (
+        <div className="space-y-1 mt-1">
+          {asset.strategies.map(s => (
+            <div
+              key={`${s.family}-${s.interval}`}
+              className="flex items-center gap-1.5 text-[9px] font-mono px-1 py-0.5 rounded bg-white/[0.02]"
+            >
+              <span
+                className={`flex-1 truncate ${
+                  s.disabled
+                    ? "text-muted-foreground"
+                    : s.trades
+                      ? s.qualified
+                        ? "text-emerald-400"
+                        : "text-amber-400"
+                      : "text-red-400"
+                }`}
+              >
+                {s.family}@{s.interval}
+                {s.family === "custom" && (
+                  <span className="ml-1 px-0.5 text-[8px] bg-fuchsia-500/20 text-fuchsia-300 rounded">
+                    CUSTOM
+                  </span>
+                )}
+                {s.confirm ? `+${s.confirm}` : ""}
+                {s.disabled && (
+                  <span className="ml-1 px-0.5 text-[8px] bg-white/10 text-muted-foreground rounded">
+                    PAUSED
+                  </span>
+                )}
+                {!s.disabled && s.trades && !s.qualified && (
+                  <span className="ml-1 px-0.5 text-[8px] bg-amber-500/20 text-amber-400 rounded">
+                    EXP
+                  </span>
+                )}
+              </span>
+              <span className="text-muted-foreground">
+                p={s.adjustedP.toExponential(1)}
+              </span>
+              {s.disabled ? (
+                <button
+                  onClick={() =>
+                    api.lseSetDisabled(asset.id, s.family, s.interval, false)
+                  }
+                  className="px-1 text-[8px] text-emerald-400 hover:text-emerald-300"
+                  title="Resume strategy"
+                >
+                  ▶
+                </button>
+              ) : s.trades ? (
+                <button
+                  onClick={() =>
+                    api.lseSetDisabled(asset.id, s.family, s.interval, true)
+                  }
+                  className="px-1 text-[8px] text-muted-foreground hover:text-yellow-400"
+                  title="Pause strategy (manual stop) — keeps config, stops firing"
+                >
+                  ⏸
+                </button>
+              ) : null}
+              {!s.disabled && !s.qualified && !s.trades && (
+                <button
+                  onClick={() =>
+                    api.lseSetExperimental(asset.id, s.family, s.interval, true)
+                  }
+                  className="px-1 text-[8px] text-amber-400 hover:text-amber-300"
+                  title="Promote to experimental (paper trade)"
+                >
+                  EXP
+                </button>
+              )}
+              {!s.disabled && s.trades && !s.qualified && (
+                <button
+                  onClick={() =>
+                    api.lseSetExperimental(
+                      asset.id,
+                      s.family,
+                      s.interval,
+                      false,
+                    )
+                  }
+                  className="px-1 text-[8px] text-muted-foreground hover:text-amber-400"
+                  title="Demote from experimental (block)"
+                >
+                  ✕EXP
+                </button>
+              )}
+              <button
+                onClick={() =>
+                  api.lseRemoveStrategy(asset.id, s.family, s.interval)
+                }
+                className="px-1 text-[8px] text-muted-foreground hover:text-red-400"
+                title="Remove from carpet"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="text-[10px] font-mono text-muted-foreground truncate mt-0.5">
+          no strategy
+        </div>
+      )}
+
+      {asset.openIdeas > 0 && (
+        <div className="text-[10px] font-mono flex items-center gap-1 mt-1 text-blue-400">
+          {asset.openIdeas} open
+        </div>
+      )}
+
+      {hasStrategies && (
+        <button
+          onClick={addFromPins}
+          className="mt-1 w-full text-[9px] text-muted-foreground hover:text-white"
+        >
+          + Add qualified pins from Carpet
+        </button>
+      )}
     </div>
   );
 }

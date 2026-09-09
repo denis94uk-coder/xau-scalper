@@ -27,18 +27,25 @@ import {
 import { summariseByRegime } from "../core/memory";
 import { averageConcurrency, summarise } from "../core/portfolio";
 import { assessSignificance, effectiveSampleSize } from "../core/significance";
+import { DEFAULT_STRATEGY_CONFIG } from "../core/strategy";
 import { ConfigError, ConfigStore } from "./config";
 import type { Db } from "./db";
 import { correlationsFrom, ladderIsSane, openExposures } from "./engine";
 import { type AppEvent, publish, subscribe } from "./events";
+import {
+  confirmFor,
+  type LseStrategy,
+  lseUniverseStatus,
+  readLseStrategyStore,
+  upsertLseStrategy,
+} from "./lse-engine";
 import { fetchCandles, fetchTickers } from "./market";
 import { findExportDir } from "./mt5";
 import { status as mt5Status, syncOnce } from "./mt5bridge";
-import { lseUniverseStatus } from "./lse-engine";
-import { top10Universe } from "./top10";
 import { cancelRun, getRun, listRuns, startRun } from "./research";
 import type { RiskManager } from "./risk-manager";
 import { buildSymbolUniverse, fetchUsdtPairs } from "./symbols";
+import { top10Universe } from "./top10";
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -575,6 +582,121 @@ export async function handleApi(
     return json({ prices });
   }
 
+  // ─── LSE carpet management ───
+  // POST /api/lse/strategies — add/replace a strategy slot on an asset's carpet.
+  if (path === "/api/lse/strategies" && req.method === "POST") {
+    const body = await readBody(req);
+    if (body instanceof Response) return body;
+    const {
+      assetId,
+      family,
+      interval,
+      config,
+      confirm,
+      adjustedP,
+      verdict,
+      relaxed,
+      experimental,
+      disabled,
+      adoptedAt,
+    } = body as Record<string, unknown>;
+    const aid = String(assetId ?? "");
+    const fam = String(family ?? "");
+    const intv = String(interval ?? "");
+    if (!aid || !fam || !intv || !config)
+      return bad("assetId, family, interval, config required");
+    if (!LSE_UNIVERSE.some(u => u.id === aid))
+      return bad("assetId not in LSE universe", 400);
+    const allowedFamilies = [
+      "reversion",
+      "trend",
+      "breakout",
+      "momentum",
+      "custom",
+    ];
+    if (!allowedFamilies.includes(fam))
+      return bad(`family must be one of: ${allowedFamilies.join(", ")}`);
+    const store: Record<string, LseStrategy[]> = readLseStrategyStore(db);
+    const list: LseStrategy[] = store[aid] ?? [];
+    const entry: LseStrategy = {
+      family: fam as "reversion" | "trend" | "breakout" | "momentum" | "custom",
+      config: {
+        ...DEFAULT_STRATEGY_CONFIG,
+        ...(config as Record<string, unknown>),
+      },
+      interval: intv,
+      confirm: confirm ? String(confirm) : confirmFor(intv),
+      adjustedP: typeof adjustedP === "number" ? adjustedP : 1,
+      adoptedAt: typeof adoptedAt === "number" ? adoptedAt : Date.now(),
+      verdict: verdict ? String(verdict) : undefined,
+      relaxed: Boolean(relaxed),
+      experimental: Boolean(experimental),
+      disabled: Boolean(disabled),
+    };
+    store[aid] = upsertLseStrategy(list, entry);
+    db.setSetting("lse:strategies", store);
+    publish("engine");
+    const status = lseUniverseStatus(db).find(s => s.id === aid);
+    return json({
+      ok: true,
+      assetId: aid,
+      strategies: status?.strategies ?? [],
+    });
+  }
+
+  // DELETE /api/lse/strategies/:assetId/:family/:interval — remove a carpet slot.
+  const lseDelMatch = path.match(
+    /^\/api\/lse\/strategies\/([^/]+)\/([^/]+)\/([^/]+)$/,
+  );
+  if (lseDelMatch && req.method === "DELETE") {
+    const [, aid, fam, intv] = lseDelMatch;
+    const store: Record<string, LseStrategy[]> = readLseStrategyStore(db);
+    const list: LseStrategy[] = store[aid] ?? [];
+    const idx = list.findIndex(e => e.family === fam && e.interval === intv);
+    if (idx === -1) return bad("strategy not found", 404);
+    store[aid] = list.filter((_, i) => i !== idx);
+    if (store[aid].length === 0) delete store[aid];
+    db.setSetting("lse:strategies", store);
+    publish("engine");
+    return json({ ok: true, assetId: aid });
+  }
+
+  // PATCH /api/lse/strategies/:assetId/:family/:interval — toggle experimental / disabled flags.
+  const lsePatchMatch = path.match(
+    /^\/api\/lse\/strategies\/([^/]+)\/([^/]+)\/([^/]+)$/,
+  );
+  if (lsePatchMatch && req.method === "PATCH") {
+    const [, aid, fam, intv] = lsePatchMatch;
+    const body = await readOptionalBody(req);
+    if (body instanceof Response) return body;
+    const { experimental, disabled } = body as {
+      experimental?: boolean;
+      disabled?: boolean;
+    };
+    if (
+      typeof experimental !== "boolean" &&
+      typeof disabled !== "boolean"
+    )
+      return bad("experimental or disabled (boolean) required");
+    const store: Record<string, LseStrategy[]> = readLseStrategyStore(db);
+    const list: LseStrategy[] = store[aid] ?? [];
+    const idx = list.findIndex(e => e.family === fam && e.interval === intv);
+    if (idx === -1) return bad("strategy not found", 404);
+    if (typeof experimental === "boolean")
+      list[idx] = { ...list[idx], experimental };
+    if (typeof disabled === "boolean")
+      list[idx] = { ...list[idx], disabled };
+    store[aid] = list;
+    db.setSetting("lse:strategies", store);
+    publish("engine");
+    return json({
+      ok: true,
+      assetId: aid,
+      experimental: list[idx].experimental,
+      disabled: list[idx].disabled,
+    });
+  }
+
   // ─── Engines ───
   // The live framework: every signal engine with the strategies it runs
   // right now. Read live on each call (config + LSE store + top-10
@@ -610,13 +732,19 @@ export async function handleApi(
         {
           id: "lse",
           label: "LSE",
-          strategies: lseUniverseStatus(db).map(s => ({
-            asset: s.id,
-            family: s.strategy
-              ? `${s.strategy.family}@${s.strategy.interval}`
-              : null,
-            status: s.trading ? "trading" : s.strategy ? "blocked" : "idle",
-          })),
+          strategies: lseUniverseStatus(db).flatMap(s =>
+            s.strategies.length > 0
+              ? s.strategies.map(strat => ({
+                  asset: s.id,
+                  family: `${strat.family}@${strat.interval}${strat.disabled ? " ·PAUSED" : strat.trades && !strat.qualified ? " ·EXP" : ""}`,
+                  status: strat.disabled
+                    ? "paused"
+                    : strat.trades
+                      ? "trading"
+                      : "blocked",
+                }))
+              : [{ asset: s.id, family: "", status: "idle" }],
+          ),
         },
       ],
     });
@@ -1173,6 +1301,57 @@ export async function handleApi(
       const body = await readOptionalBody(req);
       if (body instanceof Response) return body;
       const targetId = String(body?.assetId || found.assetId);
+
+      // LSE assets adopt into the LSE carpet (multistrategy per asset),
+      // not the main engine config.
+      const isLseAsset = LSE_UNIVERSE.some(u => u.id === targetId);
+      if (isLseAsset) {
+        const model =
+          found.model && found.model !== "combined" ? found.model : null;
+        const allowedFamilies = [
+          "reversion",
+          "trend",
+          "breakout",
+          "momentum",
+          "custom",
+        ];
+        if (!model || !allowedFamilies.includes(model)) {
+          return bad(
+            "LSE adoption requires a pinned strategy with model: reversion, trend, breakout, momentum, or custom",
+            400,
+          );
+        }
+        const store = readLseStrategyStore(db);
+        const list = store[targetId] ?? [];
+        const entry = {
+          family: model as
+            | "reversion"
+            | "trend"
+            | "breakout"
+            | "momentum"
+            | "custom",
+          config: { ...DEFAULT_STRATEGY_CONFIG, ...found.config },
+          interval: found.interval,
+          confirm: confirmFor(found.interval),
+          adjustedP: found.adjustedP,
+          adoptedAt: Date.now(),
+          verdict: "qualified",
+          relaxed: false,
+          experimental: false,
+        };
+        store[targetId] = upsertLseStrategy(list, entry);
+        db.setSetting("lse:strategies", store);
+        publish("engine");
+        const status = lseUniverseStatus(db).find(s => s.id === targetId);
+        return json({
+          adopted: true,
+          assetId: targetId,
+          added: list.length === 0,
+          book: "lse",
+          strategies: status?.strategies ?? [],
+        });
+      }
+
       const target = cfg.assets.find(a => a.id === targetId);
 
       // Merge over the target's own config rather than replacing wholesale:
@@ -1188,11 +1367,11 @@ export async function handleApi(
       // --adopt does. "combined" is stored as absent — it is the default the
       // engine already applies, and writing it out would pin every future
       // combined reversion of this asset to a label instead of a behaviour.
-      const model =
+      const m =
         found.model && found.model !== "combined"
           ? { model: found.model as ScoringModel }
           : {};
-      const patch = { ...model, config: merged };
+      const patch = { ...m, config: merged };
 
       const assets = target
         ? cfg.assets.map(a => (a.id === targetId ? { ...a, ...patch } : a))
@@ -1224,6 +1403,7 @@ export async function handleApi(
         adopted: true,
         assetId: targetId,
         added: target === undefined,
+        book: "engine",
       });
     }
 
@@ -1236,6 +1416,46 @@ export async function handleApi(
       publish("research");
       return json({ ok: true });
     }
+  }
+
+  // ─── System ───
+  if (path === "/api/system/restart" && req.method === "POST") {
+    db.logJournal({
+      eventType: "SYSTEM_RESTART",
+      asset: "SYSTEM",
+      source: "dashboard",
+      details: "[SYSTEM] restart requested from UI",
+    });
+    publish("engine");
+    // Self-healing restart: spawn a detached shell that waits for the port
+    // to free before starting the successor. Direct spawn collides with
+    // EADDRINUSE because the old server still holds :4000 for ~200ms.
+    setTimeout(async () => {
+      try {
+        const { spawn } = await import("node:child_process");
+        spawn("bash", ["-c", "sleep 0.8; nohup bun run server/index.ts >> /tmp/teo.log 2>&1 &"], {
+          cwd: process.cwd(),
+          detached: true,
+          stdio: "ignore",
+        }).unref();
+        console.log("[system] scheduled successor in 0.8s, exiting");
+      } catch (e) {
+        console.error("[system] spawn failed, exiting anyway", e);
+      }
+      setTimeout(() => process.exit(0), 300);
+    }, 300);
+    return json({ ok: true, restarting: true });
+  }
+
+  if (path === "/api/system/health" && req.method === "GET") {
+    return json({
+      ok: true,
+      uptimeSec: Math.floor(process.uptime()),
+      openIdeas: db.openIdeas().length,
+      lastSignalRun: db.lastRun("signals"),
+      lastMonitorRun: db.lastRun("monitor"),
+      version: process.env.npm_package_version ?? null,
+    });
   }
 
   // Any other /api/* path is a mistake, not a client-side route. Falling

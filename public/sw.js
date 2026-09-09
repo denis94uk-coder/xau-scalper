@@ -1,7 +1,7 @@
 // XAU Scalper Service Worker — enables PWA install + basic caching
 // Bump on every shipped UI change: SPA navigation never refetches the shell,
 // so a stale CACHE_NAME freezes clients on the old bundle indefinitely.
-const CACHE_NAME = "xau-scalper-v2";
+const CACHE_NAME = "xau-scalper-v12";
 const PRECACHE_URLS = ["/", "/index.html"];
 
 // Install: pre-cache shell

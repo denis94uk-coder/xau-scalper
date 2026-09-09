@@ -10,8 +10,8 @@
  */
 
 import { Database } from "bun:sqlite";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { BacktestMetrics } from "../core/backtest";
 import type { Candle, StrategyConfig } from "../core/strategy";
 import type { OpenInterestPoint } from "./market-futures";
@@ -123,12 +123,28 @@ export interface RegimeSettings {
 
 const OPEN_STATUSES = ["ACTIVE", "TP1_HIT"] as const;
 
+// Anchor the default DB so launching from any working directory finds the same
+// history instead of silently creating a fresh one: source runs use the repo's
+// data/, compiled binaries use data/ beside the executable (the .app launcher
+// overrides both via TEO_DB_PATH, which always wins).
+const DEFAULT_DB_PATH =
+  import.meta.dir.startsWith("/$bunfs") || import.meta.dir.startsWith("/BUNFS")
+    ? join(dirname(process.execPath), "data", "teo.db")
+    : join(import.meta.dir, "..", "data", "teo.db");
+
 export class Db {
   readonly raw: Database;
 
-  constructor(path = process.env.TEO_DB_PATH ?? "data/teo.db") {
+  constructor(path = process.env.TEO_DB_PATH ?? DEFAULT_DB_PATH) {
+    const fresh = path !== ":memory:" && !existsSync(path);
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
     this.raw = new Database(path, { create: true });
+    if (fresh) {
+      console.error(
+        `[db] Creating NEW database at ${path} — if you expected existing history, ` +
+          "this process was launched from the wrong location. Set TEO_DB_PATH or restart from the repo.",
+      );
+    }
     // WAL lets the Python side read while the server writes. It is a no-op for
     // :memory: databases, which is why tests still work unchanged.
     this.raw.exec("PRAGMA journal_mode = WAL");

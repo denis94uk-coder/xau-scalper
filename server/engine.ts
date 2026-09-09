@@ -912,13 +912,18 @@ export async function monitorIdeas(deps: EngineDeps): Promise<void> {
 const LSE_STRATEGIES_KEY = "lse:strategies";
 
 /**
- * Interval an LSE instrument's strategy trades — its own discovered entry
- * when adopted, the 1h gold default otherwise.
+ * Interval an LSE instrument's strategy trades — its first carpet entry
+ * when adopted, the 1h gold default otherwise. The carpet store holds a
+ * list per asset; pre-carpet entries read as single objects.
  */
 function lseIntervalFor(db: Db, assetId: string): string {
   const store =
-    db.getSetting<Record<string, { interval?: string }>>(LSE_STRATEGIES_KEY);
-  return store?.[assetId]?.interval ?? "1h";
+    db.getSetting<
+      Record<string, { interval?: string } | Array<{ interval?: string }>>
+    >(LSE_STRATEGIES_KEY);
+  const entry = store?.[assetId];
+  const first = Array.isArray(entry) ? entry[0] : entry;
+  return first?.interval ?? "1h";
 }
 
 function lseAtr(db: Db, asset: AssetDefinition): number {

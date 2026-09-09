@@ -6,15 +6,16 @@
 import { describe, expect, test } from "bun:test";
 import {
   barTime,
-  fetchLseCandles,
   fetchLseCalendar,
+  fetchLseCandles,
   fetchLseCot,
 } from "../lse";
 
 /** A fetcher that maps URL → canned JSON, recording each request URL. */
-function mockFetch(
-  routes: (url: string) => unknown,
-): { fetcher: typeof fetch; calls: string[] } {
+function mockFetch(routes: (url: string) => unknown): {
+  fetcher: typeof fetch;
+  calls: string[];
+} {
   const calls: string[] = [];
   const fetcher = (async (input: string | URL | Request) => {
     const url = String(input);
@@ -41,8 +42,21 @@ describe("barTime", () => {
 describe("fetchLseCandles", () => {
   test("maps vault rows to candles, defaulting FX volume to 0", async () => {
     const { fetcher } = mockFetch(() => [
-      { ts: "2024-03-05 14:30:00", open: 1.1, high: 1.2, low: 1.0, close: 1.15 },
-      { ts: "2024-03-05 14:45:00", open: 1.15, high: 1.25, low: 1.05, close: 1.2, volume: 0 },
+      {
+        ts: "2024-03-05 14:30:00",
+        open: 1.1,
+        high: 1.2,
+        low: 1.0,
+        close: 1.15,
+      },
+      {
+        ts: "2024-03-05 14:45:00",
+        open: 1.15,
+        high: 1.25,
+        low: 1.05,
+        close: 1.2,
+        volume: 0,
+      },
     ]);
     const candles = await fetchLseCandles("XAU/USD", "1h", { fetcher });
     expect(candles).toHaveLength(2);
@@ -109,8 +123,12 @@ describe("fetchLseCandles", () => {
     expect(calls[0]).toContain("start=2024-03-01");
     // The cursor lands on the last bar's date (inclusive `start` re-reads it;
     // upsert makes the overlap harmless) and then follows the data forward.
-    expect(calls[1]).toContain(`start=${page1[page1.length - 1].ts.slice(0, 10)}`);
-    expect(calls[2]).toContain(`start=${page2[page2.length - 1].ts.slice(0, 10)}`);
+    expect(calls[1]).toContain(
+      `start=${page1[page1.length - 1].ts.slice(0, 10)}`,
+    );
+    expect(calls[2]).toContain(
+      `start=${page2[page2.length - 1].ts.slice(0, 10)}`,
+    );
   });
 
   test("`since` starts the cursor on the stored bar's date to refresh it", async () => {

@@ -96,6 +96,20 @@ export interface StrategyConfig {
    * Read only by the "momentum" family; ignored everywhere else.
    */
   momentumLookback: number;
+
+  // ─── Vol-targeted trend family params ───
+  /** Annualised volatility target (e.g., 0.15 = 15% annualised vol). */
+  volTarget?: number;
+  /** Maximum leverage cap (notional / capital). */
+  levCap?: number;
+  /** Realised-vol lookback in bars (converted from days). */
+  volLookback?: number;
+  /** Yield-curve slope change lookback (days). */
+  volTrendSlopeN?: number;
+  /** Yield-curve front-end change lookback (days). */
+  volTrendFrontN?: number;
+  /** Enable yield-curve regime gate (requires USYIELDS series). 0 = off, 1 = on. */
+  volTrendUseYieldGate?: number;
 }
 
 export const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
@@ -129,6 +143,13 @@ export const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
   cooldownMs: 10 * 60 * 1000,
   breakoutPeriod: 20,
   momentumLookback: 24,
+  // Vol-targeted trend defaults (LSE Terminal parity)
+  volTarget: 0.15,
+  levCap: 3.0,
+  volLookback: 20,
+  volTrendSlopeN: 20,
+  volTrendFrontN: 20,
+  volTrendUseYieldGate: 0,
 };
 
 // ─── Rounding ───
@@ -305,6 +326,10 @@ export interface AnalysisResult {
   grade: SignalGrade;
   indicators: Record<string, number | undefined>;
   atr: number;
+  // Vol-targeted trend
+  leverage?: number;
+  realisedVol?: number;
+  annVol?: number;
 }
 
 // ─── Full analysis function ───
@@ -328,6 +353,10 @@ export interface IndicatorSeries {
   stochK: number[];
   bbUpper: number[];
   bbLower: number[];
+  // Vol-targeted trend
+  realisedVol: number[];
+  annVol: number[];
+  leverage: number[];
 }
 
 /** Compute every indicator series once for a window. */
@@ -347,6 +376,49 @@ export function precomputeIndicators(
     config.bollingerPeriod,
     config.bollingerStdDev,
   );
+
+  // Vol-targeted trend: realised vol, annualised vol, leverage
+  const volLookback = config.volLookback ?? 20;
+  const volTarget = config.volTarget ?? 0.15;
+  const levCap = config.levCap ?? 3.0;
+  const n = closes.length;
+  const realisedVol: number[] = new Array(n).fill(NaN);
+  const annVol: number[] = new Array(n).fill(NaN);
+  const leverage: number[] = new Array(n).fill(NaN);
+
+  // Bar spacing from timestamps (epoch ms)
+  const times = candles.map(c => c.time);
+  let barMs = 300000; // default 5m
+  if (times.length > 2) {
+    const diffs: number[] = [];
+    for (let i = 1; i < Math.min(20000, times.length); i++) {
+      diffs.push(times[i] - times[i - 1]);
+    }
+    diffs.sort((a, b) => a - b);
+    barMs = diffs[Math.floor(diffs.length / 2)];
+  }
+  const barsPerYear = (365.25 * 24 * 60 * 60 * 1000) / barMs;
+
+  // Rolling realised vol
+  const ret: number[] = new Array(n).fill(NaN);
+  for (let i = 1; i < n; i++) {
+    if (closes[i - 1] !== 0)
+      ret[i] = (closes[i] - closes[i - 1]) / closes[i - 1];
+  }
+
+  for (let i = volLookback; i < n; i++) {
+    let sum = 0;
+    for (let j = i - volLookback + 1; j <= i; j++) {
+      sum += ret[j] * ret[j];
+    }
+    const std = Math.sqrt(sum / volLookback);
+    realisedVol[i] = std;
+    annVol[i] = std * Math.sqrt(barsPerYear);
+    if (annVol[i] > 0) {
+      leverage[i] = Math.min(volTarget / annVol[i], levCap);
+    }
+  }
+
   return {
     closes,
     rsi: calcRSI(closes, config.rsiPeriod),
@@ -358,6 +430,9 @@ export function precomputeIndicators(
     stochK: calcStochastic(candles, config.stochPeriod).k,
     bbUpper: bb.upper,
     bbLower: bb.lower,
+    realisedVol,
+    annVol,
+    leverage,
   };
 }
 
@@ -592,6 +667,9 @@ export function analyzeAt(
     reason: reasons.join(" · "),
     grade,
     atr: r(currentATR),
+    leverage: ind.leverage ? r(ind.leverage[last]) : undefined,
+    realisedVol: ind.realisedVol ? r(ind.realisedVol[last]) : undefined,
+    annVol: ind.annVol ? r(ind.annVol[last]) : undefined,
     indicators: {
       rsi: lastRSI ? r(lastRSI) : undefined,
       stochK: lastK ? r(lastK) : undefined,

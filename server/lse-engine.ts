@@ -7,11 +7,16 @@
  * signal, or a journal row with the main engine or top10.
  *
  * What lives here:
- *   * PER-ASSET STRATEGIES (`lse:strategies` store): each instrument trades
- *     ONLY its own discovered edge — the family, config and interval the
- *     data qualified for that instrument, never a book-wide template. An
- *     entry that fails the strict gate (p > 0.05, relaxed, failed verdict)
- *     does not trade. One id per underlying — no alias mirrors.
+ *   * PER-ASSET STRATEGY CARPET (`lse:strategies` store): each instrument
+ *     carries a LIST of strategies — one slot per family+interval — and
+ *     trades ONLY its own discovered edges, never a book-wide template.
+ *     Entries pass one of two gates: the strict gate (p ≤ 0.05, no
+ *     relaxed/failed verdict) trades as a qualified edge; an entry the
+ *     operator explicitly flags `experimental` ALSO trades — tagged EXP,
+ *     paper only — because the book is paper-tracked and live paper
+ *     evidence is how an experimental edge earns qualification. A
+ *     relaxed/unqualified entry without the flag stays blocked. One id
+ *     per underlying — no alias mirrors.
  *   * GOLD fallback: XAUUSD hand-qualified 1h breakout (20y, PF 1.24,
  *     p = 0.006, 4/4 folds) until discovery adopts its own entry.
  *   * GOLD: breakout family on 1h — the family/interval the data chose.
@@ -80,7 +85,7 @@ const XAUUSD_BREAKOUT: typeof DEFAULT_STRATEGY_CONFIG = {
   momentumLookback: 95,
 };
 
-type Family = "reversion" | "trend" | "breakout" | "momentum";
+type Family = "reversion" | "trend" | "breakout" | "momentum" | "custom";
 
 /**
  * Per-asset strategy. An asset absent here has no qualified edge yet and
@@ -96,9 +101,9 @@ const LSE_STRATEGIES: Record<
 // ─── Per-asset discovered strategies ───
 
 /**
- * One instrument's independent strategy, as adopted by
+ * One strategy on an instrument's carpet, as adopted by
  * scripts/lse-discovery.ts --adopt. The book's promise: an instrument
- * trades only on ITS OWN edge — the family, config and interval the data
+ * trades only on ITS OWN edges — the family, config and interval the data
  * qualified for that instrument, never a book-wide template.
  */
 export interface LseStrategy {
@@ -113,20 +118,83 @@ export interface LseStrategy {
   relaxed?: boolean;
   /** Discovery verdict at adoption ("qualified" or the failure mode). */
   verdict?: string;
+  /**
+   * Operator-flagged paper edge: fires signals tagged EXPERIMENTAL even
+   * when the strict gate fails. The ONLY way a relaxed/unqualified entry
+   * may trade — the flag is always an explicit operator decision.
+   */
+  experimental?: boolean;
+  /** Operator-paused: manually stopped, never fires even if qualified. */
+  disabled?: boolean;
 }
 
 const STRATEGIES_KEY = "lse:strategies";
 
 /**
- * Strict gate: a strategy trades its instrument only if it is a qualified
- * edge — Šidák-adjusted p ≤ 0.05 and no relaxed/failed verdict. Legacy store
+ * Strict gate: a strategy trades its instrument as a QUALIFIED edge only if
+ * Šidák-adjusted p ≤ 0.05 and no relaxed/failed verdict. Legacy store
  * entries (adopted before verdict tagging) pass on p alone; anything adopted
- * via --adopt-relaxed never trades, no matter its p.
+ * via --adopt-relaxed is never qualified, no matter its p.
  */
 export function strategyIsQualified(s: LseStrategy): boolean {
   if (s.relaxed) return false;
   if (s.verdict !== undefined && s.verdict !== "qualified") return false;
   return (s.adjustedP ?? 1) <= 0.05;
+}
+
+/**
+ * What actually fires: qualified edges trade as themselves; an entry the
+ * operator explicitly flagged experimental ALSO trades — tagged EXP, paper
+ * only — because the book is paper-tracked and live paper evidence is how
+ * an experimental edge earns qualification. A relaxed/unqualified entry
+ * WITHOUT the flag stays blocked. A manually disabled entry never fires.
+ */
+export function strategyTrades(s: LseStrategy): boolean {
+  if (s.disabled) return false;
+  return strategyIsQualified(s) || s.experimental === true;
+}
+
+/**
+ * The carpet store: `lse:strategies` holds a LIST of strategies per asset
+ * (one slot per family+interval). Entries adopted before the carpet existed
+ * are single objects — they read back as a one-strategy carpet, unchanged.
+ */
+export function normalizeLseStore(
+  raw: Record<string, LseStrategy | LseStrategy[]> | null,
+): Record<string, LseStrategy[]> {
+  const out: Record<string, LseStrategy[]> = {};
+  if (!raw) return out;
+  for (const [id, v] of Object.entries(raw)) {
+    if (Array.isArray(v)) out[id] = v.filter(e => e?.config);
+    else if (v && typeof v === "object" && (v as LseStrategy).config) {
+      out[id] = [v as LseStrategy];
+    }
+  }
+  return out;
+}
+
+export function readLseStrategyStore(db: Db): Record<string, LseStrategy[]> {
+  return normalizeLseStore(
+    db.getSetting<Record<string, LseStrategy | LseStrategy[]>>(STRATEGIES_KEY),
+  );
+}
+
+/**
+ * One slot per (family, interval): an entry for a slot the asset already
+ * has REPLACES it — a fresh measurement of the same edge supersedes the
+ * stale one. Any other (family, interval) appends: multistrategy per asset.
+ */
+export function upsertLseStrategy(
+  list: LseStrategy[],
+  entry: LseStrategy,
+): LseStrategy[] {
+  const i = list.findIndex(
+    e => e.family === entry.family && e.interval === entry.interval,
+  );
+  if (i === -1) return [...list, entry];
+  const next = [...list];
+  next[i] = entry;
+  return next;
 }
 
 /** Interval → its confirmation interval (the next one up). */
@@ -157,38 +225,77 @@ export function lseRegimeBlocks(
 }
 
 /**
- * The strategy an instrument trades: its OWN discovered edge, gated strict.
- * A discovered entry wins when present AND qualified; otherwise the
- * hand-qualified fallbacks apply; an instrument with neither — or with an
- * unqualified entry — has no edge and must not trade. A strategy NEVER
- * applies to another instrument: callers always look up by their own id and
- * open ideas only under that same id.
+ * Every strategy on an instrument's carpet, INCLUDING blocked ones (the
+ * board reports them with their status). The hand-qualified fallback counts
+ * as the carpet when research has adopted nothing for the instrument yet.
+ * A strategy NEVER applies to another instrument: callers always look up by
+ * their own id and open ideas only under that same id.
  */
-export function lseStrategyFor(db: Db, assetId: string): LseStrategy | null {
-  const store = db.getSetting<Record<string, LseStrategy>>(STRATEGIES_KEY);
-  const discovered = store?.[assetId];
-  if (discovered?.config) {
-    if (!strategyIsQualified(discovered)) return null;
-    return discovered;
-  }
+export function lseStrategyList(db: Db, assetId: string): LseStrategy[] {
+  const store = readLseStrategyStore(db);
+  const entries = store[assetId];
+  if (entries && entries.length > 0) return entries;
   const qualified = LSE_STRATEGIES[assetId];
-  if (!qualified) return null;
-  return {
-    ...qualified,
-    interval: "1h",
-    confirm: null,
-    adjustedP: 0.006,
-    adoptedAt: 0,
-  };
+  if (!qualified) return [];
+  return [
+    {
+      ...qualified,
+      interval: "1h",
+      confirm: null,
+      adjustedP: 0.006,
+      adoptedAt: 0,
+    },
+  ];
 }
 
-/** One row of the "assets under LSE" board: instrument + its own edge. */
+/**
+ * The strategies an instrument actually trades: its OWN edges, qualified
+ * first (they get first crack at portfolio admission), experimental after.
+ * An instrument whose carpet holds only blocked entries must not trade.
+ */
+export function lseStrategiesFor(db: Db, assetId: string): LseStrategy[] {
+  return lseStrategyList(db, assetId)
+    .filter(strategyTrades)
+    .sort(
+      (a, b) => Number(strategyIsQualified(b)) - Number(strategyIsQualified(a)),
+    );
+}
+
+/**
+ * The single-strategy view — first tradeable entry. Kept for callers that
+ * only need a representative (correlation-matrix interval, legacy tests).
+ */
+export function lseStrategyFor(db: Db, assetId: string): LseStrategy | null {
+  return lseStrategiesFor(db, assetId)[0] ?? null;
+}
+
+/** One strategy on an instrument's carpet, with its gate status. */
+export interface LseStrategyStatus {
+  family: Family;
+  interval: string;
+  confirm: string | null;
+  adjustedP: number;
+  verdict?: string;
+  relaxed?: boolean;
+  experimental?: boolean;
+  disabled?: boolean;
+  adoptedAt: number;
+  /** Passes the strict gate (p ≤ 0.05, no relaxed/failed verdict). */
+  qualified: boolean;
+  /** Actually fires paper signals: qualified, or flagged experimental. */
+  trades: boolean;
+}
+
+/** One row of the "assets under LSE" board: instrument + its own carpet. */
 export interface LseAssetStatus {
   id: string;
   symbol: string;
   digits: number;
   /** Null for canonical instruments; the canonical id for aliases. */
   aliasOf: string | null;
+  /** Every strategy on the carpet, qualified or not, in store order. */
+  strategies: LseStrategyStatus[];
+  /** Primary strategy — first tradeable, else first on the carpet. */
   strategy: {
     family: Family;
     interval: string;
@@ -199,7 +306,7 @@ export interface LseAssetStatus {
     adoptedAt: number;
   } | null;
   qualified: boolean;
-  /** Actually trading: qualified, canonical, and vault spec present. */
+  /** Actually trading: at least one carpet entry fires (qualified or EXP). */
   trading: boolean;
   hasSpec: boolean;
   openIdeas: number;
@@ -207,51 +314,73 @@ export interface LseAssetStatus {
 }
 
 /**
- * Every LSE instrument with its independent strategy status — the data
- * behind the LSE page's asset board. One id per underlying, no aliases:
- * an instrument trades only its own qualified strategy.
+ * Every LSE instrument with its strategy carpet — the data behind the LSE
+ * page's asset board. One id per underlying, no aliases: an instrument
+ * trades only its own strategies.
  */
 export function lseUniverseStatus(db: Db): LseAssetStatus[] {
-  const store = db.getSetting<Record<string, LseStrategy>>(STRATEGIES_KEY);
+  const store = readLseStrategyStore(db);
   const open = db.openIdeas().filter(i => i.source === "lse");
   return LSE_UNIVERSE.map(inst => {
-    // Resolve through the same gate the signal path uses, so the board can
-    // never disagree with it — including the hand-qualified fallbacks.
-    // Blocked entries are still reported (with qualified=false) so the board
-    // shows BLOCKED rather than pretending no research exists.
-    const effective = lseStrategyFor(db, inst.id);
-    const raw = store?.[inst.id];
-    const shown = raw?.config ? raw : effective;
-    const strategy = shown
+    // Resolve through the same gates the signal path uses, so the board can
+    // never disagree with it — including the hand-qualified fallback.
+    // Blocked entries are still reported (trades=false) so the board shows
+    // BLOCKED rather than pretending no research exists.
+    const raw = store[inst.id] ?? [];
+    const fallback = raw.length === 0;
+    const strategies: LseStrategyStatus[] = lseStrategyList(db, inst.id).map(
+      s => ({
+        family: s.family,
+        interval: s.interval,
+        confirm: s.confirm,
+        adjustedP: s.adjustedP,
+        verdict: s.verdict,
+        relaxed: s.relaxed,
+        experimental: s.experimental,
+        disabled: s.disabled,
+        adoptedAt: s.adoptedAt,
+        qualified: strategyIsQualified(s),
+        trades: strategyTrades(s),
+      }),
+    );
+    const tradeable = strategies.filter(s => s.trades);
+    const primary =
+      tradeable.find(s => s.qualified) ?? tradeable[0] ?? strategies[0] ?? null;
+    const strategy = primary
       ? {
-          family: shown.family,
-          interval: shown.interval,
-          confirm: shown.confirm,
-          adjustedP: shown.adjustedP,
-          verdict: shown.verdict,
-          relaxed: shown.relaxed,
-          adoptedAt: shown.adoptedAt,
+          family: primary.family,
+          interval: primary.interval,
+          confirm: primary.confirm,
+          adjustedP: primary.adjustedP,
+          verdict: primary.verdict,
+          relaxed: primary.relaxed,
+          adoptedAt: primary.adoptedAt,
         }
       : null;
-    const qualified = effective !== null;
+    const qualified = strategies.some(s => s.qualified);
     const hasSpec = db.getSetting(`lse:${inst.id}`) !== null;
-    const trading = qualified;
+    const trading = tradeable.length > 0;
     const openIdeas = open.filter(i => i.asset === inst.id).length;
-    // strategy and qualified stand together, except blocked entries which
-    // report their research with qualified=false.
+    const describe = (s: LseStrategyStatus): string =>
+      s.disabled
+        ? `Paused ${s.family}@${s.interval} (p=${s.adjustedP}) — manually stopped`
+        : s.qualified
+          ? `Qualified ${s.family}@${s.interval} (p=${s.adjustedP})${fallback ? " · hand-qualified fallback" : ""}`
+          : s.trades
+            ? `Experimental ${s.family}@${s.interval} (p=${s.adjustedP}) — unqualified paper edge, tagged EXP`
+            : s.relaxed
+              ? `Relaxed ${s.family}@${s.interval} best-effort, not a qualified edge — blocked`
+              : `Unqualified ${s.family}@${s.interval} (p=${s.adjustedP}) — blocked`;
     const reason =
-      qualified && strategy
-        ? `Qualified ${strategy.family}@${strategy.interval} (p=${strategy.adjustedP})${raw ? "" : " · hand-qualified fallback"}`
-        : strategy
-          ? strategy.relaxed
-            ? "Relaxed best-effort, not a qualified edge — blocked"
-            : `Unqualified (p=${strategy.adjustedP}) — blocked`
-          : "No discovered edge yet — research earns a place, nothing else";
+      strategies.length > 0
+        ? strategies.map(describe).join(" · ")
+        : "No discovered edge yet — research earns a place, nothing else";
     return {
       id: inst.id,
       symbol: inst.lse,
       digits: inst.digits,
       aliasOf: null,
+      strategies,
       strategy,
       qualified,
       trading,
@@ -325,16 +454,17 @@ export interface LseEngineDeps {
 export async function generateForLse(
   deps: LseEngineDeps,
   asset: AssetDefinition,
-): Promise<number | null> {
+): Promise<number[]> {
   const { db } = deps;
   const now = deps.now?.() ?? Date.now();
-  // This instrument's own strategy — discovered per instrument, never a
-  // book-wide template. Only this strategy can trigger a trade here.
-  const strategy = lseStrategyFor(db, asset.id);
-  if (!strategy) return null;
-  const { family, config: cfg } = strategy;
+  // The instrument's carpet: every tradeable strategy fires independently —
+  // qualified edges as themselves, experimental entries tagged EXP. Only
+  // these strategies can trigger a trade here, never a book-wide template.
+  const strategies = lseStrategiesFor(db, asset.id);
+  if (strategies.length === 0) return [];
 
   // Daily circuit breakers — same shape as top10, separate accounting.
+  // Asset-level: they halt the whole carpet.
   const dayPct = dailyPnlPercent(db, "lse");
   if (dayPct >= 1.0) {
     db.logJournal({
@@ -344,7 +474,7 @@ export async function generateForLse(
       price: 0,
       details: `[LSE] daily target hit +${dayPct.toFixed(2)}% — no new signals today`,
     });
-    return null;
+    return [];
   }
   if (dayPct <= -0.5) {
     db.logJournal({
@@ -354,10 +484,86 @@ export async function generateForLse(
       price: 0,
       details: `[LSE] daily stop ${dayPct.toFixed(2)}% — halted`,
     });
-    return null;
+    return [];
   }
 
+  // News shield — real events, 15m before / 10m after HIGH impact.
+  // Asset-level: blocks the whole carpet.
+  try {
+    const shield = db.getSetting<any>("lseNewsShield");
+    if (shield?.isShieldActive) {
+      db.logJournal({
+        eventType: "SIGNAL_BLOCKED",
+        asset: asset.id,
+        source: "lse",
+        price: 0,
+        details: `[LSE] news shield active — ${shield.shieldReason ?? "high impact"}`,
+      });
+      return [];
+    }
+  } catch {}
+
   const regime = (db as any).regimeFromDb?.() ?? null;
+
+  // Portfolio admission inside the LSE book only — one matrix per run,
+  // shared by every strategy on the carpet.
+  const universe = deps.assets ?? lseUniverse(db);
+  const matrix = buildCorrelationMatrix(
+    Object.fromEntries(
+      universe.map(a => [
+        a.id,
+        db.getCandles(a.id, lseStrategyFor(db, a.id)?.interval ?? "1h", 200),
+      ]),
+    ),
+    deps.correlationOptions,
+  );
+
+  const ids: number[] = [];
+  for (const strategy of strategies) {
+    const id = await fireLseStrategy(deps, asset, strategy, {
+      now,
+      dayPct,
+      regime,
+      matrix,
+    });
+    if (id !== null) ids.push(id);
+  }
+  return ids;
+}
+
+/** Shared per-run context every strategy on the carpet sees. */
+interface LseRunContext {
+  now: number;
+  dayPct: number;
+  regime: {
+    regime: string;
+    slMultiplier?: number;
+    tpMultiplier?: number;
+  } | null;
+  matrix: ReturnType<typeof buildCorrelationMatrix>;
+}
+
+/**
+ * One carpet strategy's signal pipeline: candles → family signal →
+ * confirmation → regime veto → COT gate → grade → cooldown → risk manager →
+ * portfolio admission → idea. Experimental entries pass the same pipeline;
+ * only their tags differ.
+ */
+async function fireLseStrategy(
+  deps: LseEngineDeps,
+  asset: AssetDefinition,
+  strategy: LseStrategy,
+  ctx: LseRunContext,
+): Promise<number | null> {
+  const { db } = deps;
+  const { now, dayPct, regime, matrix } = ctx;
+  const { family, config: cfg } = strategy;
+  // In this loop an entry is either qualified or trading thanks to its
+  // operator-set experimental flag — tag the latter honestly.
+  const asExperimental = !strategyIsQualified(strategy);
+  const expTag = asExperimental
+    ? " · EXPERIMENTAL — unqualified paper edge"
+    : "";
 
   const candles = await syncCandles(
     { db, assets: deps.assets } as any,
@@ -389,9 +595,12 @@ export async function generateForLse(
     asset: asset.id,
     source: "lse",
     price,
-    details: `[LSE ${asset.displaySymbol}] ${strategy.interval}:${family} ${signal?.bias ?? "N/A"} ${signal?.grade ?? "-"}(${signal?.confidence ?? 0}%) ${strategy.confirm ? `${strategy.confirm}:${confirmation?.bias ?? "N/A"} ${confirmation?.grade ?? "-"}` : "(no confirm)"} daily ${dayPct.toFixed(2)}%`,
+    details: `[LSE ${asset.displaySymbol}] ${strategy.interval}:${family} ${signal?.bias ?? "N/A"} ${signal?.grade ?? "-"}(${signal?.confidence ?? 0}%) ${strategy.confirm ? `${strategy.confirm}:${confirmation?.bias ?? "N/A"} ${confirmation?.grade ?? "-"}` : "(no confirm)"}${asExperimental ? " EXP" : ""} daily ${dayPct.toFixed(2)}%`,
     metadata: {
       signal: signal && { bias: signal.bias, grade: signal.grade },
+      family,
+      interval: strategy.interval,
+      experimental: asExperimental,
     } as any,
   });
 
@@ -435,30 +644,15 @@ export async function generateForLse(
     } catch {}
   }
 
-  // News shield — real events, 15m before / 10m after HIGH impact.
-  try {
-    const shield = db.getSetting<any>("lseNewsShield");
-    if (shield?.isShieldActive) {
-      db.logJournal({
-        eventType: "SIGNAL_BLOCKED",
-        asset: asset.id,
-        source: "lse",
-        direction: signal.direction,
-        price: signal.entryPrice,
-        details: `[LSE] news shield active — ${shield.shieldReason ?? "high impact"}`,
-      });
-      return null;
-    }
-  } catch {}
-
   if (signal.grade !== "A" && signal.grade !== "B") return null;
 
-  // Cooldown per asset+direction.
+  // Cooldown per strategy+direction — one strategy's cooldown never mutes
+  // another on the same carpet. Keyed on the idea reason's stable prefix.
   const last = db.raw
-    .query<{ created_at: number }, [string, string]>(
-      `SELECT created_at FROM trading_ideas WHERE asset = ? AND direction = ? AND source = 'lse' ORDER BY created_at DESC LIMIT 1`,
+    .query<{ created_at: number }, [string, string, string]>(
+      `SELECT created_at FROM trading_ideas WHERE asset = ? AND direction = ? AND source = 'lse' AND reason LIKE ? ORDER BY created_at DESC LIMIT 1`,
     )
-    .get(asset.id, signal.direction);
+    .get(asset.id, signal.direction, `[LSE ${family}@${strategy.interval}]%`);
   if (last && now - last.created_at < cfg.cooldownMs) return null;
 
   if (deps.riskManager) {
@@ -477,17 +671,6 @@ export async function generateForLse(
     }
   }
 
-  // Portfolio admission inside the LSE book only.
-  const universe = deps.assets ?? lseUniverse(db);
-  const matrix = buildCorrelationMatrix(
-    Object.fromEntries(
-      universe.map(a => [
-        a.id,
-        db.getCandles(a.id, lseStrategyFor(db, a.id)?.interval ?? "1h", 200),
-      ]),
-    ),
-    deps.correlationOptions,
-  );
   const decision = admit(
     lseOpenExposures(db),
     { asset: asset.id, direction: signal.direction },
@@ -546,7 +729,7 @@ export async function generateForLse(
     tp2,
     confidence,
     grade: signal.grade,
-    reason: `[LSE ${family}@${strategy.interval}] ${signal.reason}${confirmation ? ` · ${strategy.confirm} confirms` : ""}${decision.hedge ? " · hedges" : ""}${regimeTag} · ${dayPct.toFixed(2)}% today`,
+    reason: `[LSE ${family}@${strategy.interval}] ${signal.reason}${confirmation ? ` · ${strategy.confirm} confirms` : ""}${decision.hedge ? " · hedges" : ""}${regimeTag}${expTag} · ${dayPct.toFixed(2)}% today`,
     timeframe: [strategy.interval, strategy.confirm].filter(Boolean).join("+"),
     bias: signal.bias,
     biasStrength: signal.biasStrength,
@@ -559,8 +742,14 @@ export async function generateForLse(
     ideaId: id,
     direction: signal.direction,
     price: signal.entryPrice,
-    details: `[LSE ${asset.displaySymbol}] ${signal.grade} ${signal.direction} @ ${signal.entryPrice} | SL ${stopLoss} | TP1 ${tp1} | TP2 ${tp2} | ${confidence}% | portfolio ${decision.riskBefore.toFixed(2)}→${decision.riskAfter.toFixed(2)} | daily ${dayPct.toFixed(2)}%`,
-    metadata: { portfolio: decision, regime } as any,
+    details: `[LSE ${asset.displaySymbol}] ${signal.grade} ${signal.direction} @ ${signal.entryPrice} | SL ${stopLoss} | TP1 ${tp1} | TP2 ${tp2} | ${confidence}% | portfolio ${decision.riskBefore.toFixed(2)}→${decision.riskAfter.toFixed(2)} | daily ${dayPct.toFixed(2)}%${asExperimental ? " | EXP" : ""}`,
+    metadata: {
+      portfolio: decision,
+      regime,
+      family,
+      interval: strategy.interval,
+      experimental: asExperimental,
+    } as any,
   });
   return id;
 }
@@ -580,8 +769,8 @@ export async function generateLseSignals(deps: LseEngineDeps): Promise<void> {
   }
   for (const asset of universe) {
     try {
-      const id = await generateForLse(deps, asset);
-      if (id !== null) publish("ideas");
+      const ids = await generateForLse(deps, asset);
+      if (ids.length > 0) publish("ideas");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       deps.db.recordRun(`signals:lse:${asset.id}`, false, msg);

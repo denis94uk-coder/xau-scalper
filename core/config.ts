@@ -172,7 +172,7 @@ function assetToConfig(a: AssetDefinition): AssetConfig {
     id: a.id,
     displaySymbol: a.displaySymbol,
     dataSourceSymbol: a.dataSourceSymbol,
-    dataSource: "binance",
+    dataSource: a.dataSource,
     pricePrecision: a.pricePrecision,
     enabled: a.enabled,
     config: { ...a.config },
@@ -255,6 +255,13 @@ const STRATEGY_BOUNDS: Record<keyof StrategyConfig, Bound> = {
   cooldownMs: { min: 0, max: 86_400_000, integer: true },
   breakoutPeriod: { min: 5, max: 150, integer: true },
   momentumLookback: { min: 2, max: 96, integer: true },
+  // Vol-targeted trend
+  volTarget: { min: 0.01, max: 2.0 },
+  levCap: { min: 0.1, max: 20.0 },
+  volLookback: { min: 2, max: 200, integer: true },
+  volTrendSlopeN: { min: 1, max: 200, integer: true },
+  volTrendFrontN: { min: 1, max: 200, integer: true },
+  volTrendUseYieldGate: { min: 0, max: 1, integer: true },
 };
 
 const COST_BOUNDS: Record<keyof CostModel, Bound> = {
@@ -398,12 +405,13 @@ export function validateConfig(input: unknown): ValidationIssue[] {
           "breakout",
           "momentum",
           "quiet-trend",
+          "vol-trend",
         ];
         if (typeof a.model !== "string" || !allowedModels.includes(a.model)) {
           issues.push({
             path: `${p}.model`,
             message:
-              'must be "combined", "trend", "reversion", "breakout", "momentum" or "quiet-trend"',
+              'must be "combined", "trend", "reversion", "breakout", "momentum", "quiet-trend" or "vol-trend"',
           });
         }
       }

@@ -1611,7 +1611,7 @@
       "stopLoss": 2135.96,
       "tp1": 2143.53,
       "tp2": 2148,
-      "reason": "EMAs bearish · RSI oversold 10 · Stoch oversold · BB lower band touch",
+      "reason": "EMAs bearish \u00b7 RSI oversold 10 \u00b7 Stoch oversold \u00b7 BB lower band touch",
       "grade": "B",
       "atr": 2.29,
       "indicators": {
@@ -1623,7 +1623,10 @@
         "atr": 2.29,
         "bbUpper": 2150.21,
         "bbLower": 2140.15
-      }
+      },
+      "leverage": 0.03,
+      "realisedVol": 0,
+      "annVol": 4.43
     }
   },
   "short": {
@@ -3238,7 +3241,7 @@
       "stopLoss": 2490.31,
       "tp1": 2481.73,
       "tp2": 2476.66,
-      "reason": "EMAs bullish · RSI overbought 93 · Stoch overbought · BB upper band touch",
+      "reason": "EMAs bullish \u00b7 RSI overbought 93 \u00b7 Stoch overbought \u00b7 BB upper band touch",
       "grade": "B",
       "atr": 2.6,
       "indicators": {
@@ -3250,7 +3253,10 @@
         "atr": 2.6,
         "bbUpper": 2487.25,
         "bbLower": 2467.86
-      }
+      },
+      "leverage": 0.03,
+      "realisedVol": 0,
+      "annVol": 4.81
     }
   }
 }

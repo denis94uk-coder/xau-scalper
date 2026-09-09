@@ -1,5 +1,6 @@
 export { CalendarPage } from "./CalendarPage";
 export { default as DashboardPage } from "./DashboardPage";
+export { default as EnginesPerformancePage } from "./EnginesPerformancePage";
 export { default as ExperimentalPage } from "./ExperimentalPage";
 export { default as LsePage } from "./LsePage";
 export { PerformanceTrackerPage } from "./PerformanceTrackerPage";

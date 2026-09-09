@@ -7,6 +7,7 @@ import { TimezoneProvider } from "./contexts/TimezoneContext";
 import {
   CalendarPage,
   DashboardPage,
+  EnginesPerformancePage,
   ExperimentalPage,
   LsePage,
   PerformanceTrackerPage,
@@ -32,6 +33,10 @@ function App() {
               <Route path="/ideas" element={<TradingIdeasPage />} />
               <Route path="/journal" element={<SignalJournalPage />} />
               <Route path="/performance" element={<PerformanceTrackerPage />} />
+              <Route
+                path="/engines/performance"
+                element={<EnginesPerformancePage />}
+              />
               <Route path="/calendar" element={<CalendarPage />} />
               <Route path="/risk" element={<RiskManagerPage />} />
               <Route path="/experimental" element={<ExperimentalPage />} />
@@ -54,12 +59,23 @@ function App() {
               <Route path="/top10" element={<TopTenPage />} />
               <Route
                 path="/top10/ideas"
-                element={<TradingIdeasPage source="top10" title="Top 10 — Trading Ideas" />}
+                element={
+                  <TradingIdeasPage
+                    source="top10"
+                    title="Top 10 — Trading Ideas"
+                  />
+                }
               />
               <Route path="/lse" element={<LsePage />} />
               <Route
                 path="/lse/ideas"
-                element={<TradingIdeasPage source="lse" title="LSE — Trading Ideas" />}
+                element={
+                  <TradingIdeasPage source="lse" title="LSE — Trading Ideas" />
+                }
+              />
+              <Route
+                path="/lse/carpet"
+                element={<StrategyCarpetPage filter="lse" />}
               />
               <Route path="/research" element={<ResearchPage />} />
               <Route path="/strategies" element={<StrategyCarpetPage />} />

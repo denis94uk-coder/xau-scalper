@@ -187,6 +187,41 @@ export const ASSETS: AssetDefinition[] = [
     },
     enabled: true,
   },
+  // XAUUSD via LSE data — vol-targeted trend + yield regime overlay
+  {
+    id: "XAUUSD",
+    displaySymbol: "XAU/USD",
+    dataSourceSymbol: "XAU/USD",
+    dataSource: "lse",
+    sessionType: "24_7",
+    pricePrecision: 2,
+    config: {
+      ...DEFAULT_STRATEGY_CONFIG,
+      emaFast: 5, // 5-day fast EMA
+      emaMid: 12, // between fast/slow (unused by vol-trend)
+      emaSlow: 20, // 20-day slow EMA
+      volTarget: 0.15, // 15% annualised vol target
+      levCap: 3.0, // 3x max leverage
+      volLookback: 20, // 20-bar realised vol
+      volTrendSlopeN: 20,
+      volTrendFrontN: 20,
+      volTrendUseYieldGate: 1,
+      // Attenuate reversion signals since this is trend-only
+      rsiOversold: 30,
+      rsiOverbought: 70,
+      stochOversold: 20,
+      stochOverbought: 80,
+    },
+    model: "vol-trend",
+    costs: {
+      // LSE CFD gold: tight spread, no commission, stop slips ~spread
+      halfSpreadBps: 1.0,
+      takerFeeBps: 0,
+      makerFeeBps: 0,
+      stopSlippageBps: 2.0,
+    },
+    enabled: true,
+  },
   {
     id: "BTCUSDT",
     displaySymbol: "BTC/USD",

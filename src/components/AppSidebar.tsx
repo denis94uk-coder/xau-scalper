@@ -6,14 +6,18 @@ import {
   Globe,
   LayoutDashboard,
   Lightbulb,
+  RefreshCw,
   ScrollText,
   Settings,
   Shield,
   Sparkles,
   Table2,
 } from "lucide-react";
+import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
+import { toast } from "sonner";
 import { APP_NAME } from "@/lib/constants";
+import { api } from "@/lib/api";
 import {
   Sidebar,
   SidebarContent,
@@ -63,9 +67,15 @@ const topTenNav = [
 const lseNav = [
   { href: "/lse", label: "LSE", icon: Globe },
   { href: "/lse/ideas", label: "LSE Ideas", icon: Lightbulb },
+  { href: "/lse/carpet", label: "LSE Carpet", icon: Table2 },
 ];
 
 const systemNav = [
+  {
+    href: "/engines/performance",
+    label: "4-Engine Performance",
+    icon: BarChart3,
+  },
   { href: "/research", label: "Find Strategies", icon: Sparkles },
   { href: "/strategies", label: "Strategy Carpet", icon: Table2 },
   { href: "/settings", label: "Settings", icon: Settings },
@@ -118,7 +128,11 @@ function SidebarNav() {
   // how many groups the sidebar grows.
   const sections: Array<{
     label: string;
-    items: Array<{ href: string; label: string; icon: React.ComponentType<{ className?: string }> }>;
+    items: Array<{
+      href: string;
+      label: string;
+      icon: React.ComponentType<{ className?: string }>;
+    }>;
   }> = [
     { label: "Teo'D'Or Lab", items: experimentalNav },
     { label: "Top 10", items: topTenNav },
@@ -147,12 +161,62 @@ function SidebarNav() {
                     isActive={isActive(item.href)}
                   />
                 ))}
+                {section.label === "System" && <SystemRestartItem />}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
         </div>
       ))}
     </SidebarContent>
+  );
+}
+
+function SystemRestartItem() {
+  const [busy, setBusy] = useState(false);
+  const handleRestart = async () => {
+    if (busy) return;
+    if (
+      !window.confirm(
+        "Restart the trading service? Open ideas keep running, but the UI will reconnect in ~3s.",
+      )
+    )
+      return;
+    setBusy(true);
+    try {
+      await api.systemRestart();
+      toast.success("Restart requested — service restarting…");
+      // Poll health until the process is back, then reload.
+      let tries = 0;
+      const poll = setInterval(async () => {
+        tries++;
+        try {
+          const h = await api.systemHealth();
+          if (h.ok) {
+            clearInterval(poll);
+            toast.success("Service back — reloading");
+            window.location.reload();
+          }
+        } catch {
+          // still down
+        }
+        if (tries > 30) {
+          clearInterval(poll);
+          toast.info("Service restarting — please reload manually in a few seconds");
+          setBusy(false);
+        }
+      }, 1000);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Restart failed");
+      setBusy(false);
+    }
+  };
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton onClick={handleRestart} disabled={busy}>
+        <RefreshCw className={busy ? "animate-spin" : ""} />
+        <span>{busy ? "Restarting…" : "Restart Service"}</span>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
   );
 }
 

@@ -61,6 +61,8 @@ export const post = <T>(path: string, body?: unknown) =>
   request<T>(path, { method: "POST", body: JSON.stringify(body ?? {}) });
 export const put = <T>(path: string, body?: unknown) =>
   request<T>(path, { method: "PUT", body: JSON.stringify(body ?? {}) });
+export const patch = <T>(path: string, body?: unknown) =>
+  request<T>(path, { method: "PATCH", body: JSON.stringify(body ?? {}) });
 export const del = <T>(path: string) => request<T>(path, { method: "DELETE" });
 
 // ─── Shapes returned by the server ───
@@ -143,12 +145,32 @@ export interface PortfolioPosition {
   weight?: number;
 }
 
-/** One instrument under the LSE book with its independent strategy status. */
+/** One strategy on an instrument's carpet, with its gate status. */
+export interface LseStrategyStatus {
+  family: string;
+  interval: string;
+  confirm: string | null;
+  adjustedP: number;
+  verdict?: string;
+  relaxed?: boolean;
+  experimental?: boolean;
+  disabled?: boolean;
+  adoptedAt: number;
+  /** Passes the strict gate (p ≤ 0.05, no relaxed/failed verdict). */
+  qualified: boolean;
+  /** Actually fires paper signals: qualified, or flagged experimental. */
+  trades: boolean;
+}
+
+/** One instrument under the LSE book with its strategy carpet. */
 export interface LseAssetStatus {
   id: string;
   symbol: string;
   digits: number;
   aliasOf: string | null;
+  /** Every strategy on the carpet, qualified or not, in store order. */
+  strategies: LseStrategyStatus[];
+  /** Primary strategy — first tradeable, else first on the carpet. */
   strategy: {
     family: string;
     interval: string;
@@ -159,6 +181,7 @@ export interface LseAssetStatus {
     adoptedAt: number;
   } | null;
   qualified: boolean;
+  /** Actually trading: at least one carpet entry fires (qualified or EXP). */
   trading: boolean;
   hasSpec: boolean;
   openIdeas: number;
@@ -518,6 +541,8 @@ export interface DiscoveredStrategy {
   walkForward: { foldNetPoints: number[]; profitableFolds: number } | null;
   runId: string | null;
   pinnedAt: number;
+  /** The model/family this strategy was measured under (reversion, trend, breakout, momentum). */
+  model?: string;
 }
 
 export interface StartRunInput {
@@ -594,6 +619,59 @@ export const api = {
         interval: string | null;
       }>;
     }>("/api/lse/prices"),
+
+  /** LSE carpet management — add/replace a strategy slot. */
+  lseAddStrategy: (body: {
+    assetId: string;
+    family: string;
+    interval: string;
+    config: Record<string, unknown>;
+    confirm?: string;
+    adjustedP?: number;
+    verdict?: string;
+    relaxed?: boolean;
+    experimental?: boolean;
+    disabled?: boolean;
+    adoptedAt?: number;
+  }) =>
+    post<{ ok: true; assetId: string; strategies: LseStrategyStatus[] }>(
+      "/api/lse/strategies",
+      body,
+    ),
+
+  /** LSE carpet management — remove a strategy slot. */
+  lseRemoveStrategy: (assetId: string, family: string, interval: string) =>
+    del<{ ok: true; assetId: string }>(
+      `/api/lse/strategies/${assetId}/${family}/${interval}`,
+    ),
+
+  /** LSE carpet management — toggle experimental flag. */
+  lseSetExperimental: (
+    assetId: string,
+    family: string,
+    interval: string,
+    experimental: boolean,
+  ) =>
+    patch<{
+      ok: true;
+      assetId: string;
+      experimental: boolean;
+      disabled?: boolean;
+    }>(`/api/lse/strategies/${assetId}/${family}/${interval}`, {
+      experimental,
+    }),
+
+  /** LSE carpet management — toggle disabled (manual stop/start). */
+  lseSetDisabled: (
+    assetId: string,
+    family: string,
+    interval: string,
+    disabled: boolean,
+  ) =>
+    patch<{ ok: true; assetId: string; disabled: boolean }>(
+      `/api/lse/strategies/${assetId}/${family}/${interval}`,
+      { disabled },
+    ),
 
   /** Live strategy framework: every engine with the strategies it runs. */
   engines: () =>
@@ -676,4 +754,17 @@ export const api = {
       lastSignalRun: number | null;
       lastMonitorRun: number | null;
     }>("/api/health"),
+
+  /** System restart — asks the supervisor to recycle the process. */
+  systemRestart: () =>
+    post<{ ok: true; restarting: boolean }>("/api/system/restart"),
+  systemHealth: () =>
+    get<{
+      ok: boolean;
+      uptimeSec: number;
+      openIdeas: number;
+      lastSignalRun: number | null;
+      lastMonitorRun: number | null;
+      version: string | null;
+    }>("/api/system/health"),
 };

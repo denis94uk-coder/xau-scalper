@@ -39,7 +39,7 @@ async function runOne(assetId: string, interval: string, days: number, db: Db) {
   const asset = getAsset(assetId) ?? unconfiguredExchangeAsset(assetId);
   const to = Math.floor(Date.now() / 1000);
   const from = to - days * 86400;
-  let candles;
+  let candles: import("../core/strategy").Candle[] = [];
   try {
     candles = await fetchCandleRange(
       asset.dataSourceSymbol,

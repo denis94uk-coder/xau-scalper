@@ -17,14 +17,18 @@
  */
 import { LSE_UNIVERSE, lseAsset } from "../core/assets";
 import type { BacktestModel } from "../core/backtest";
+import { computeMetrics, runBacktest } from "../core/backtest";
 import {
   DEFAULT_SEARCH_SPACE,
-  discover,
   type DiscoveryReport,
+  discover,
 } from "../core/discovery";
 import { Db } from "../server/db";
-import { confirmFor } from "../server/lse-engine";
-import { computeMetrics, runBacktest } from "../core/backtest";
+import {
+  confirmFor,
+  type LseStrategy,
+  upsertLseStrategy,
+} from "../server/lse-engine";
 
 const STRATEGIES_KEY = "lse:strategies";
 const MODELS: BacktestModel[] = ["breakout", "trend", "reversion", "momentum"];
@@ -191,7 +195,7 @@ function localRefine(
     models: [base.model as BacktestModel],
   });
   const best = report.best;
-  if (!best || best.verdict !== "qualified") return null;
+  if (best?.verdict !== "qualified") return null;
   // is it better on test netPoints than base?
   if (best.test.netPoints > base.test.netPoints) {
     console.log(
@@ -255,8 +259,8 @@ async function main() {
   );
 
   const store = adopt
-    ? (db.getSetting<Record<string, any>>(STRATEGIES_KEY) ?? {})
-    : ({} as Record<string, any>);
+    ? (db.getSetting<Record<string, LseStrategy[]>>(STRATEGIES_KEY) ?? {})
+    : ({} as Record<string, LseStrategy[]>);
   const summary: Array<{
     id: string;
     interval: string;
@@ -336,7 +340,7 @@ async function main() {
 
     // stage B refinement (only for strict winners; relaxed already is best-effort)
     let winner = bestOverall.cand;
-    let winnerInterval = bestOverall.interval;
+    const winnerInterval = bestOverall.interval;
     if (!isRelaxed && refineIters > 0) {
       const refined = localRefine(
         db,
@@ -365,18 +369,21 @@ async function main() {
           `  → NOT adopted ${id}: relaxed (unqualified) winner needs --adopt --adopt-relaxed to go live`,
         );
       } else {
-        store[id] = {
+        const list = store[id] ?? [];
+        const entry = {
           family: winner.model,
           config: winner.config,
           interval: winnerInterval,
           confirm: confirmFor(winnerInterval),
           adjustedP: winner.adjustedPValue,
           adoptedAt: Date.now(),
-          relaxed: isRelaxed || undefined,
+          relaxed: isRelaxed,
           verdict: winner.verdict,
+          experimental: isRelaxed,
         };
+        store[id] = upsertLseStrategy(list, entry);
         console.log(
-          `  → ADOPTED ${id}: ${winner.model}@${winnerInterval} confirm=${confirmFor(winnerInterval) ?? "none"}${isRelaxed ? " (RELAXED — unqualified, overfit risk)" : ""}`,
+          `  → ADOPTED ${id}: ${winner.model}@${winnerInterval} confirm=${confirmFor(winnerInterval) ?? "none"}${isRelaxed ? " (RELAXED → EXPERIMENTAL)" : ""}`,
         );
       }
     }
@@ -385,15 +392,15 @@ async function main() {
   if (adopt && Object.keys(store).length) {
     // No alias mirrors — one id per underlying. Drop stale mirrors if a
     // previous run wrote them (UK100→FTSE, DE30→GER).
-    delete store["UK100"];
-    delete store["DE30"];
+    delete store.UK100;
+    delete store.DE30;
     db.setSetting(STRATEGIES_KEY, store);
     console.log(
       `\nAdopted ${Object.keys(store).length} entries to ${STRATEGIES_KEY}`,
     );
   }
 
-  console.log("\n" + "─".repeat(78));
+  console.log(`\n${"─".repeat(78)}`);
   console.log("SUMMARY");
   for (const s of summary) {
     const b = s.best;

@@ -1,5 +1,5 @@
 import { CheckCircle2, Trash2, Zap } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,18 @@ import {
 } from "@/components/ui/card";
 import { useLive } from "@/hooks/useLive";
 import { api, type DiscoveredStrategy } from "@/lib/api";
+import { LSE_UNIVERSE } from "../../core/assets";
+
+const LSE_IDS = new Set(LSE_UNIVERSE.map(u => u.id));
+
+function isLsePin(s: DiscoveredStrategy): boolean {
+  if (LSE_IDS.has(s.assetId)) return true;
+  // Legacy / lse-discovery + lse-per-asset-tune prefixes, including lse-tune-
+  if ((s.runId ?? "").startsWith("lse")) return true;
+  // Fallback: symbol matches an LSE id (defensive for older pins)
+  if (LSE_IDS.has(s.symbol)) return true;
+  return false;
+}
 
 /**
  * The Strategy Carpet.
@@ -26,18 +38,29 @@ import { api, type DiscoveredStrategy } from "@/lib/api";
  * runs right now, read live from the server — adding a strategy or asset
  * anywhere in the app shows up here on the next fetch.
  */
-export function StrategyCarpetPage() {
+export function StrategyCarpetPage({ filter }: { filter?: "lse" } = {}) {
+  const lseOnly = filter === "lse";
   const [busyId, setBusyId] = useState<number | null>(null);
-  const carpet = useLive(
+  const carpetRaw = useLive(
     () => api.discoveredStrategies().then(r => r.strategies),
     ["research", "hello"],
   );
+  const carpet = useMemo(() => {
+    if (!carpetRaw) return carpetRaw;
+    if (!lseOnly) return carpetRaw;
+    return carpetRaw.filter(isLsePin);
+  }, [carpetRaw, lseOnly]);
   // Live framework — refetches on engine/config/research activity, so newly
   // added strategies and assets appear without a code change here.
-  const framework = useLive(
+  const frameworkRaw = useLive(
     () => api.engines().then(r => r.engines),
     ["research", "ideas", "engine", "config"],
   );
+  const framework = useMemo(() => {
+    if (!frameworkRaw) return frameworkRaw;
+    if (!lseOnly) return frameworkRaw;
+    return frameworkRaw.filter(e => e.id === "lse");
+  }, [frameworkRaw, lseOnly]);
 
   if (!carpet) {
     return (
@@ -50,21 +73,36 @@ export function StrategyCarpetPage() {
   if (carpet.length === 0) {
     return (
       <div className="max-w-[1100px] mx-auto p-4 space-y-4">
-        <Header count={0} />
+        <Header count={0} lseOnly={lseOnly} />
         <Card>
           <CardContent className="py-10 text-center space-y-2">
             <p className="text-sm text-muted-foreground">
-              No qualified strategies yet.
+              {lseOnly
+                ? "No LSE-qualified strategies yet."
+                : "No qualified strategies yet."}
             </p>
             <p className="text-xs text-muted-foreground/70 max-w-md mx-auto">
-              Run a search under <strong>Find Strategies</strong>. Every
-              configuration that survives all three validation windows, the
-              walk-forward folds and the significance correction lands here
-              automatically. Most searches honestly find nothing — that is the
-              filter working.
+              {lseOnly ? (
+                <>
+                  Run a search under <strong>Find Strategies</strong> for an LSE
+                  instrument (XAUUSD, EURUSD, FTSE, GER, …). Only LSE-validated
+                  pins appear here — strictly the LSE selection.
+                </>
+              ) : (
+                <>
+                  Run a search under <strong>Find Strategies</strong>. Every
+                  configuration that survives all three validation windows, the
+                  walk-forward folds and the significance correction lands here
+                  automatically. Most searches honestly find nothing — that is
+                  the filter working.
+                </>
+              )}
             </p>
           </CardContent>
         </Card>
+        {lseOnly && framework && framework.length > 0 && (
+          <FrameworkBoard framework={framework} lseOnly />
+        )}
       </div>
     );
   }
@@ -73,10 +111,15 @@ export function StrategyCarpetPage() {
     setBusyId(s.id);
     try {
       const r = await api.adoptDiscovered(s.id);
+      const book = (r as any).book ?? "engine";
       toast.success(
         r.added
-          ? `${s.symbol} added to Instruments (disabled) with this strategy.`
-          : `Strategy applied to ${r.assetId}.`,
+          ? book === "lse"
+            ? `Added ${s.symbol} to the LSE carpet.`
+            : `${s.symbol} added to Instruments (disabled) with this strategy.`
+          : book === "lse"
+            ? `Strategy added to ${r.assetId} LSE carpet.`
+            : `Strategy applied to ${r.assetId}.`,
       );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not adopt");
@@ -99,12 +142,13 @@ export function StrategyCarpetPage() {
 
   // Pins grouped per engine — a new pin lands in its engine's group
   // automatically via its run-id prefix.
-  const groups = groupPins(carpet);
+  const allGroups = groupPins(carpet);
+  const groups = lseOnly ? allGroups.filter(g => g.id === "lse") : allGroups;
 
   return (
     <div className="max-w-[1100px] mx-auto p-3 sm:p-4 space-y-4">
-      <Header count={carpet.length} />
-      <FrameworkBoard framework={framework} />
+      <Header count={carpet.length} lseOnly={lseOnly} />
+      <FrameworkBoard framework={framework} lseOnly={lseOnly} />
       {groups.map(
         g =>
           g.pins.length > 0 && (
@@ -174,6 +218,7 @@ function groupPins(carpet: DiscoveredStrategy[]): Array<{
 
 function FrameworkBoard({
   framework,
+  lseOnly,
 }: {
   framework:
     | Array<{
@@ -187,11 +232,14 @@ function FrameworkBoard({
         }>;
       }>
     | undefined;
+  lseOnly?: boolean;
 }) {
   return (
     <section className="space-y-2">
       <div className="flex items-center gap-2">
-        <h2 className="text-sm font-semibold">Live framework</h2>
+        <h2 className="text-sm font-semibold">
+          {lseOnly ? "LSE framework — live" : "Live framework"}
+        </h2>
         <Badge
           variant="outline"
           className="text-[10px] font-mono text-emerald-500 border-emerald-500/30"
@@ -201,7 +249,9 @@ function FrameworkBoard({
             : "loading…"}
         </Badge>
         <span className="text-[11px] text-muted-foreground">
-          every engine, right now — updates itself when strategies are added
+          {lseOnly
+            ? "LSE book only — per-asset carpets, strictly LSE selection"
+            : "every engine, right now — updates itself when strategies are added"}
         </span>
       </div>
       {!framework ? (
@@ -235,9 +285,9 @@ function FrameworkBoard({
                   </p>
                 ) : (
                   <div className="flex flex-wrap gap-1">
-                    {e.strategies.map(t => (
+                    {e.strategies.map((t, i) => (
                       <span
-                        key={`${e.id}:${t.asset}`}
+                        key={`${e.id}:${t.asset}:${t.family ?? i}`}
                         className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${
                           t.status === "trading"
                             ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
@@ -261,15 +311,21 @@ function FrameworkBoard({
   );
 }
 
-function Header({ count }: { count: number }) {
+function Header({ count, lseOnly }: { count: number; lseOnly?: boolean }) {
   return (
     <div className="flex items-center justify-between flex-wrap gap-2">
       <div>
-        <h1 className="text-xl font-semibold">Strategy Carpet</h1>
+        <h1 className="text-xl font-semibold">
+          {lseOnly ? "LSE Carpet" : "Strategy Carpet"}
+        </h1>
         <p className="text-xs text-muted-foreground">
-          {count === 0
-            ? "Validated discoveries land here"
-            : `${count} validated ${count === 1 ? "strategy" : "strategies"} — survived every check the discovery could throw at them`}
+          {lseOnly
+            ? count === 0
+              ? "LSE-validated discoveries — strictly the LSE selection"
+              : `${count} LSE-validated ${count === 1 ? "strategy" : "strategies"} — strictly LSE, vault-data per-asset edges`
+            : count === 0
+              ? "Validated discoveries land here"
+              : `${count} validated ${count === 1 ? "strategy" : "strategies"} — survived every check the discovery could throw at them`}
         </p>
       </div>
       {count > 0 && (
@@ -315,6 +371,19 @@ function StrategyCard({
               <Badge variant="secondary" className="text-[10px] shrink-0">
                 {s.interval}
               </Badge>
+              {s.model === "custom" && (
+                <Badge
+                  variant="outline"
+                  className="text-[9px] font-mono border-fuchsia-500/30 text-fuchsia-300"
+                >
+                  CUSTOM
+                </Badge>
+              )}
+              {s.model && s.model !== "custom" && s.model !== "combined" && (
+                <Badge variant="outline" className="text-[9px] font-mono">
+                  {s.model}
+                </Badge>
+              )}
             </CardTitle>
             <CardDescription className="text-[11px]">
               pinned{" "}

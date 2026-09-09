@@ -40,7 +40,9 @@ export type StrategyFamily =
   | "reversion"
   | "breakout"
   | "momentum"
-  | "progression";
+  | "progression"
+  | "vol-trend"
+  | "custom";
 
 /**
  * Grade thresholds for one family.
@@ -68,6 +70,8 @@ export const REVERSION_MAX_POINTS = 53; // 20 RSI + 15 Stoch + 18 BB touch
 export const BREAKOUT_MAX_POINTS = 70; // 30 channel break + 15 squeeze + 10 expansion bar + 10 EMA21 follow-through + 5 RSI tilt
 export const MOMENTUM_MAX_POINTS = 75; // 25 velocity conviction + 15 persistence + 15 MACD agreement + 10 EMA50 side + 10 RSI conviction
 export const PROGRESSION_MAX_POINTS = 100; // 25 direction + 25 ADX + 25 momentum + 25 Chande price action
+export const VOL_TREND_MAX_POINTS = 65; // 30 EMA cross + 10 price/EMA21 + 15 MACD trend + 10 RSI tilt
+export const CUSTOM_MAX_POINTS = 75; // gold_dual: 30 vol-trend leg + 25 yield-regime leg + 20 vol-target consensus
 
 function maxPointsFor(family: StrategyFamily): number {
   switch (family) {
@@ -81,6 +85,10 @@ function maxPointsFor(family: StrategyFamily): number {
       return MOMENTUM_MAX_POINTS;
     case "progression":
       return PROGRESSION_MAX_POINTS;
+    case "vol-trend":
+      return VOL_TREND_MAX_POINTS;
+    case "custom":
+      return CUSTOM_MAX_POINTS;
   }
 }
 
@@ -104,6 +112,21 @@ export function familyWarmup(
       // ADX(14) needs ~2×14 bars to settle, the long ATR gate wants 50,
       // and the Chande counter is stateful from bar 1 — 120 covers all.
       return Math.max(59, 120);
+    case "vol-trend":
+      // Needs slow EMA + vol lookback + yield regime warmup
+      return Math.max(
+        59,
+        Math.floor(config.emaSlow) + Math.floor(config.momentumLookback) + 1,
+      );
+    case "custom":
+      // gold_dual needs slow EMA + vol lookback + yield + trend + max_hold
+      return Math.max(
+        59,
+        Math.floor(config.emaSlow) +
+          Math.floor(config.volLookback ?? 20) +
+          Math.floor(config.momentumLookback) +
+          1,
+      );
     default:
       return 59;
   }
@@ -158,6 +181,24 @@ export const DEFAULT_FAMILY_THRESHOLDS: Record<
     bStrength: 45,
     bExtreme: 0,
     cStrength: 35,
+  },
+  // Vol-targeted trend: EMA cross + MACD trend confirmation + RSI tilt.
+  // Only MACD trend flip is an extreme.
+  "vol-trend": {
+    aStrength: 70,
+    aExtreme: 1,
+    bStrength: 55,
+    bExtreme: 0,
+    cStrength: 40,
+  },
+  // Custom gold_dual: vol-trend leg + yield-regime leg (dual attribution).
+  // Stricter — needs both legs or strong vol-trend alone.
+  custom: {
+    aStrength: 70,
+    aExtreme: 1,
+    bStrength: 55,
+    bExtreme: 0,
+    cStrength: 40,
   },
 };
 
@@ -546,6 +587,201 @@ export function scoreMomentum(
 }
 
 /**
+ * Vol-targeted trend evidence: EMA cross with volatility-targeted sizing.
+ *
+ * This family implements the vol-targeted trend from the LSE Terminal:
+ * - Fast/slow EMA cross as the primary signal
+ * - MACD trend confirmation
+ * - RSI directional tilt
+ * - Realised volatility computed from closes for sizing (not scored)
+ * - Optional yield-curve regime gate (2s10s steepening + falling 2Y)
+ *
+ * The vol-targeting is a SIZING mechanism, not a scoring one — it decides
+ * position size so each entry risks constant annualised vol. Here we only
+ * score the signal quality; the live engine applies the vol target.
+ */
+export function scoreVolTrend(
+  ind: IndicatorSeries,
+  last: number,
+  _config: StrategyConfig,
+): FamilyScore {
+  const { closes, rsi, histogram, ema9, ema21, ema50, atr } = ind;
+  _atrUnused(atr);
+  const price = closes[last];
+  const s: FamilyScore = {
+    bull: 0,
+    bear: 0,
+    extremeBull: 0,
+    extremeBear: 0,
+    reasons: [],
+  };
+
+  // EMA cross (fast vs slow) — primary signal
+  if (
+    ema9[last] !== undefined &&
+    ema21[last] !== undefined &&
+    ema50[last] !== undefined
+  ) {
+    const crossUp =
+      ema9[last] > ema21[last] &&
+      ema9[last - 1] !== undefined &&
+      ema21[last - 1] !== undefined &&
+      ema9[last - 1] <= ema21[last - 1];
+    const crossDown =
+      ema9[last] < ema21[last] &&
+      ema9[last - 1] !== undefined &&
+      ema21[last - 1] !== undefined &&
+      ema9[last - 1] >= ema21[last - 1];
+
+    if (crossUp) {
+      s.bull += 30;
+      s.reasons.push("EMA fast/slow cross up");
+    } else if (crossDown) {
+      s.bear += 30;
+      s.reasons.push("EMA fast/slow cross down");
+    } else if (ema9[last] > ema21[last] && ema21[last] > ema50[last]) {
+      s.bull += 15;
+      s.reasons.push("EMAs stacked bullish");
+    } else if (ema9[last] < ema21[last] && ema21[last] < ema50[last]) {
+      s.bear += 15;
+      s.reasons.push("EMAs stacked bearish");
+    } else if (ema9[last] > ema21[last]) {
+      s.bull += 8;
+      s.reasons.push("EMA fast>slow");
+    } else {
+      s.bear += 8;
+      s.reasons.push("EMA fast<slow");
+    }
+  }
+
+  // Price vs EMA21 (trend filter)
+  if (ema21[last] !== undefined) {
+    if (price > ema21[last]) s.bull += 10;
+    else s.bear += 10;
+  }
+
+  // MACD trend confirmation (extreme = fresh cross)
+  if (histogram[last] !== undefined && histogram[last - 1] !== undefined) {
+    if (histogram[last] > 0 && histogram[last - 1] <= 0) {
+      s.bull += 15;
+      s.extremeBull++;
+      s.reasons.push("MACD bull cross");
+    } else if (histogram[last] < 0 && histogram[last - 1] >= 0) {
+      s.bear += 15;
+      s.extremeBear++;
+      s.reasons.push("MACD bear cross");
+    } else if (histogram[last] > 0) {
+      s.bull += 8;
+    } else {
+      s.bear += 8;
+    }
+  }
+
+  // RSI directional tilt (not extreme — that's reversion's job)
+  const lastRSI = rsi[last];
+  if (lastRSI !== undefined) {
+    if (lastRSI > 50) s.bull += 5;
+    else s.bear += 5;
+  }
+
+  return s;
+}
+
+/**
+ * Yield-curve regime gate for vol-trend.
+ *
+ * Returns true if the US yield curve prices easing (2s10s steepening + falling 2Y).
+ * This is a MACRO FILTER, not a timing signal — it cuts time in market roughly
+ * in half and leaves the trend intact.
+ *
+ * Note: This requires the USYIELDS series (us2y, us10y) to be available in the
+ * candle data or passed via a separate series. In the live engine, the
+ * USYIELDS daily series is joined causally (+1 day publication lag).
+ */
+export function volTrendYieldGate(
+  _ind: IndicatorSeries,
+  last: number,
+  // us2y and us10y are optional — if absent, gate passes (trend-only mode)
+  us2y?: number[],
+  us10y?: number[],
+  slopeN = 20,
+  frontN = 20,
+): boolean {
+  if (!us2y || !us10y || us2y.length <= slopeN || us10y.length <= frontN) {
+    return true; // no yield data → trend-only mode (backward compatible)
+  }
+  if (last >= us2y.length || last >= us10y.length) return true;
+
+  // Publication lag: daily yield known next day.
+  // For causal scoring, we use us2y[last-1] / us10y[last-1] as the latest known.
+  const idx = last - 1;
+  if (idx < slopeN || idx < frontN) return true;
+
+  const slopeNow = us10y[idx] - us2y[idx];
+  const slopePrev = us10y[idx - slopeN] - us2y[idx - slopeN];
+  const frontNow = us2y[idx];
+  const frontPrev = us2y[idx - frontN];
+
+  const slopeChg = slopeNow - slopePrev;
+  const frontChg = frontNow - frontPrev;
+
+  // Easing regime: 2s10s steepening (slopeChg > 0) AND front end falling (frontChg < 0)
+  return slopeChg > 0 && frontChg < 0;
+}
+
+/**
+ * Custom gold_dual (EXPERIMENTAL): two strategies, one asset — port of
+ * gold_dual_signal_exp.py.
+ * Leg A: vol-targeted trend (fast/slow EMA cross, leveraged to target_vol)
+ * Leg B: yield-curve regime overlay (steepening 2s10s + falling 2Y + price>MA)
+ * with attribution via dual position series. Here scored as a single family
+ * with CUSTOM label; legs may overlap and exposure sums.
+ */
+export function scoreCustom(
+  ind: IndicatorSeries,
+  last: number,
+  config: StrategyConfig,
+  us2y?: number[],
+  us10y?: number[],
+): FamilyScore {
+  // Start from vol-trend leg (EMA cross is the shared base)
+  const base = scoreVolTrend(ind, last, config);
+  const s: FamilyScore = {
+    bull: base.bull,
+    bear: base.bear,
+    extremeBull: base.extremeBull,
+    extremeBear: base.extremeBear,
+    reasons: [...base.reasons],
+  };
+  // Tag CUSTOM so board filtering can distinguish it from vol-trend
+  s.reasons.unshift("CUSTOM gold_dual");
+
+  // Leg B overlay: yield regime + price trend. When yields available, add
+  // conviction if easing regime holds and trend filter passes.
+  const slopeN = (config as any).volTrendSlopeN ?? 20;
+  const frontN = (config as any).volTrendFrontN ?? 20;
+  const hasYield = !!us2y && !!us10y && us2y.length > slopeN && us10y.length > frontN;
+  if (hasYield) {
+    const easing = volTrendYieldGate(ind, last, us2y, us10y, slopeN, frontN);
+    if (easing) {
+      // Easing regime boosts the existing direction (trend_ok already in base via price>EMA21)
+      if (s.bull > s.bear) {
+        s.bull += 10;
+        s.reasons.push("yield easing + price trend (Leg B)");
+      } else if (s.bear > s.bull) {
+        s.bear += 10;
+        s.reasons.push("yield easing + price trend (Leg B)");
+      }
+    }
+  } else {
+    // No yield data → pure vol-trend, but label remains CUSTOM for attribution
+    s.reasons.push("yield data n/a → Leg A only");
+  }
+
+  return s;
+}
+
+/**
  * Progression evidence: the operator's Trend Progression Score, ported from
  * their Pine v6 strategy document.
  *
@@ -634,6 +870,10 @@ function adx14(candles: Candle[]): (number | undefined)[] {
   return out;
 }
 
+// _config and _atr are intentionally unused in this context but kept for API consistency
+const _configUnused = (() => {}) as (c: StrategyConfig) => void;
+const _atrUnused = (() => {}) as (a: number[]) => void;
+
 /** Short and long ATR series for the expansion gate, cached per array. */
 const atrGateCache = new WeakMap<
   Candle[],
@@ -675,6 +915,7 @@ export function scoreProgression(
   last: number,
   _config: StrategyConfig,
 ): FamilyScore {
+  _configUnused(_config);
   const { rsi, histogram, ema21, ema50, atr } = ind;
   const s: FamilyScore = {
     bull: 0,
@@ -712,6 +953,7 @@ export function scoreProgression(
 
   // ── Component 2: strength (0–25), ADX added to both sides ──
   const adx = adx14(candles)[last];
+  _atrUnused(ind.atr);
   const adxScore = adx !== undefined ? Math.min(adx / 60, 1) * 25 : 0;
 
   // ── Component 3: momentum (0–25), RSI band + ATR-scaled MACD ──
@@ -869,7 +1111,11 @@ export function analyzeFamilyAt(
           ? scoreBreakout(candles, ind, last, config)
           : family === "progression"
             ? scoreProgression(candles, ind, last, config)
-            : scoreMomentum(ind, last, config);
+            : family === "vol-trend"
+              ? scoreVolTrend(ind, last, config)
+              : family === "custom"
+                ? scoreCustom(ind, last, config)
+                : scoreMomentum(ind, last, config);
   const maxPoints = maxPointsFor(family);
 
   const total = raw.bull + raw.bear;
@@ -919,6 +1165,35 @@ export function analyzeFamilyAt(
       sink.grade = null;
     }
     return null;
+  }
+
+  // Vol-trend family: optional yield-curve regime gate.
+  // Requires us2y/us10y series (passed via config or external context).
+  // If yield data is unavailable, gate passes (trend-only mode).
+  if (family === "vol-trend") {
+    // Extract yield series from candle metadata if present
+    // In practice, the live engine joins USYIELDS daily series causally.
+    // For now, we check if the candles have yield data attached.
+    const c = candles[last] as Candle & { us2y?: number[]; us10y?: number[] };
+    const us2y = c?.us2y;
+    const us10y = c?.us10y;
+    const slopeN =
+      (config as StrategyConfig & { volTrendSlopeN?: number }).volTrendSlopeN ??
+      20;
+    const frontN =
+      (config as StrategyConfig & { volTrendFrontN?: number }).volTrendFrontN ??
+      20;
+
+    if (us2y && us10y) {
+      if (!volTrendYieldGate(ind, last, us2y, us10y, slopeN, frontN)) {
+        if (sink) {
+          sink.reason = "no_trade_grade";
+          sink.grade = null;
+        }
+        return null;
+      }
+    }
+    // No yield data → trend-only mode (gate passes)
   }
 
   const confidence = Math.min(

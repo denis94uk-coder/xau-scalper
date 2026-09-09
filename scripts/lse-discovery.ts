@@ -38,7 +38,11 @@ import {
 } from "../core/discovery";
 import type { Candle } from "../core/strategy";
 import { Db } from "../server/db";
-import { confirmFor } from "../server/lse-engine";
+import {
+  confirmFor,
+  type LseStrategy,
+  upsertLseStrategy,
+} from "../server/lse-engine";
 
 const STRATEGIES_KEY = "lse:strategies";
 const FAMILIES: BacktestModel[] = [
@@ -91,8 +95,8 @@ async function main() {
   let pinnedTotal = 0;
   let adopted = 0;
   const store = adopt
-    ? (db.getSetting<Record<string, unknown>>(STRATEGIES_KEY) ?? {})
-    : {};
+    ? (db.getSetting<Record<string, LseStrategy[]>>(STRATEGIES_KEY) ?? {})
+    : ({} as Record<string, LseStrategy[]>);
   const summary: Array<{
     id: string;
     best: Candidate | null;
@@ -153,20 +157,27 @@ async function main() {
       }
     }
 
-    if (adopt && report.best && FAMILIES.includes(report.best.model)) {
-      const b = report.best;
-      store[inst.id] = {
-        family: b.model,
-        config: b.config,
-        interval,
-        confirm: confirmFor(interval),
-        adjustedP: b.adjustedPValue,
-        adoptedAt: Date.now(),
-      };
-      adopted++;
-      console.log(
-        `             ADOPTED [${b.model}@${interval}] p=${b.adjustedPValue.toExponential(1)}`,
-      );
+    if (adopt) {
+      for (const c of qualified) {
+        if (!FAMILIES.includes(c.model)) continue;
+        const list = store[inst.id] ?? [];
+        const entry: LseStrategy = {
+          family: c.model as "reversion" | "trend" | "breakout" | "momentum",
+          config: c.config,
+          interval,
+          confirm: confirmFor(interval),
+          adjustedP: c.adjustedPValue,
+          adoptedAt: Date.now(),
+          verdict: "qualified",
+          relaxed: false,
+          experimental: false,
+        };
+        store[inst.id] = upsertLseStrategy(list, entry);
+        adopted++;
+        console.log(
+          `             ADOPTED [${c.model}@${interval}] p=${c.adjustedPValue.toExponential(1)}`,
+        );
+      }
     }
 
     summary.push({
