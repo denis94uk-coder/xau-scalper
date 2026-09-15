@@ -14,7 +14,9 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { useLive, useMutation } from "@/hooks/useLive";
 import { api, type Idea } from "@/lib/api";
+import { assessLiquidation } from "@/lib/leverage";
 import { fmtPrice } from "@/lib/priceApi";
+import { EngineHeartbeat } from "@/components/EngineHeartbeat";
 
 const STATUS_COLORS: Record<string, string> = {
   ACTIVE: "bg-blue-500/20 text-blue-400 border-blue-500/30",
@@ -117,6 +119,11 @@ export function TradingIdeasPage({
     ["ideas"],
     [source],
   );
+  // Reference leverage for the liquidation readout — the cap from Settings.
+  const maxLev = useLive(
+    () => api.config().then(c => c.risk.maxLeverage ?? 100).catch(() => 100),
+    ["config"],
+  ) ?? 100;
   const [deleteIdea] = useMutation((id: number) => api.deleteIdea(id));
   const [filter, setFilter] = useState<string>("ALL");
   const [sourceFilter, setSourceFilter] = useState<string>("ALL");
@@ -195,6 +202,7 @@ export function TradingIdeasPage({
       </div>
 
       {/* Stats Bar */}
+      <EngineHeartbeat />
       <div className="grid grid-cols-2 sm:grid-cols-6 gap-2">
         <StatCard label="Active" value={active} color="text-blue-400" />
         <StatCard label="Wins" value={wins} color="text-emerald-400" />
@@ -357,6 +365,26 @@ export function TradingIdeasPage({
                       : idea.status.replace("_", " ")}
                   </span>
 
+                  {/* Liquidation flag — open idea whose stop cannot survive the reference leverage */}
+                  {(idea.status === "ACTIVE" || idea.status === "TP1_HIT") &&
+                    (() => {
+                      const a = assessLiquidation(
+                        idea.entryPrice,
+                        idea.trailingSl ?? idea.stopLoss,
+                        idea.direction,
+                        maxLev,
+                      );
+                      if (!a || a.survives) return null;
+                      return (
+                        <span
+                          className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-red-500/20 text-red-300 border-red-500/40"
+                          title={`Stop ${a.stopPct.toFixed(2)}% away but x${maxLev} liquidates at ${a.liqPct.toFixed(2)}% — liq ${fmtPrice(a.liqPrice)}`}
+                        >
+                          LIQ RISK
+                        </span>
+                      );
+                    })()}
+
                   {/* P&L — % of entry; points in the tooltip */}
                   <span
                     className={`text-sm font-mono w-20 text-right ${
@@ -466,6 +494,30 @@ export function TradingIdeasPage({
                     {/* Reason + Meta */}
                     <div className="text-xs space-y-1">
                       <div className="text-muted-foreground">{idea.reason}</div>
+                      {/* Liquidation readout at the reference leverage */}
+                      {(idea.status === "ACTIVE" || idea.status === "TP1_HIT") &&
+                        (() => {
+                          const a = assessLiquidation(
+                            idea.entryPrice,
+                            idea.trailingSl ?? idea.stopLoss,
+                            idea.direction,
+                            maxLev,
+                          );
+                          if (!a) return null;
+                          return (
+                            <div
+                              className={`font-mono text-[11px] rounded-md px-2 py-1 w-fit ${
+                                a.survives
+                                  ? "bg-emerald-500/10 text-emerald-400"
+                                  : "bg-red-500/10 text-red-300 font-bold"
+                              }`}
+                            >
+                              x{maxLev} liq {fmtPrice(a.liqPrice)} · stop{" "}
+                              {a.stopPct.toFixed(2)}% vs liq {a.liqPct.toFixed(2)}% ·{" "}
+                              {a.survives ? "stop survives" : "STOP CANNOT SURVIVE"}
+                            </div>
+                          );
+                        })()}
                       <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
                         <span>{idea.asset}</span>
                         <span>TF: {idea.timeframe}</span>

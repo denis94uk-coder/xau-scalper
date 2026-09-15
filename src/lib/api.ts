@@ -359,6 +359,8 @@ export interface AppConfig {
     maxRisk: number;
     assumedCorrelation: number;
     minCorrelationSamples: number;
+    liveArmed: boolean;
+    maxLeverage: number;
   };
   engine: {
     monitorSeconds: number;
@@ -380,6 +382,18 @@ export interface AppConfig {
 export interface ValidationIssue {
   path: string;
   message: string;
+}
+
+export interface RiskStatus {
+  halted: boolean;
+  haltedAt: number | null;
+  haltReason: string | null;
+  dailyLossPts: number;
+  openIdeas: number;
+  config: { maxDailyLossPts: number; maxOpenPositions: number };
+  day: string;
+  limitsActive: boolean;
+  message?: string;
 }
 
 export interface Mt5SymbolStatus {
@@ -709,6 +723,10 @@ export const api = {
   saveConfig: (cfg: AppConfig) => put<AppConfig>("/api/config", cfg),
   defaultConfig: () => get<AppConfig>("/api/config/defaults"),
   resetConfig: () => post<AppConfig>("/api/config/reset"),
+
+  /** Kill-switch state; resume clears an intraday halt after review. */
+  riskStatus: () => get<RiskStatus>("/api/risk"),
+  riskResume: () => post<{ ok: true }>("/api/risk/resume"),
 
   mt5Status: () => get<Mt5Status>("/api/mt5/status"),
   mt5Discover: () =>

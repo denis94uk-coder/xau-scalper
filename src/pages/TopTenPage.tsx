@@ -67,7 +67,7 @@ export default function TopTenPage() {
     ["ideas"],
   );
   const ideas = useLive(
-    () => api.ideas({ limit: 500, source: "top10" }).then(r => r.ideas),
+    () => api.ideas({ limit: 2000, source: "top10" }).then(r => r.ideas),
     ["ideas"],
   );
 

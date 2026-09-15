@@ -199,6 +199,7 @@ function engineDeps() {
     db,
     assets: enabledAssets(cfg).map(toAssetDefinition),
     limits: { maxRisk: cfg.risk.maxRisk },
+    riskEnforced: cfg.risk.liveArmed,
     correlationOptions: {
       prior: cfg.risk.assumedCorrelation,
       minSamples: cfg.risk.minCorrelationSamples,
@@ -285,6 +286,7 @@ async function runTop10(): Promise<void> {
     db,
     assets: enabledAssets(config.get()).map(toAssetDefinition),
     riskManager: risk,
+    riskEnforced: config.get().risk.liveArmed,
     limits: { maxRisk: config.get().risk.maxRisk },
     correlationOptions: {
       prior: config.get().risk.assumedCorrelation,
@@ -318,6 +320,7 @@ async function runLse(): Promise<void> {
   await generateLseSignals({
     db,
     riskManager: risk,
+    riskEnforced: config.get().risk.liveArmed,
     limits: { maxRisk: config.get().risk.maxRisk },
     correlationOptions: {
       prior: config.get().risk.assumedCorrelation,

@@ -133,6 +133,37 @@ describe("applyPrice — long", () => {
     expect(db.getIdea(id)!.trailing_sl).toBeCloseTo(106);
   });
 
+  test("closeAtTp1 banks the full position as a STOPPED win", () => {
+    const BANK: AssetDefinition = { ...ASSET, closeAtTp1: true };
+    const id = longIdea();
+    const changed = applyPrice(db, BANK, db.getIdea(id)!, tick(106), 0);
+    expect(changed).toBe(true);
+    const got = db.getIdea(id)!;
+    expect(got.status).toBe("STOPPED");
+    expect(got.pnl_points).toBeCloseTo(6);
+    expect(got.resolved_at).not.toBeNull();
+    expect(got.trailing_sl).toBeNull();
+    expect(db.openIdeas()).toHaveLength(0);
+  });
+
+  test("closeAtTp1 bar through TP2 still banks at TP1 — the limit filled first", () => {
+    const BANK: AssetDefinition = { ...ASSET, closeAtTp1: true };
+    const id = longIdea();
+    applyPrice(db, BANK, db.getIdea(id)!, tick(115), 0);
+    const got = db.getIdea(id)!;
+    expect(got.status).toBe("STOPPED");
+    expect(got.pnl_points).toBeCloseTo(6);
+  });
+
+  test("closeAtTp1 pre-TP1 stop still books the full loss", () => {
+    const BANK: AssetDefinition = { ...ASSET, closeAtTp1: true };
+    const id = longIdea();
+    applyPrice(db, BANK, db.getIdea(id)!, tick(90), 0);
+    const got = db.getIdea(id)!;
+    expect(got.status).toBe("STOPPED");
+    expect(got.pnl_points).toBeCloseTo(-5);
+  });
+
   test("a bar spanning both stop and target resolves as the stop", () => {
     const id = longIdea();
     const changed = applyPrice(
@@ -295,6 +326,34 @@ describe("the portfolio gate", () => {
     );
     expect(id).toBeNull();
     expect(db.listIdeas()).toHaveLength(1); // only the pre-existing one
+  });
+
+  test("disarmed risk records the idea and logs RISK_WOULD_BLOCK instead of refusing", async () => {
+    db.createIdea({
+      asset: "OTHERUSDT",
+      direction: "LONG",
+      entryPrice: 100,
+      stopLoss: 95,
+      tp1: 106,
+      tp2: 112,
+      spotPrice: 100,
+    });
+
+    // Same over-cap book as the refusal test — but paper-collect mode.
+    const id = await generateForAsset(
+      { ...feed(), limits: { maxRisk: 1 }, riskEnforced: false },
+      ASSET,
+    );
+    expect(id).not.toBeNull();
+    expect(db.listIdeas()).toHaveLength(2); // pre-existing + recorded signal
+    const would = db
+      .listJournal()
+      .filter(r => r.event_type === "RISK_WOULD_BLOCK");
+    expect(would).toHaveLength(1);
+    expect(would[0].details).toContain("over the");
+    expect(
+      db.listJournal().filter(r => r.event_type === "SIGNAL_BLOCKED"),
+    ).toHaveLength(0);
   });
 
   test("a refusal is recorded with the reason, not swallowed", async () => {

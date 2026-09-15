@@ -121,6 +121,8 @@ export interface Top10Deps {
   riskManager?: RiskManager;
   limits?: { maxRisk: number };
   correlationOptions?: { prior?: number; minSamples?: number };
+  /** Paper-collect mode when false: risk gates journal RISK_WOULD_BLOCK but never refuse. Defaults true. */
+  riskEnforced?: boolean;
 }
 
 // Dynamic universe — top 10 by live PF, can shrink to singular if one dominates
@@ -346,7 +348,7 @@ export async function generateForTop10(
     const r = deps.riskManager.canTrade(now);
     if (!r.allowed) {
       db.logJournal({
-        eventType: "SIGNAL_BLOCKED",
+        eventType: deps.riskEnforced ?? true ? "SIGNAL_BLOCKED" : "RISK_WOULD_BLOCK",
         asset: asset.id,
         source: "top10",
         direction: a15.direction,
@@ -354,7 +356,7 @@ export async function generateForTop10(
         details: `[TOP10 ${asset.displaySymbol}] ${a15.grade} ${a15.direction} not taken. ${r.reason}`,
         metadata: { killSwitch: true } as any,
       });
-      return null;
+      if (deps.riskEnforced ?? true) return null;
     }
   }
 
@@ -374,7 +376,7 @@ export async function generateForTop10(
   );
   if (!decision.allowed) {
     db.logJournal({
-      eventType: "SIGNAL_BLOCKED",
+      eventType: deps.riskEnforced ?? true ? "SIGNAL_BLOCKED" : "RISK_WOULD_BLOCK",
       asset: asset.id,
       source: "top10",
       direction: a15.direction,
@@ -382,7 +384,7 @@ export async function generateForTop10(
       details: `[TOP10 ${asset.displaySymbol}] ${a15.grade} ${a15.direction} not taken. ${decision.reason}`,
       metadata: decision as any,
     });
-    return null;
+    if (deps.riskEnforced ?? true) return null;
   }
 
   const confidence = a30 ? Math.min(95, a15.confidence + 10) : a15.confidence;

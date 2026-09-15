@@ -62,7 +62,12 @@ export async function reconcileState(deps: EngineDeps): Promise<number> {
 
   let prices: Map<string, number>;
   try {
-    prices = await fetchPrices(venueSymbols(active), { fetcher: deps.fetcher });
+    // Binance-priced only — LSE instruments resolve via the vault fallback
+    // below, and a non-Binance id 400s the whole batch (see market.ts).
+    prices = await fetchPrices(
+      venueSymbols(active.filter(a => a.dataSource === "binance")),
+      { fetcher: deps.fetcher },
+    );
   } catch (e) {
     console.error(
       "[reconcile] Could not fetch prices — skipping reconciliation:",

@@ -81,6 +81,12 @@ export interface EngineDeps {
   correlations?: CorrelationMatrix;
   /** Kill-switch / circuit-breaker. When provided, checked before every new idea. */
   riskManager?: RiskManager;
+  /**
+   * Paper-collect mode when false: the kill-switch and portfolio gate journal
+   * RISK_WOULD_BLOCK but never refuse, so every setup is recorded for later
+   * evaluation. Defaults true — existing callers (incl. tests) keep blocking.
+   */
+  riskEnforced?: boolean;
 }
 
 const SIGNAL_INTERVAL = "5m";
@@ -327,19 +333,19 @@ export async function generateForAsset(
 
   // Kill-switch / circuit-breaker — checked before the portfolio gate so that
   // a halt from a daily loss limit blocks the signal without touching the
-  // correlation matrix at all.
+  // correlation matrix at all. Disarmed (paper-collect): logged, not enforced.
   if (deps.riskManager) {
     const risk = deps.riskManager.canTrade(now);
     if (!risk.allowed) {
       db.logJournal({
-        eventType: "SIGNAL_BLOCKED",
+        eventType: deps.riskEnforced ?? true ? "SIGNAL_BLOCKED" : "RISK_WOULD_BLOCK",
         asset: asset.id,
         direction: a5.direction,
         price: a5.entryPrice,
         details: `[${asset.displaySymbol}] ${a5.grade} ${a5.direction} not taken. ${risk.reason}`,
         metadata: { killSwitch: true, reason: risk.reason },
       });
-      return null;
+      if (deps.riskEnforced ?? true) return null;
     }
   }
 
@@ -362,14 +368,14 @@ export async function generateForAsset(
   );
   if (!decision.allowed) {
     db.logJournal({
-      eventType: "SIGNAL_BLOCKED",
+      eventType: deps.riskEnforced ?? true ? "SIGNAL_BLOCKED" : "RISK_WOULD_BLOCK",
       asset: asset.id,
       direction: a5.direction,
       price: a5.entryPrice,
       details: `[${asset.displaySymbol}] ${a5.grade} ${a5.direction} not taken. ${decision.reason}`,
       metadata: decision,
     });
-    return null;
+    if (deps.riskEnforced ?? true) return null;
   }
 
   const confidence = a15 ? Math.min(95, a5.confidence + 10) : a5.confidence;
@@ -736,6 +742,30 @@ export function applyPrice(
     isLong ? idea.tp1 - idea.entry_price : idea.entry_price - idea.tp1,
   );
   db.addIdeaEvent(idea.id, "TP1_HIT", idea.tp1);
+
+  // No-runner books (LSE): the full position banks at TP1. Resolves as a
+  // STOPPED win so every existing stat query keeps working; the journal
+  // carries the honest reason. A limit fill at TP1 cannot become a TP2 fill.
+  if (asset.closeAtTp1) {
+    db.updateIdea(idea.id, {
+      status: "STOPPED",
+      pnl_points: tp1Pnl,
+      resolved_at: Date.now(),
+    });
+    db.logJournal({
+      eventType: "TP1_HIT",
+      asset: asset.id,
+      source: idea.source,
+      ideaId: idea.id,
+      direction: idea.direction,
+      price: idea.tp1,
+      details:
+        `${idea.direction} TP1 @ ${idea.tp1} | entry ${idea.entry_price} | ` +
+        `+${tp1Pnl} pts | banked, no runner`,
+    });
+    return true;
+  }
+
   db.logJournal({
     eventType: "TP1_HIT",
     asset: asset.id,
@@ -795,15 +825,21 @@ export async function monitorIdeas(deps: EngineDeps): Promise<void> {
     return;
   }
 
-  const active = assets.filter(a => open.some(i => i.asset === a.id));
+  const active = assets.filter(
+    a => a.dataSource === "binance" && open.some(i => i.asset === a.id),
+  );
   // Orphan guard: an idea whose asset was later disabled (or dropped from
   // the registry) still holds risk and must still be priced — otherwise it
   // sits open forever, blocking cooldowns and the risk budget silently.
+  // Binance-priced only: an LSE/MT5 id (e.g. GER → DE30/EUR) must never
+  // reach the Binance batch — one invalid symbol 400s the whole request
+  // and freezes every open position.
   for (const idea of open) {
     if (idea.source === "lse") continue; // priced off vault bars below
     if (active.some(a => a.id === idea.asset)) continue;
     const def = getAsset(idea.asset);
-    if (def && !active.some(a => a.id === def.id)) active.push(def);
+    if (def && def.dataSource === "binance" && !active.some(a => a.id === def.id))
+      active.push(def);
     else if (!def)
       console.warn(
         `[monitor] idea #${idea.id} on unknown asset "${idea.asset}" — no definition to price it, left open`,
@@ -933,8 +969,8 @@ function lseAtr(db: Db, asset: AssetDefinition): number {
 }
 
 /**
- * LSE assets that currently hold open positions, built from the LSE
- * universe — deliberately NOT part of the main engine's asset list.
+ * LSE assets holding open positions, built from the LSE universe —
+ * deliberately NOT part of the main engine's asset list.
  */
 export function lseMonitoredAssets(db: Db): AssetDefinition[] {
   const open = db.openIdeas().filter(i => i.source === "lse");

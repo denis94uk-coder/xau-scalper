@@ -9,8 +9,10 @@ import { DEFAULT_STRATEGY_CONFIG } from "../../core/strategy";
 import { Db } from "../db";
 import {
   confirmFor,
+  lseDirectionAllowed,
   lseRegimeBlocks,
   lseStrategyFor,
+  lseUniverse,
   lseUniverseStatus,
   strategyIsQualified,
 } from "../lse-engine";
@@ -46,20 +48,16 @@ describe("lseRegimeBlocks", () => {
 });
 
 describe("lseStrategyFor", () => {
-  test("falls back to the hand-qualified gold strategy", () => {
+  test("an empty store means no trade — no fallbacks", () => {
     const db = new Db(":memory:");
-    const s = lseStrategyFor(db, "XAUUSD");
-    expect(s).not.toBeNull();
-    expect(s!.family).toBe("breakout");
-    expect(s!.interval).toBe("1h");
-    expect(s!.config.breakoutPeriod).toBe(10);
+    expect(lseStrategyFor(db, "GER")).toBeNull();
     db.close();
   });
 
-  test("a discovered store entry wins over the fallback", () => {
+  test("a discovered store entry resolves verbatim", () => {
     const db = new Db(":memory:");
     db.setSetting("lse:strategies", {
-      XAUUSD: {
+      GER: {
         family: "trend",
         config: { ...DEFAULT_STRATEGY_CONFIG, emaFast: 21 },
         interval: "30m",
@@ -68,7 +66,7 @@ describe("lseStrategyFor", () => {
         adoptedAt: 123,
       },
     });
-    const s = lseStrategyFor(db, "XAUUSD");
+    const s = lseStrategyFor(db, "GER");
     expect(s!.family).toBe("trend");
     expect(s!.interval).toBe("30m");
     expect(s!.confirm).toBe("1h");
@@ -76,54 +74,55 @@ describe("lseStrategyFor", () => {
     db.close();
   });
 
-  test("an instrument with neither store entry nor fallback must not trade", () => {
+  test("an unknown instrument must not trade", () => {
     const db = new Db(":memory:");
+    expect(lseStrategyFor(db, "XAUUSD")).toBeNull();
     expect(lseStrategyFor(db, "EURUSD")).toBeNull();
-    expect(lseStrategyFor(db, "SPX500")).toBeNull();
     db.close();
   });
 
   test("an unqualified discovered entry (p ≈ 1) must not trade", () => {
     const db = new Db(":memory:");
     db.setSetting("lse:strategies", {
-      NAS100: {
+      GER: {
         family: "reversion",
         config: DEFAULT_STRATEGY_CONFIG,
-        interval: "1h",
-        confirm: null,
+        interval: "15m",
+        confirm: "30m",
         adjustedP: 0.9999,
         adoptedAt: 123,
       },
     });
-    expect(lseStrategyFor(db, "NAS100")).toBeNull();
+    expect(lseStrategyFor(db, "GER")).toBeNull();
     db.close();
   });
 
   test("a relaxed or failed-verdict entry must not trade even with a low p", () => {
     const db = new Db(":memory:");
     db.setSetting("lse:strategies", {
-      GER: {
-        family: "trend",
-        config: DEFAULT_STRATEGY_CONFIG,
-        interval: "1h",
-        confirm: null,
-        adjustedP: 0.01,
-        adoptedAt: 123,
-        relaxed: true,
-        verdict: "failed_walk_forward",
-      },
-      FTSE: {
-        family: "trend",
-        config: DEFAULT_STRATEGY_CONFIG,
-        interval: "1h",
-        confirm: null,
-        adjustedP: 0.01,
-        adoptedAt: 123,
-        verdict: "not_significant",
-      },
+      GER: [
+        {
+          family: "trend",
+          config: DEFAULT_STRATEGY_CONFIG,
+          interval: "1h",
+          confirm: null,
+          adjustedP: 0.01,
+          adoptedAt: 123,
+          relaxed: true,
+          verdict: "failed_walk_forward",
+        },
+        {
+          family: "momentum",
+          config: DEFAULT_STRATEGY_CONFIG,
+          interval: "30m",
+          confirm: "1h",
+          adjustedP: 0.01,
+          adoptedAt: 123,
+          verdict: "not_significant",
+        },
+      ],
     });
     expect(lseStrategyFor(db, "GER")).toBeNull();
-    expect(lseStrategyFor(db, "FTSE")).toBeNull();
     db.close();
   });
 
@@ -166,60 +165,114 @@ describe("strategyIsQualified", () => {
   test("p above 0.05 never trades", () => {
     expect(strategyIsQualified({ ...base, adjustedP: 0.5 })).toBe(false);
   });
+  test("exact-0 p is an underflow, never an edge", () => {
+    expect(strategyIsQualified({ ...base, adjustedP: 0 })).toBe(false);
+    expect(
+      strategyIsQualified({ ...base, adjustedP: 0, verdict: "qualified" }),
+    ).toBe(false);
+  });
+  test("NaN p never trades", () => {
+    expect(strategyIsQualified({ ...base, adjustedP: NaN })).toBe(false);
+  });
 });
 
-describe("no alias mirrors", () => {
-  test("one id per underlying — UK100 and DE30 are gone", () => {
+describe("lseDirectionAllowed", () => {
+  const base = {
+    family: "momentum" as const,
+    config: DEFAULT_STRATEGY_CONFIG,
+    interval: "30m",
+    confirm: "1h",
+    adjustedP: 0.032,
+    adoptedAt: 1,
+  };
+  test("undefined flags allow both sides (legacy entries)", () => {
+    expect(lseDirectionAllowed(base, "LONG")).toBe(true);
+    expect(lseDirectionAllowed(base, "SHORT")).toBe(true);
+  });
+  test("allowLong false blocks only LONG", () => {
+    const s = { ...base, allowLong: false };
+    expect(lseDirectionAllowed(s, "LONG")).toBe(false);
+    expect(lseDirectionAllowed(s, "SHORT")).toBe(true);
+  });
+  test("allowShort false blocks only SHORT", () => {
+    const s = { ...base, allowShort: false };
+    expect(lseDirectionAllowed(s, "LONG")).toBe(true);
+    expect(lseDirectionAllowed(s, "SHORT")).toBe(false);
+  });
+});
+describe("GER-only board", () => {
+  test("board holds only focus ids — one instrument, no mirrors", () => {
     const db = new Db(":memory:");
     const ids = lseUniverseStatus(db).map(r => r.id);
-    expect(ids).not.toContain("UK100");
-    expect(ids).not.toContain("DE30");
-    expect(ids).toContain("FTSE");
-    expect(ids).toContain("GER");
+    expect(ids).toEqual(["GER"]);
     db.close();
   });
 
-  test("universe status reports a qualified entry as trading", () => {
+  test("a qualified GER entry reports trading", () => {
     const db = new Db(":memory:");
     db.setSetting("lse:strategies", {
-      FTSE: {
-        family: "reversion",
+      GER: {
+        family: "momentum",
         config: DEFAULT_STRATEGY_CONFIG,
-        interval: "1h",
-        confirm: null,
-        adjustedP: 0.001,
+        interval: "30m",
+        confirm: "1h",
+        adjustedP: 0.032,
         adoptedAt: 1,
-        verdict: "qualified",
       },
     });
     const rows = lseUniverseStatus(db);
-    const ftse = rows.find(r => r.id === "FTSE")!;
-    expect(ftse.trading).toBe(true);
-    expect(ftse.aliasOf).toBeNull();
-    // NAS100's unqualified entry is reported, not trading.
-    const nas100 = rows.find(r => r.id === "NAS100")!;
-    expect(nas100.trading).toBe(false);
-    expect(nas100.qualified).toBe(false);
+    expect(rows.map(r => r.id)).toEqual(["GER"]);
+    const ger = rows.find(r => r.id === "GER")!;
+    expect(ger.trading).toBe(true);
+    expect(ger.aliasOf).toBeNull();
     db.close();
   });
 
-  test("a blocked store entry is reported as BLOCKED, not missing", () => {
+  test("a blocked GER entry is reported as BLOCKED, not missing", () => {
     const db = new Db(":memory:");
     db.setSetting("lse:strategies", {
-      NAS100: {
+      GER: {
         family: "reversion",
         config: DEFAULT_STRATEGY_CONFIG,
-        interval: "1h",
-        confirm: null,
+        interval: "15m",
+        confirm: "30m",
         adjustedP: 0.9999,
         adoptedAt: 1,
       },
     });
-    const nas100 = lseUniverseStatus(db).find(r => r.id === "NAS100")!;
-    expect(nas100.strategy).not.toBeNull();
-    expect(nas100.strategy!.family).toBe("reversion");
-    expect(nas100.trading).toBe(false);
-    expect(nas100.reason).toContain("blocked");
+    const ger = lseUniverseStatus(db).find(r => r.id === "GER")!;
+    expect(ger.strategy).not.toBeNull();
+    expect(ger.strategy!.family).toBe("reversion");
+    expect(ger.trading).toBe(false);
+    expect(ger.reason).toContain("blocked");
+    db.close();
+  });
+});
+
+describe("GER-only focus", () => {
+  test("universe holds only focus ids even when others qualify", () => {
+    const db = new Db(":memory:");
+    db.setSetting("lse:strategies", {
+      GER: {
+        family: "momentum",
+        config: DEFAULT_STRATEGY_CONFIG,
+        interval: "30m",
+        confirm: "1h",
+        adjustedP: 0.032,
+        adoptedAt: 1,
+      },
+      BTCUSD: {
+        family: "momentum",
+        config: DEFAULT_STRATEGY_CONFIG,
+        interval: "1h",
+        confirm: null,
+        adjustedP: 0.009,
+        adoptedAt: 1,
+        verdict: "qualified",
+      },
+    });
+    const ids = lseUniverse(db).map(a => a.id);
+    expect(ids).toEqual(["GER"]);
     db.close();
   });
 });

@@ -979,6 +979,18 @@ export function SettingsPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-2">
+              <div className="sm:col-span-2 rounded-lg border border-amber-600/40 bg-amber-500/5 p-3">
+                <ToggleRow
+                  label="Enforce risk limits — LIVE ARM"
+                  help="OFF (paper): the portfolio cap and kill-switch only log RISK_WOULD_BLOCK — every setup is recorded for evaluation. ON (live): they refuse signals. Arm only with real capital at stake."
+                  checked={draft.risk.liveArmed ?? false}
+                  onChange={v =>
+                    update(d => {
+                      d.risk.liveArmed = v;
+                    })
+                  }
+                />
+              </div>
               <NumberField
                 label="Maximum portfolio risk"
                 help="In units of one independent position. 3 is the default."
@@ -1013,6 +1025,17 @@ export function SettingsPage() {
                   })
                 }
                 error={issueFor(issues, "risk.minCorrelationSamples")}
+              />
+              <NumberField
+                label="Maximum leverage"
+                help="Cap for the ROI simulator and the leverage live ideas are judged against. 100 is the default."
+                value={draft.risk.maxLeverage ?? 100}
+                onChange={v =>
+                  update(d => {
+                    d.risk.maxLeverage = v;
+                  })
+                }
+                error={issueFor(issues, "risk.maxLeverage")}
               />
             </CardContent>
           </Card>

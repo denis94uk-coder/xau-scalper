@@ -62,12 +62,38 @@ export async function fetchPrices(
 
   const query = encodeURIComponent(JSON.stringify(symbols));
   const res = await doFetch(`${BINANCE_API}/ticker/price?symbols=${query}`);
-  if (!res.ok) throw new Error(`Binance ticker ${res.status}`);
+  if (res.ok) {
+    const rows = (await res.json()) as Array<{ symbol: string; price: string }>;
+    for (const row of rows) {
+      const price = Number.parseFloat(row.price);
+      if (Number.isFinite(price) && price > 0) out.set(row.symbol, price);
+    }
+    return out;
+  }
 
-  const rows = (await res.json()) as Array<{ symbol: string; price: string }>;
-  for (const row of rows) {
-    const price = Number.parseFloat(row.price);
-    if (Number.isFinite(price) && price > 0) out.set(row.symbol, price);
+  // One invalid symbol 400s the whole batch (observed: a non-Binance id
+  // such as DE30/EUR mixed into the request). Fall back to individual
+  // fetches so one bad symbol cannot freeze every open position.
+  console.warn(
+    `[market] batch price fetch failed (HTTP ${res.status}) — retrying ${symbols.length} symbols individually`,
+  );
+  for (const s of symbols) {
+    try {
+      const r = await doFetch(
+        `${BINANCE_API}/ticker/price?symbol=${encodeURIComponent(s)}`,
+      );
+      if (!r.ok) {
+        console.warn(`[market] no price for ${s}: HTTP ${r.status}`);
+        continue;
+      }
+      const row = (await r.json()) as { symbol: string; price: string };
+      const price = Number.parseFloat(row.price);
+      if (Number.isFinite(price) && price > 0) out.set(row.symbol, price);
+    } catch (e) {
+      console.warn(
+        `[market] no price for ${s}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
   }
   return out;
 }

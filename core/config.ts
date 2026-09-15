@@ -77,6 +77,15 @@ export interface RiskConfig {
   assumedCorrelation: number;
   /** Bars of overlap required before a measured correlation is trusted. */
   minCorrelationSamples: number;
+  /**
+   * Master enforcement switch. False = paper/data-collection: the portfolio
+   * gate and kill-switch log RISK_WOULD_BLOCK but never refuse a signal, so
+   * every setup is recorded for later evaluation. True = live: they block.
+   * Regime, grade and cooldown gates always apply — they define the strategy.
+   */
+  liveArmed: boolean;
+  /** Maximum leverage the simulators offer and live ideas are sized against. */
+  maxLeverage: number;
 }
 
 /** Timer cadences and retention, in the units an operator thinks in. */
@@ -148,6 +157,8 @@ export function defaultConfig(): AppConfig {
       maxRisk: 3,
       assumedCorrelation: 0.8,
       minCorrelationSamples: 30,
+      liveArmed: false,
+      maxLeverage: 100,
     },
     engine: {
       monitorSeconds: 60,
@@ -501,6 +512,17 @@ export function validateConfig(input: unknown): ValidationIssue[] {
       { min: 2, max: 10_000, integer: true },
       issues,
     );
+    if (typeof risk.liveArmed !== "boolean") {
+      issues.push({
+        path: "risk.liveArmed",
+        message: "must be true or false",
+      });
+    }
+    checkNumber(risk.maxLeverage, "risk.maxLeverage", {
+      min: 1,
+      max: 500,
+      integer: true,
+    }, issues);
   }
 
   // ── engine ──

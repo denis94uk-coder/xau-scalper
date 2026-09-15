@@ -1,5 +1,5 @@
 /**
- * LSE ENGINE — separate book for real-market instruments (gold first).
+ * LSE ENGINE — GER-only book to start.
  *
  * Same concepts as top10, fully isolated: its own source ('lse'), its own
  * daily 1% take-profit / 0.5% stop circuit breakers, its own performance
@@ -11,22 +11,20 @@
  *     carries a LIST of strategies — one slot per family+interval — and
  *     trades ONLY its own discovered edges, never a book-wide template.
  *     Entries pass one of two gates: the strict gate (p ≤ 0.05, no
- *     relaxed/failed verdict) trades as a qualified edge; an entry the
+ *     relaxed/failed verdict, p > 0) trades as a qualified edge; an entry the
  *     operator explicitly flags `experimental` ALSO trades — tagged EXP,
  *     paper only — because the book is paper-tracked and live paper
  *     evidence is how an experimental edge earns qualification. A
  *     relaxed/unqualified entry without the flag stays blocked. One id
  *     per underlying — no alias mirrors.
- *   * GOLD fallback: XAUUSD hand-qualified 1h breakout (20y, PF 1.24,
- *     p = 0.006, 4/4 folds) until discovery adopts its own entry.
- *   * GOLD: breakout family on 1h — the family/interval the data chose.
- *     Reversion on real gold produced nothing.
- *   * HEDGES: COT crowd gate (never join a ≥90th/≤10th percentile fund
- *     positioning) and the real economic-calendar shield (lseNewsShield).
- *   * REGIME: carried as context (SL/TP multipliers + reason tag), never a
- *     veto — the qualified edge was measured with no regime filter, and a
- *     RANGING block was observed refusing grade-A setups on live day one.
+ *   * HEDGES: the real economic-calendar shield (lseNewsShield).
+ *   * REGIME: carried as context in the reason tag only — exits stay at the
+ *     validated 1x/1x, never reshaped live.
+ *   * DIRECTION: per-strategy allowLong/allowShort operator filter.
  *
+ * GER trades paper-tracked like top10 (no MT5 execution) until the user
+ * promotes the book. An instrument earns a place in LSE_UNIVERSE by
+ * operator edit — research first, row second.
  * Gold trades paper-tracked like top10 (no MT5 execution) until the user
  * promotes the book.
  */
@@ -45,58 +43,7 @@ import { ladderIsSane, syncCandles } from "./engine";
 import { publish } from "./events";
 import type { RiskManager } from "./risk-manager";
 
-/**
- * XAUUSD gold 1h breakout — the strongest survivor of the 3000-config deep
- * search over 20 years of vault history: PF 1.24, 816 trades, adjusted
- * p = 0.006, all 4 walk-forward folds profitable. Taken from the Strategy
- * Carpet verbatim, not retuned.
- */
-const XAUUSD_BREAKOUT: typeof DEFAULT_STRATEGY_CONFIG = {
-  ...DEFAULT_STRATEGY_CONFIG,
-  emaFast: 7,
-  emaMid: 31,
-  emaSlow: 132,
-  rsiPeriod: 13,
-  rsiOversold: 23.147,
-  rsiOverbought: 80.368,
-  macdFast: 7,
-  macdSlow: 47,
-  macdSignal: 10,
-  atrPeriod: 16,
-  atrSlMultiplier: 2.988,
-  atrTrailMultiplier: 3.792,
-  stochPeriod: 24,
-  stochOversold: 26.009,
-  stochOverbought: 74.419,
-  bollingerPeriod: 13,
-  bollingerStdDev: 1.952,
-  tp1R: 0.88,
-  tp2R: 3.481,
-  gradeAExtreme: 3,
-  gradeAStrength: 63.542,
-  gradeBExtreme: 2,
-  gradeBStrength: 63.542,
-  gradeCStrength: 50,
-  confidenceMultiplier: 1.2,
-  confidenceCap: 95,
-  biasNeutralThreshold: 34.225,
-  cooldownMs: 10 * 60 * 1000,
-  breakoutPeriod: 10,
-  momentumLookback: 95,
-};
-
 type Family = "reversion" | "trend" | "breakout" | "momentum" | "custom";
-
-/**
- * Per-asset strategy. An asset absent here has no qualified edge yet and
- * must not trade: research earns a place in the book, nothing else.
- */
-const LSE_STRATEGIES: Record<
-  string,
-  { family: Family; config: typeof DEFAULT_STRATEGY_CONFIG }
-> = {
-  XAUUSD: { family: "breakout", config: XAUUSD_BREAKOUT },
-};
 
 // ─── Per-asset discovered strategies ───
 
@@ -126,6 +73,12 @@ export interface LseStrategy {
   experimental?: boolean;
   /** Operator-paused: manually stopped, never fires even if qualified. */
   disabled?: boolean;
+  /**
+   * Direction filter: false blocks that side (undefined = allowed).
+   * Lets the operator keep a strategy's winning side when the other bleeds.
+   */
+  allowLong?: boolean;
+  allowShort?: boolean;
 }
 
 const STRATEGIES_KEY = "lse:strategies";
@@ -139,7 +92,17 @@ const STRATEGIES_KEY = "lse:strategies";
 export function strategyIsQualified(s: LseStrategy): boolean {
   if (s.relaxed) return false;
   if (s.verdict !== undefined && s.verdict !== "qualified") return false;
+  // Exact-0/NaN p is an underflow, never a measurement — it must not pass.
+  if (!(s.adjustedP > 0)) return false;
   return (s.adjustedP ?? 1) <= 0.05;
+}
+
+/**
+ * Operator direction filter: a side set to false never fires on that
+ * strategy. Undefined (legacy entries) means allowed.
+ */
+export function lseDirectionAllowed(s: LseStrategy, direction: string): boolean {
+  return direction === "LONG" ? s.allowLong !== false : s.allowShort !== false;
 }
 
 /**
@@ -226,26 +189,14 @@ export function lseRegimeBlocks(
 
 /**
  * Every strategy on an instrument's carpet, INCLUDING blocked ones (the
- * board reports them with their status). The hand-qualified fallback counts
- * as the carpet when research has adopted nothing for the instrument yet.
+ * board reports them with their status). No carpet entry = no trade:
+ * research earns a place in the book, nothing else.
  * A strategy NEVER applies to another instrument: callers always look up by
  * their own id and open ideas only under that same id.
  */
 export function lseStrategyList(db: Db, assetId: string): LseStrategy[] {
   const store = readLseStrategyStore(db);
-  const entries = store[assetId];
-  if (entries && entries.length > 0) return entries;
-  const qualified = LSE_STRATEGIES[assetId];
-  if (!qualified) return [];
-  return [
-    {
-      ...qualified,
-      interval: "1h",
-      confirm: null,
-      adjustedP: 0.006,
-      adoptedAt: 0,
-    },
-  ];
+  return store[assetId] ?? [];
 }
 
 /**
@@ -279,6 +230,8 @@ export interface LseStrategyStatus {
   relaxed?: boolean;
   experimental?: boolean;
   disabled?: boolean;
+  allowLong?: boolean;
+  allowShort?: boolean;
   adoptedAt: number;
   /** Passes the strict gate (p ≤ 0.05, no relaxed/failed verdict). */
   qualified: boolean;
@@ -319,15 +272,12 @@ export interface LseAssetStatus {
  * trades only its own strategies.
  */
 export function lseUniverseStatus(db: Db): LseAssetStatus[] {
-  const store = readLseStrategyStore(db);
   const open = db.openIdeas().filter(i => i.source === "lse");
   return LSE_UNIVERSE.map(inst => {
     // Resolve through the same gates the signal path uses, so the board can
-    // never disagree with it — including the hand-qualified fallback.
+    // never disagree with it.
     // Blocked entries are still reported (trades=false) so the board shows
     // BLOCKED rather than pretending no research exists.
-    const raw = store[inst.id] ?? [];
-    const fallback = raw.length === 0;
     const strategies: LseStrategyStatus[] = lseStrategyList(db, inst.id).map(
       s => ({
         family: s.family,
@@ -338,6 +288,8 @@ export function lseUniverseStatus(db: Db): LseAssetStatus[] {
         relaxed: s.relaxed,
         experimental: s.experimental,
         disabled: s.disabled,
+        allowLong: s.allowLong,
+        allowShort: s.allowShort,
         adoptedAt: s.adoptedAt,
         qualified: strategyIsQualified(s),
         trades: strategyTrades(s),
@@ -365,7 +317,7 @@ export function lseUniverseStatus(db: Db): LseAssetStatus[] {
       s.disabled
         ? `Paused ${s.family}@${s.interval} (p=${s.adjustedP}) — manually stopped`
         : s.qualified
-          ? `Qualified ${s.family}@${s.interval} (p=${s.adjustedP})${fallback ? " · hand-qualified fallback" : ""}`
+          ? `Qualified ${s.family}@${s.interval} (p=${s.adjustedP})`
           : s.trades
             ? `Experimental ${s.family}@${s.interval} (p=${s.adjustedP}) — unqualified paper edge, tagged EXP`
             : s.relaxed
@@ -391,7 +343,7 @@ export function lseUniverseStatus(db: Db): LseAssetStatus[] {
   });
 }
 /** Universe: instruments with a qualified strategy of their own. */
-function lseUniverse(db: Db): AssetDefinition[] {
+export function lseUniverse(db: Db): AssetDefinition[] {
   const assets: AssetDefinition[] = [];
   for (const inst of LSE_UNIVERSE) {
     if (!lseStrategyFor(db, inst.id)) continue;
@@ -449,6 +401,8 @@ export interface LseEngineDeps {
   riskManager?: RiskManager;
   limits?: { maxRisk: number };
   correlationOptions?: { prior?: number; minSamples?: number };
+  /** Paper-collect mode when false: risk gates journal RISK_WOULD_BLOCK but never refuse. Defaults true. */
+  riskEnforced?: boolean;
 }
 
 export async function generateForLse(
@@ -608,6 +562,19 @@ async function fireLseStrategy(
   // Confirmation: the confirm interval must agree if it has an opinion
   if (confirmation && confirmation.direction !== signal.direction) return null;
 
+  // Operator direction filter — a blocked side never fires on this strategy.
+  if (!lseDirectionAllowed(strategy, signal.direction)) {
+    db.logJournal({
+      eventType: "SIGNAL_BLOCKED",
+      asset: asset.id,
+      source: "lse",
+      direction: signal.direction,
+      price: signal.entryPrice,
+      details: `[LSE] ${signal.direction} disabled on ${family}@${strategy.interval}`,
+    });
+    return null;
+  }
+
   // Regime veto, family-aware (see lseRegimeBlocks): reversion needs
   // RANGING; every other family was validated with no regime filter and
   // gets context via the regimeTag on the idea, never a veto.
@@ -623,27 +590,6 @@ async function fireLseStrategy(
     return null;
   }
 
-  // COT crowd gate — gold only; the percentile is a GC futures rank.
-  if (asset.id === "XAUUSD") {
-    try {
-      const cot = db.getSetting<any>("lseCot");
-      if (cot?.crowded) {
-        const wantSide = signal.direction === "LONG" ? "LONG" : "SHORT";
-        if (cot.crowded === wantSide) {
-          db.logJournal({
-            eventType: "SIGNAL_BLOCKED",
-            asset: asset.id,
-            source: "lse",
-            direction: signal.direction,
-            price: signal.entryPrice,
-            details: `[LSE] COT ${cot.reportDate}: non-comm crowd ${cot.crowded} at ${cot.percentile}th pct — refusing to join`,
-          });
-          return null;
-        }
-      }
-    } catch {}
-  }
-
   if (signal.grade !== "A" && signal.grade !== "B") return null;
 
   // Cooldown per strategy+direction — one strategy's cooldown never mutes
@@ -655,11 +601,32 @@ async function fireLseStrategy(
     .get(asset.id, signal.direction, `[LSE ${family}@${strategy.interval}]%`);
   if (last && now - last.created_at < cfg.cooldownMs) return null;
 
+  // Anti-pyramid: one open slot per strategy+direction. A repeat setup
+  // while its ticket is still open is a photocopy, not a data point —
+  // skip it (journaled) and allow re-entry after the ticket closes.
+  // Dedupe, not risk: applies in paper and live alike.
+  const openTwin = db.raw
+    .query<{ id: number }, [string, string, string]>(
+      `SELECT id FROM trading_ideas WHERE asset = ? AND direction = ? AND source = 'lse' AND reason LIKE ? AND status IN ('ACTIVE','TP1_HIT') ORDER BY created_at DESC LIMIT 1`,
+    )
+    .get(asset.id, signal.direction, `[LSE ${family}@${strategy.interval}]%`);
+  if (openTwin) {
+    db.logJournal({
+      eventType: "PYRAMID_SKIP",
+      asset: asset.id,
+      source: "lse",
+      direction: signal.direction,
+      price: signal.entryPrice,
+      details: `[LSE ${family}@${strategy.interval}] ${signal.direction} setup repeated while #${openTwin.id} still open — skipped as duplicate`,
+    });
+    return null;
+  }
+
   if (deps.riskManager) {
     const r = deps.riskManager.canTrade(now);
     if (!r.allowed) {
       db.logJournal({
-        eventType: "SIGNAL_BLOCKED",
+        eventType: deps.riskEnforced ?? true ? "SIGNAL_BLOCKED" : "RISK_WOULD_BLOCK",
         asset: asset.id,
         source: "lse",
         direction: signal.direction,
@@ -667,7 +634,7 @@ async function fireLseStrategy(
         details: `[LSE ${asset.displaySymbol}] ${signal.grade} ${signal.direction} not taken. ${r.reason}`,
         metadata: { killSwitch: true } as any,
       });
-      return null;
+      if (deps.riskEnforced ?? true) return null;
     }
   }
 
@@ -679,7 +646,7 @@ async function fireLseStrategy(
   );
   if (!decision.allowed) {
     db.logJournal({
-      eventType: "SIGNAL_BLOCKED",
+      eventType: deps.riskEnforced ?? true ? "SIGNAL_BLOCKED" : "RISK_WOULD_BLOCK",
       asset: asset.id,
       source: "lse",
       direction: signal.direction,
@@ -687,11 +654,14 @@ async function fireLseStrategy(
       details: `[LSE ${asset.displaySymbol}] ${signal.grade} ${signal.direction} not taken. ${decision.reason}`,
       metadata: decision as any,
     });
-    return null;
+    if (deps.riskEnforced ?? true) return null;
   }
 
-  const slMult = regime?.slMultiplier ?? 1;
-  const tpMult = regime?.tpMultiplier ?? 1;
+  // LSE trades the validated edge verbatim: discovery measured these configs
+  // with no regime scaling, so exits stay at 1x/1x. Regime rides along as
+  // context in the reason tag only — it never reshapes the bet.
+  const slMult = 1;
+  const tpMult = 1;
   const stopLoss = roundTo(
     signal.entryPrice + (signal.stopLoss - signal.entryPrice) * slMult,
     asset.pricePrecision,

@@ -63,6 +63,12 @@ export interface AssetDefinition {
   model?: ScoringModel;
   /** Whether the crons should generate/monitor signals for this asset. */
   enabled: boolean;
+  /**
+   * Bank the full position at TP1 (no runner to TP2). LSE-only: its runners
+   * never arrive (0 TP2s) while scratches and trail-givebacks drown the wins.
+   * Other books keep their runners — measured, not assumed.
+   */
+  closeAtTp1?: boolean;
 }
 
 /**
@@ -394,38 +400,24 @@ export function lseAsset(
       stopSlippageBps: meta.spreadBps,
     },
     enabled: true,
+    closeAtTp1: true,
   };
 }
 
 /**
- * The LSE research universe: liquid, few, tradeable on an MT5 broker.
+ * The LSE research universe: GER (DAX) only, to start.
  *
  * `lse` is the vault symbol, `id` the broker-style asset id candles are stored
- * under. spreadBps is the FULL spread assumption, set pessimistically per
- * instrument class (FX major < FX minor < metals < index CFD < crypto) until
- * the broker's real quotes are measured via mt5:sync.
+ * under. spreadBps is the FULL spread assumption, set pessimistically until
+ * the broker's real quotes are measured via mt5:sync. An instrument earns a
+ * place here by operator edit — research first, row second.
  */
 export const LSE_UNIVERSE: Array<{
   id: string;
   lse: string;
   digits: number;
   spreadBps: number;
-}> = [
-  { id: "XAUUSD", lse: "XAU/USD", digits: 2, spreadBps: 2.0 },
-  { id: "XAGUSD", lse: "XAG/USD", digits: 3, spreadBps: 6.0 },
-  { id: "EURUSD", lse: "EUR/USD", digits: 5, spreadBps: 1.0 },
-  { id: "GBPUSD", lse: "GBP/USD", digits: 5, spreadBps: 1.4 },
-  { id: "USDJPY", lse: "USD/JPY", digits: 3, spreadBps: 1.4 },
-  { id: "SPX500", lse: "SPX500/USD", digits: 1, spreadBps: 3.0 },
-  { id: "NAS100", lse: "NAS100/USD", digits: 1, spreadBps: 6.0 },
-  { id: "BTCUSD", lse: "BTC/USD", digits: 2, spreadBps: 4.0 },
-  // ── Index expansion: FTSE 100 (UK100/GBP) + DAX (DE30/EUR) ──
-  // GER is the DAX; stored id "GER" matches the brokercfd name most MT5
-  // majors expose, while FTSE is the common name for UK100.
-  // One id per underlying — UK100 and DE30 were removed as alias mirrors.
-  { id: "FTSE", lse: "UK100/GBP", digits: 1, spreadBps: 3.0 },
-  { id: "GER", lse: "DE30/EUR", digits: 1, spreadBps: 3.0 },
-];
+}> = [{ id: "GER", lse: "DE30/EUR", digits: 1, spreadBps: 3.0 }];
 
 /**
  * Build an AssetDefinition from stored MT5 export metadata.

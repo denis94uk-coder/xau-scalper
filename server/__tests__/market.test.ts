@@ -3,7 +3,7 @@
  * broker-symbol → venue-symbol mapping and paginated range fetching.
  */
 import { describe, expect, test } from "bun:test";
-import { exchangeSymbolFor, fetchCandleRange } from "../market";
+import { exchangeSymbolFor, fetchCandleRange, fetchPrices } from "../market";
 
 describe("exchangeSymbolFor", () => {
   test("maps the common gold spellings to the venue gold proxy", () => {
@@ -99,5 +99,46 @@ describe("fetchCandleRange", () => {
       { fetcher },
     );
     expect(candles).toEqual([]);
+  });
+});
+
+describe("fetchPrices", () => {
+  /** Batch fails (one poison symbol), singles succeed except the poison one. */
+  function flakyVenue() {
+    const calls: string[] = [];
+    const fetcher = (async (input: URL | Request) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.includes("symbols=")) {
+        return new Response(JSON.stringify({ code: -1100, msg: "bad symbol" }), {
+          status: 400,
+        });
+      }
+      const m = url.match(/symbol=([^&]+)/);
+      const sym = m ? decodeURIComponent(m[1]) : "";
+      if (sym === "DE30/EUR") {
+        return new Response(JSON.stringify({ code: -1121, msg: "bad symbol" }), {
+          status: 400,
+        });
+      }
+      return new Response(JSON.stringify({ symbol: sym, price: "100.5" }));
+    }) as unknown as typeof fetch;
+    return { fetcher, calls };
+  }
+
+  test("a poison symbol costs one price, not the whole book", async () => {
+    const { fetcher, calls } = flakyVenue();
+    const prices = await fetchPrices(["BTCUSDT", "DE30/EUR"], { fetcher });
+    // One batch attempt, then one retry per symbol.
+    expect(calls.length).toBe(3);
+    expect(prices.get("BTCUSDT")).toBe(100.5);
+    expect(prices.has("DE30/EUR")).toBe(false);
+  });
+
+  test("an empty book makes no requests", async () => {
+    const { fetcher, calls } = flakyVenue();
+    const prices = await fetchPrices([], { fetcher });
+    expect(prices.size).toBe(0);
+    expect(calls.length).toBe(0);
   });
 });

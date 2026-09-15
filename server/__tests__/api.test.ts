@@ -1195,7 +1195,7 @@ describe("lse", () => {
     );
     for (const u of uni.assets) expect(lseIds.has(u.id)).toBe(true);
   });
-  test("universe lists every instrument with its own strategy status", async () => {
+  test("universe lists only the focused instrument", async () => {
     const b = await body<{
       assets: Array<{
         id: string;
@@ -1207,10 +1207,8 @@ describe("lse", () => {
         reason: string;
       }>;
     }>(call("/api/lse/universe"));
-    // UK100 and DE30 deleted — one id per underlying, no alias mirrors.
-    expect(b.assets.map(a => a.id)).not.toContain("DE30");
-    expect(b.assets.map(a => a.id)).not.toContain("UK100");
-    expect(b.assets.find(a => a.id === "FTSE")).toBeDefined();
+    // GER-only book: no other instrument is listed.
+    expect(b.assets.map(a => a.id)).toEqual(["GER"]);
     for (const a of b.assets) {
       expect(typeof a.reason).toBe("string");
       if (a.trading) expect(a.qualified).toBe(true);
@@ -1227,7 +1225,54 @@ describe("lse", () => {
         interval: string | null;
       }>;
     }>(call("/api/lse/prices"));
-    expect(b.prices.map(p => p.id)).not.toContain("DE30");
-    expect(b.prices.find(p => p.id === "XAUUSD")?.symbol).toBe("XAU/USD");
+    expect(b.prices.map(p => p.id)).toEqual(["GER"]);
+    expect(b.prices.find(p => p.id === "GER")?.symbol).toBe("DE30/EUR");
+  });
+
+  test("PATCH toggles direction flags on a carpet slot", async () => {
+    db.setSetting("lse:strategies", {
+      GER: [
+        {
+          family: "momentum",
+          config: DEFAULT_STRATEGY_CONFIG,
+          interval: "30m",
+          confirm: "1h",
+          adjustedP: 0.032,
+          adoptedAt: 1,
+        },
+      ],
+    });
+    const b = await body(
+      call("/api/lse/strategies/GER/momentum/30m", "PATCH", {
+        allowLong: false,
+      }),
+    );
+    expect(b.ok).toBe(true);
+    expect(b.allowLong).toBe(false);
+    const uni = await body<{
+      assets: Array<{
+        id: string;
+        strategies: Array<{
+          family: string;
+          interval: string;
+          allowLong?: boolean;
+        }>;
+      }>;
+    }>(call("/api/lse/universe"));
+    expect(
+      uni.assets.find(a => a.id === "GER")!.strategies[0].allowLong,
+    ).toBe(false);
+    expect(
+      await status(
+        call("/api/lse/strategies/GER/momentum/30m", "PATCH", {}),
+      ),
+    ).toBe(400);
+    expect(
+      await status(
+        call("/api/lse/strategies/GER/momentum/5m", "PATCH", {
+          allowLong: false,
+        }),
+      ),
+    ).toBe(404);
   });
 });

@@ -1,24 +1,32 @@
 import {
   Award,
   BarChart3,
+  Calculator,
   FlaskConical,
   Globe,
   LayoutDashboard,
   Shield,
   Target,
   TrendingUp,
+  Trophy,
+  Wallet,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   DailyPnlCalendar,
   pnlPct,
 } from "@/components/dashboard/DailyPnlCalendar";
+import { EngineHeartbeat } from "@/components/EngineHeartbeat";
+import {
+  liquidationPct,
+  stopPctOf,
+} from "@/lib/leverage";
 import { eachDayOfInterval, endOfMonth, format, getDay, startOfMonth } from "date-fns";
 import { useLive } from "@/hooks/useLive";
 import { type AssetPerformance, api, type Idea } from "@/lib/api";
 
 type EngineId = "engine" | "top10" | "lse" | "experimental";
-type TabId = "overview" | EngineId;
+type TabId = "overview" | EngineId | "roi" | "rank";
 
 const ENGINES: Array<{
   id: EngineId;
@@ -124,7 +132,7 @@ function aggregatePerformance(byAsset: AssetPerformance[] | undefined) {
   };
 }
 
-function EngineHeadline({ source }: { source: EngineId }) {
+function EngineHeadline({ source, simCapital, leverage = 1 }: { source: EngineId; simCapital?: number; leverage?: number }) {
   const { byAsset, ideas } = useEnginePerformance(source);
   const agg = aggregatePerformance(byAsset);
   const closedIdeas = useMemo(
@@ -149,6 +157,25 @@ function EngineHeadline({ source }: { source: EngineId }) {
       .filter(i => (i.resolvedAt ?? i.createdAt) >= start.getTime())
       .reduce((s, i) => s + (pnlPct(i) ?? 0), 0);
   }, [closedIdeas]);
+  const cardTrades = useMemo(
+    () =>
+      closedIdeas.map(i => ({
+        pct: pnlPct(i) ?? 0,
+        stop: stopPctOf(i.entryPrice, i.stopLoss),
+      })),
+    [closedIdeas],
+  );
+  const cardSim =
+    typeof simCapital === "number" && simCapital > 0 && agg.hasTrades
+      ? simulateRoi(
+          cardTrades.map(t => t.pct),
+          simCapital,
+          100,
+          false,
+          leverage,
+          cardTrades.map(t => t.stop),
+        )
+      : null;
 
   if (!byAsset || !ideas) {
     return (
@@ -228,6 +255,25 @@ function EngineHeadline({ source }: { source: EngineId }) {
       ) : (
         <div className="text-xs text-muted-foreground text-center py-3">
           No trades yet
+        </div>
+      )}
+      {cardSim && (
+        <div
+          className={`mt-2 rounded-md px-2 py-1.5 text-center font-mono text-[11px] font-bold ${
+            cardSim.profit >= 0
+              ? "bg-emerald-500/10 text-emerald-400"
+              : "bg-red-500/10 text-red-400"
+          }`}
+        >
+          {cardSim.profit >= 0 ? "+" : "−"}${Math.abs(cardSim.profit).toLocaleString(undefined, { maximumFractionDigits: 2 })}{" "}
+          <span className="font-normal opacity-70">
+            on ${simCapital!.toLocaleString()}{leverage > 1 ? ` · x${leverage}` : ""}
+          </span>
+          {cardSim.liquidated > 0 && (
+            <span className="ml-1.5 px-1 rounded bg-red-500/20 text-red-300 font-mono text-[10px]">
+              ⚠ {cardSim.liquidated} liq
+            </span>
+          )}
         </div>
       )}
       <div className="text-[10px] text-muted-foreground mt-2 truncate">
@@ -751,9 +797,789 @@ function ComparisonTable() {
   );
 }
 
+/** Walk closed-trade % returns in order, staking a fraction of bankroll. */
+export function simulateRoi(
+  tradePct: number[],
+  capital: number,
+  stakePct: number,
+  compound: boolean,
+  leverage = 1,
+  stops: Array<number | null> | null = null,
+): { profit: number; end: number; roi: number; maxDd: number; liquidated: number } {
+  const stake = Math.min(100, Math.max(0, stakePct)) / 100;
+  const lev = Number.isFinite(leverage) && leverage > 0 ? leverage : 1;
+  const liq = liquidationPct(lev);
+  let bank = Math.max(0, capital);
+  let peak = bank;
+  let maxDd = 0;
+  let liquidated = 0;
+  for (let k = 0; k < tradePct.length; k++) {
+    const r = tradePct[k];
+    if (!Number.isFinite(r)) continue;
+    const deployed = (compound ? bank : Math.max(0, capital)) * stake;
+    const sp = stops?.[k] ?? null;
+    if (sp !== null && sp > liq) {
+      // Stop sits beyond liquidation: position dies before the stop can trigger.
+      bank -= deployed;
+      liquidated++;
+    } else {
+      bank += deployed * ((r * lev) / 100);
+    }
+    peak = Math.max(peak, bank);
+    maxDd = Math.max(maxDd, peak - bank);
+  }
+  const profit = bank - Math.max(0, capital);
+  const roi = capital > 0 ? (profit / capital) * 100 : 0;
+  return { profit, end: bank, roi, maxDd, liquidated };
+}
+
+// Re-exported from the shared lib so existing imports keep working.
+export { liquidationPct, stopPctOf };
+
+export interface RiskTrade {
+  pct: number;
+  stop: number | null;
+}
+
+/**
+ * Risk-% sizing: each trade is sized from its own stop so a stop-out costs
+ * ~riskPct of bankroll. Trades the leverage cannot protect (stop wider than
+ * liquidation distance, or margin unaffordable) are skipped — or downsized
+ * to posted margin when mode is "downsize".
+ */
+export function simulateRiskMode(
+  trades: RiskTrade[],
+  capital: number,
+  riskPct: number,
+  leverage: number,
+  compound: boolean,
+  mode: "skip" | "downsize",
+): {
+  profit: number;
+  end: number;
+  roi: number;
+  maxDd: number;
+  skipped: number;
+  liquidated: number;
+} {
+  const lev = Number.isFinite(leverage) && leverage > 0 ? leverage : 1;
+  const liq = liquidationPct(lev);
+  const risk = Math.min(100, Math.max(0, riskPct)) / 100;
+  const start = Math.max(0, capital);
+  let bank = start;
+  let peak = bank;
+  let maxDd = 0;
+  let skipped = 0;
+  let liquidated = 0;
+  for (const t of trades) {
+    if (!Number.isFinite(t.pct)) continue;
+    const base = compound ? bank : start;
+    if (base <= 0) break; // wiped — no margin left to post
+    const sp = t.stop;
+    if (sp === null || !Number.isFinite(sp) || sp <= 0) {
+      skipped++;
+      continue;
+    }
+    if (sp > liq) {
+      skipped++;
+      liquidated++;
+      continue;
+    }
+    // Margin posting so a stop-out costs risk% of bankroll.
+    let margin = (base * risk * 100) / (lev * sp);
+    if (margin > base) {
+      if (mode === "skip") {
+        skipped++;
+        continue;
+      }
+      margin = base; // ponytail: cap at posted bankroll, stop-out costs less than risk%
+    }
+    bank += margin * lev * (t.pct / 100);
+    peak = Math.max(peak, bank);
+    maxDd = Math.max(maxDd, peak - bank);
+  }
+  const profit = bank - start;
+  const roi = start > 0 ? (profit / start) * 100 : 0;
+  return { profit, end: bank, roi, maxDd, skipped, liquidated };
+}
+
+export const LEVERAGES = [1, 5, 10, 15, 30, 50, 100, 200, 500];
+
+const ROI_STORE_KEY = "roi-sim-v1";
+
+function RoiSimulator({ sharedCapital, sharedLeverage = 1 }: { sharedCapital?: number; sharedLeverage?: number }) {
+  const engine = useEnginePerformance("engine");
+  const top10 = useEnginePerformance("top10");
+  const lse = useEnginePerformance("lse");
+  const exp = useEnginePerformance("experimental");
+
+  const [capitals, setCapitals] = useState<Record<EngineId, number>>(() => {
+    try {
+      const raw = localStorage.getItem(ROI_STORE_KEY);
+      if (raw) {
+        const p = JSON.parse(raw) as Partial<
+          Record<EngineId, number> & { stakePct: number; compound: boolean }
+        >;
+        if (typeof p.engine === "number") return p as Record<EngineId, number>;
+      }
+    } catch {
+      // fresh defaults below
+    }
+    return { engine: 1000, top10: 1000, lse: 1000, experimental: 1000 };
+  });
+  const [stakePct, setStakePct] = useState(() => {
+    try {
+      const raw = localStorage.getItem(ROI_STORE_KEY);
+      if (raw) {
+        const s = (JSON.parse(raw) as { stakePct?: number }).stakePct;
+        if (typeof s === "number" && s > 0 && s <= 100) return s;
+      }
+    } catch {
+      // ignore
+    }
+    return 100;
+  });
+  const [compound, setCompound] = useState(() => {
+    try {
+      const raw = localStorage.getItem(ROI_STORE_KEY);
+      if (raw) {
+        const c = (JSON.parse(raw) as { compound?: boolean }).compound;
+        if (typeof c === "boolean") return c;
+      }
+    } catch {
+      // ignore
+    }
+    return true;
+  });
+  const [mode, setMode] = useState<"stake" | "risk">(() => {
+    try {
+      const raw = localStorage.getItem(ROI_STORE_KEY);
+      if (raw) {
+        const m = (JSON.parse(raw) as { mode?: string }).mode;
+        if (m === "risk" || m === "stake") return m;
+      }
+    } catch {
+      // ignore
+    }
+    return "stake";
+  });
+  const [riskPct, setRiskPct] = useState(() => {
+    try {
+      const raw = localStorage.getItem(ROI_STORE_KEY);
+      if (raw) {
+        const r = (JSON.parse(raw) as { riskPct?: number }).riskPct;
+        if (typeof r === "number" && r > 0 && r <= 100) return r;
+      }
+    } catch {
+      // ignore
+    }
+    return 1;
+  });
+  const [skipMode, setSkipMode] = useState<"skip" | "downsize">(() => {
+    try {
+      const raw = localStorage.getItem(ROI_STORE_KEY);
+      if (raw) {
+        const m = (JSON.parse(raw) as { skipMode?: string }).skipMode;
+        if (m === "skip" || m === "downsize") return m;
+      }
+    } catch {
+      // ignore
+    }
+    return "skip";
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        ROI_STORE_KEY,
+        JSON.stringify({ ...capitals, stakePct, compound, mode, riskPct, skipMode }),
+      );
+    } catch {
+      // private mode — simulator still works for the session
+    }
+  }, [capitals, stakePct, compound, mode, riskPct, skipMode]);
+
+  const rows = useMemo(() => {
+    const books: Array<{ id: EngineId; ideas: Idea[] | undefined }> = [
+      { id: "engine", ideas: engine.ideas },
+      { id: "top10", ideas: top10.ideas },
+      { id: "lse", ideas: lse.ideas },
+      { id: "experimental", ideas: exp.ideas },
+    ];
+    return books.map(({ id, ideas }) => {
+      const trades: RiskTrade[] = (ideas ?? [])
+        .filter(
+          i =>
+            (i.status === "TP2_HIT" ||
+              i.status === "STOPPED" ||
+              i.status === "EXPIRED") &&
+            i.pnlPoints !== null,
+        )
+        .sort((a, b) => (a.resolvedAt ?? a.createdAt) - (b.resolvedAt ?? b.createdAt))
+        .map(i => ({ pct: pnlPct(i) ?? 0, stop: stopPctOf(i.entryPrice, i.stopLoss) }));
+      const sim =
+        mode === "risk"
+          ? simulateRiskMode(trades, capitals[id] ?? 0, riskPct, sharedLeverage, compound, skipMode)
+          : {
+              ...simulateRoi(
+                trades.map(t => t.pct),
+                capitals[id] ?? 0,
+                stakePct,
+                compound,
+                sharedLeverage,
+                trades.map(t => t.stop),
+              ),
+              skipped: 0,
+            };
+      return {
+        id,
+        meta: ENGINES.find(e => e.id === id)!,
+        trades: trades.length,
+        capital: capitals[id] ?? 0,
+        ...sim,
+      };
+    });
+  }, [engine.ideas, top10.ideas, lse.ideas, exp.ideas, capitals, stakePct, compound, sharedLeverage, mode, riskPct, skipMode]);
+
+  const loading = !engine.ideas || !top10.ideas || !lse.ideas || !exp.ideas;
+  const totalCapital = rows.reduce((s, r) => s + r.capital, 0);
+  const totalProfit = rows.reduce((s, r) => s + r.profit, 0);
+  const totalRoi = totalCapital > 0 ? (totalProfit / totalCapital) * 100 : 0;
+  const best = rows.reduce<EngineId | null>(
+    (b, r) => (b === null || r.roi > rows.find(x => x.id === b)!.roi ? r.id : b),
+    null,
+  );
+
+  const setCapital = (id: EngineId, v: string) => {
+    const n = Number.parseFloat(v);
+    setCapitals(c => ({
+      ...c,
+      [id]: Number.isFinite(n) ? Math.max(0, Math.min(1_000_000_000, n)) : 0,
+    }));
+  };
+
+  return (
+    <div className="rounded-lg border border-white/5 bg-[#12141A] overflow-hidden">
+      <div className="px-3 py-2 border-b border-white/5 flex items-center gap-2 flex-wrap">
+        <Calculator className="w-3.5 h-3.5 text-[#D4A843]" />
+        <span className="text-xs font-semibold">ROI Simulator — capital in, profit out</span>
+        {sharedLeverage > 1 && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#D4A843]/15 text-[#D4A843] font-mono font-bold">
+            x{sharedLeverage}
+          </span>
+        )}
+        <span className="text-[10px] text-muted-foreground">
+          replays each engine&apos;s own closed trades in order
+        </span>
+        {typeof sharedCapital === "number" && (
+          <button
+            type="button"
+            onClick={() =>
+              setCapitals({
+                engine: sharedCapital,
+                top10: sharedCapital,
+                lse: sharedCapital,
+                experimental: sharedCapital,
+              })
+            }
+            className="ml-auto text-[10px] font-mono px-2 py-1 rounded-md border border-[#D4A843]/40 text-[#D4A843] hover:bg-[#D4A843]/10"
+          >
+            Use ${sharedCapital.toLocaleString()} for all
+          </button>
+        )}
+      </div>
+
+      <div className="p-3 grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {rows.map(r => (
+            <label key={r.id} className="block">
+              <span className="text-[10px] text-muted-foreground flex items-center gap-1 mb-1">
+                <Wallet className="w-3 h-3" />
+                {r.meta.label} capital $
+              </span>
+              <input
+                type="number"
+                min={0}
+                step={100}
+                value={Number.isFinite(r.capital) ? r.capital : 0}
+                onChange={e => setCapital(r.id, e.target.value)}
+                className="w-full bg-white/[0.03] border border-white/10 rounded-md px-2 py-1.5 text-sm font-mono focus:outline-none focus:border-[#D4A843]/60"
+              />
+            </label>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-1 bg-white/[0.03] rounded-md p-0.5 border border-white/10">
+            {(["stake", "risk"] as const).map(m => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setMode(m)}
+                title={m === "stake" ? "Fixed fraction of bankroll per trade" : "Size each trade from its stop: a stop-out costs risk %"}
+                className={`px-2 py-1 text-[11px] rounded font-mono ${mode === m ? "bg-[#D4A843] text-black font-bold" : "text-muted-foreground hover:text-white"}`}
+              >
+                {m === "stake" ? "Stake" : "Risk %"}
+              </button>
+            ))}
+          </div>
+          {mode === "stake" ? (
+            <label className="flex items-center gap-2 text-xs">
+              <span className="text-muted-foreground">Stake</span>
+              <input
+                type="range"
+                min={1}
+                max={100}
+                step={1}
+                value={stakePct}
+                onChange={e => setStakePct(Number(e.target.value))}
+                className="w-28 accent-[#D4A843]"
+              />
+              <span className="font-mono w-11 text-right">{stakePct}%</span>
+            </label>
+          ) : (
+            <>
+              <label className="flex items-center gap-1.5 text-xs">
+                <span className="text-muted-foreground">Risk/trade</span>
+                <input
+                  type="number"
+                  min={0.1}
+                  max={100}
+                  step={0.5}
+                  value={riskPct}
+                  onChange={e => {
+                    const n = Number.parseFloat(e.target.value);
+                    setRiskPct(Number.isFinite(n) ? Math.max(0.1, Math.min(100, n)) : 1);
+                  }}
+                  className="w-16 bg-white/[0.03] border border-white/10 rounded-md px-1.5 py-1 text-xs font-mono focus:outline-none focus:border-[#D4A843]/60"
+                />
+                <span className="font-mono text-muted-foreground">%</span>
+              </label>
+              <div className="flex items-center gap-1 bg-white/[0.03] rounded-md p-0.5 border border-white/10">
+                {(["skip", "downsize"] as const).map(m => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setSkipMode(m)}
+                    title={m === "skip" ? "Skip trades the leverage cannot protect" : "Shrink unprotectable trades to posted margin"}
+                    className={`px-2 py-1 text-[11px] rounded font-mono ${skipMode === m ? "bg-[#D4A843] text-black font-bold" : "text-muted-foreground hover:text-white"}`}
+                  >
+                    {m === "skip" ? "Skip" : "Downsize"}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+            <input
+              type="checkbox"
+              checked={compound}
+              onChange={e => setCompound(e.target.checked)}
+              className="accent-[#D4A843]"
+            />
+            Compound
+          </label>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-[10px] text-muted-foreground border-y border-white/5">
+              <th className="text-left px-3 py-1.5 font-normal">Engine</th>
+              <th className="text-right px-2 py-1.5 font-normal">Trades</th>
+              <th className="text-right px-2 py-1.5 font-normal">Capital</th>
+              <th className="text-right px-2 py-1.5 font-normal">Profit</th>
+              <th className="text-right px-2 py-1.5 font-normal">End</th>
+              <th className="text-right px-2 py-1.5 font-normal">ROI</th>
+              <th className="text-right px-3 py-1.5 font-normal">Max DD</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(r => {
+              const Icon = r.meta.icon;
+              const pos = r.profit >= 0;
+              return (
+                <tr key={r.id} className="border-b border-white/[0.03] hover:bg-white/[0.02]">
+                  <td className="px-3 py-2">
+                    <span className="flex items-center gap-2">
+                      <span className={`w-5 h-5 rounded flex items-center justify-center ${r.meta.bg}`}>
+                        <Icon className={`w-3 h-3 ${r.meta.color}`} />
+                      </span>
+                      <span className="font-medium text-[11px]">
+                        {r.meta.label}
+                        {best === r.id && r.trades > 0 && (
+                          <span className="ml-1.5 text-[9px] px-1 rounded bg-emerald-500/15 text-emerald-400 font-mono">
+                            BEST
+                          </span>
+                        )}
+                        {r.liquidated > 0 && (
+                          <span className="ml-1.5 text-[9px] px-1 rounded bg-red-500/20 text-red-300 font-mono" title="Trades whose stop sits beyond liquidation distance — the position dies before the stop">
+                            ⚠ {r.liquidated} liq
+                          </span>
+                        )}
+                        {r.skipped > 0 && (
+                          <span className="ml-1.5 text-[9px] px-1 rounded bg-yellow-500/15 text-yellow-300 font-mono" title="Trades skipped: leverage cannot protect their stop">
+                            skip {r.skipped}
+                          </span>
+                        )}
+                      </span>
+                    </span>
+                  </td>
+                  <td className="text-right px-2 py-2 font-mono text-[11px]">{loading ? "…" : r.trades}</td>
+                  <td className="text-right px-2 py-2 font-mono text-[11px]">${r.capital.toLocaleString()}</td>
+                  <td className={`text-right px-2 py-2 font-mono text-[11px] font-bold ${pos ? "text-emerald-400" : "text-red-400"}`}>
+                    {loading ? "…" : `${pos ? "+" : "−"}$${Math.abs(r.profit).toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
+                  </td>
+                  <td className="text-right px-2 py-2 font-mono text-[11px]">${r.end.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                  <td className={`text-right px-2 py-2 font-mono text-[11px] font-bold ${pos ? "text-emerald-400" : "text-red-400"}`}>
+                    {loading ? "…" : `${pos ? "+" : ""}${r.roi.toFixed(1)}%`}
+                  </td>
+                  <td className="text-right px-3 py-2 font-mono text-[11px] text-muted-foreground">
+                    {loading ? "…" : `−$${r.maxDd.toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
+                  </td>
+                </tr>
+              );
+            })}
+            <tr className="bg-white/[0.02] font-bold">
+              <td className="px-3 py-2 text-[11px]">Total · 4 engines</td>
+              <td className="text-right px-2 py-2 font-mono text-[11px]">
+                {loading ? "…" : rows.reduce((s, r) => s + r.trades, 0)}
+              </td>
+              <td className="text-right px-2 py-2 font-mono text-[11px]">${totalCapital.toLocaleString()}</td>
+              <td className={`text-right px-2 py-2 font-mono text-[11px] ${totalProfit >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                {loading ? "…" : `${totalProfit >= 0 ? "+" : "−"}$${Math.abs(totalProfit).toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
+              </td>
+              <td className="text-right px-2 py-2 font-mono text-[11px]">
+                ${(totalCapital + totalProfit).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              </td>
+              <td className={`text-right px-2 py-2 font-mono text-[11px] ${totalProfit >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                {loading ? "…" : `${totalProfit >= 0 ? "+" : ""}${totalRoi.toFixed(1)}%`}
+              </td>
+              <td className="text-right px-3 py-2" />
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div className="px-3 py-1.5 text-[10px] text-muted-foreground bg-white/[0.02] border-t border-white/5">
+        {mode === "risk" ? (
+          <>
+            Risk mode: each trade sized from its own stop so a stop-out costs ~{riskPct}% of {compound ? "running" : "initial"} bankroll at x{sharedLeverage}; unprotectable trades (stop beyond liquidation at ~{liquidationPct(sharedLeverage).toFixed(1)}%, or margin unaffordable) are {skipMode === "skip" ? "skipped" : "downsized"} — {rows.reduce((s, r) => s + r.skipped, 0)} skipped, {rows.reduce((s, r) => s + r.liquidated, 0)} would-liquidate across engines. Past signals ≠ future returns.
+          </>
+        ) : (
+          <>
+            Stake mode: each closed trade deploys stake % of {compound ? "running" : "initial"} bankroll{sharedLeverage > 1 ? ` at x${sharedLeverage} leverage` : ""}; P&amp;L = deployed × trade % of entry{sharedLeverage > 1 ? ` × ${sharedLeverage}` : ""} (the engine&apos;s own history, chronological). Trades whose stop sits beyond liquidation (~{liquidationPct(sharedLeverage).toFixed(1)}% at x{sharedLeverage}) are capped at −100% of deployed margin — {rows.reduce((s, r) => s + r.liquidated, 0)} across engines. Past signals ≠ future returns.
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const SIM_CAPITAL_KEY = "sim-capital-v1";
+const SIM_LEVERAGE_KEY = "sim-leverage-v1";
+
+function useSimCapital() {
+  const [simCapital, setSimCapital] = useState(() => {
+    try {
+      const raw = localStorage.getItem(SIM_CAPITAL_KEY);
+      if (raw !== null) {
+        const n = Number.parseFloat(raw);
+        if (Number.isFinite(n) && n >= 0) return Math.min(1_000_000_000, n);
+      }
+    } catch {
+      // fresh default below
+    }
+    return 1000;
+  });
+  const [leverage, setLeverage] = useState(() => {
+    try {
+      const raw = localStorage.getItem(SIM_LEVERAGE_KEY);
+      if (raw !== null) {
+        const n = Number.parseFloat(raw);
+        if (LEVERAGES.includes(n)) return n;
+      }
+    } catch {
+      // fresh default below
+    }
+    return 1;
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIM_CAPITAL_KEY, String(simCapital));
+    } catch {
+      // private mode — still works for the session
+    }
+  }, [simCapital]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIM_LEVERAGE_KEY, String(leverage));
+    } catch {
+      // private mode — still works for the session
+    }
+  }, [leverage]);
+  return [simCapital, setSimCapital, leverage, setLeverage] as const;
+}
+
+function SimCapitalBox({
+  value,
+  onChange,
+  leverage,
+  onLeverage,
+  levels = LEVERAGES,
+  cap,
+}: {
+  value: number;
+  onChange: (n: number) => void;
+  leverage: number;
+  onLeverage: (n: number) => void;
+  levels?: number[];
+  /** Settings cap — shown when it hides higher buttons. */
+  cap?: number | null;
+}) {
+  return (
+    <div className="rounded-lg border border-[#D4A843]/30 bg-[#D4A843]/[0.06] px-3 py-2.5 flex flex-col gap-2">
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="w-8 h-8 rounded-md bg-gradient-to-br from-[#D4A843] to-[#9A7A30] flex items-center justify-center shrink-0">
+          <Wallet className="w-4 h-4 text-black" />
+        </div>
+        <div className="min-w-0">
+          <div className="text-xs font-bold tracking-wide">SIMULATION CAPITAL</div>
+          <div className="text-[10px] text-muted-foreground">
+            Type an amount — every engine card shows its $ profit on it
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5 ml-auto flex-wrap">
+          {[1000, 5000, 10000].map(p => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => onChange(p)}
+              className={`px-2 py-1 rounded-md text-[11px] font-mono border ${
+                value === p
+                  ? "bg-[#D4A843] text-black border-[#D4A843] font-bold"
+                  : "bg-[#12141A] border-white/10 text-muted-foreground hover:text-white"
+              }`}
+            >
+              ${p.toLocaleString()}
+            </button>
+          ))}
+          <label className="flex items-center gap-1 text-sm font-mono font-bold">
+            <span className="text-muted-foreground">$</span>
+            <input
+              type="number"
+              min={0}
+              step={100}
+              value={Number.isFinite(value) ? value : 0}
+              onChange={e => {
+                const n = Number.parseFloat(e.target.value);
+                onChange(Number.isFinite(n) ? Math.max(0, Math.min(1_000_000_000, n)) : 0);
+              }}
+              className="w-32 bg-[#12141A] border border-[#D4A843]/40 rounded-md px-2 py-1.5 text-sm font-mono focus:outline-none focus:border-[#D4A843]"
+            />
+          </label>
+        </div>
+      </div>
+      <div className="flex items-center gap-1.5 flex-wrap pl-0 sm:pl-11">
+        <span className="text-[10px] text-muted-foreground font-semibold tracking-wide mr-1">
+          LEVERAGE
+        </span>
+        {levels.map(l => (
+          <button
+            key={l}
+            type="button"
+            onClick={() => onLeverage(l)}
+            className={`px-2 py-1 rounded-md text-[11px] font-mono border ${
+              leverage === l
+                ? "bg-[#D4A843] text-black border-[#D4A843] font-bold"
+                : "bg-[#12141A] border-white/10 text-muted-foreground hover:text-white"
+            }`}
+          >
+            x{l}
+          </button>
+        ))}
+        {cap != null && levels.length < LEVERAGES.length && (
+          <span className="text-[10px] text-muted-foreground font-mono">
+            capped at x{cap} (Settings → Risk)
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+type RankVerdict = "trade" | "watching" | "paused" | "collecting";
+
+/**
+ * Engine ranking: which book earned capital, split of one bankroll pot.
+ * Qualified = 30+ trades, positive total %, PF ≥ 1.3; score haircut by
+ * sample size (full credit at 200 trades). Copy writes the split into the
+ * ROI simulator's per-engine capitals — open the ROI Sim tab to apply.
+ */
+function EngineRank({ pot }: { pot: number }) {
+  const engine = useEnginePerformance("engine");
+  const top10 = useEnginePerformance("top10");
+  const lse = useEnginePerformance("lse");
+  const exp = useEnginePerformance("experimental");
+  const [bankroll, setBankroll] = useState(pot > 0 ? pot : 1000);
+  const [copied, setCopied] = useState(false);
+
+  const rows = useMemo(() => {
+    const books: Array<{ id: EngineId; ideas: Idea[] | undefined }> = [
+      { id: "engine", ideas: engine.ideas },
+      { id: "top10", ideas: top10.ideas },
+      { id: "lse", ideas: lse.ideas },
+      { id: "experimental", ideas: exp.ideas },
+    ];
+    return books.map(({ id, ideas }) => {
+      const closed = (ideas ?? []).filter(
+        i =>
+          (i.status === "TP2_HIT" || i.status === "STOPPED" || i.status === "EXPIRED") &&
+          i.pnlPoints !== null,
+      );
+      const wins = closed.filter(i => (i.pnlPoints ?? 0) > 0).length;
+      const grossWin = closed.reduce((s, i) => s + Math.max(0, i.pnlPoints ?? 0), 0);
+      const grossLoss = closed.reduce((s, i) => s + Math.max(0, -(i.pnlPoints ?? 0)), 0);
+      const pf = closed.length === 0 || grossLoss === 0 ? null : grossWin / grossLoss;
+      const totalPct = closed.reduce((s, i) => s + (pnlPct(i) ?? 0), 0);
+      const wr = closed.length ? (wins / closed.length) * 100 : 0;
+      let verdict: RankVerdict = "collecting";
+      if (closed.length >= 30 && totalPct <= 0) verdict = "paused";
+      else if (closed.length >= 30 && (pf ?? 0) < 1.3) verdict = "watching";
+      else if (closed.length >= 30) verdict = "trade";
+      const score = verdict === "trade" ? totalPct * Math.min(1, closed.length / 200) : 0;
+      return { id, meta: ENGINES.find(e => e.id === id)!, trades: closed.length, wr, pf, totalPct, verdict, score };
+    });
+  }, [engine.ideas, top10.ideas, lse.ideas, exp.ideas]);
+
+  const loading = !engine.ideas || !top10.ideas || !lse.ideas || !exp.ideas;
+  const totalScore = rows.reduce((s, r) => s + r.score, 0);
+  const potSafe = Math.max(0, bankroll);
+
+  const copyToSimulator = () => {
+    try {
+      const raw = localStorage.getItem(ROI_STORE_KEY);
+      const prev = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+      const next: Record<string, unknown> = { ...prev };
+      for (const r of rows) {
+        const w = totalScore > 0 ? r.score / totalScore : 0;
+        next[r.id] = Math.round(potSafe * w);
+      }
+      localStorage.setItem(ROI_STORE_KEY, JSON.stringify(next));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } catch {
+      // private mode — nothing to write to
+    }
+  };
+
+  const verdictStyle: Record<RankVerdict, string> = {
+    trade: "bg-emerald-500/15 text-emerald-400",
+    watching: "bg-yellow-500/15 text-yellow-300",
+    paused: "bg-red-500/15 text-red-300",
+    collecting: "bg-white/5 text-muted-foreground",
+  };
+
+  return (
+    <div className="rounded-lg border border-white/5 bg-[#12141A] overflow-hidden">
+      <div className="px-3 py-2 border-b border-white/5 flex items-center gap-2 flex-wrap">
+        <Trophy className="w-3.5 h-3.5 text-[#D4A843]" />
+        <span className="text-xs font-semibold">Engine Rank — who earned the capital</span>
+        <label className="ml-auto flex items-center gap-1.5 text-xs">
+          <span className="text-muted-foreground">Bankroll $</span>
+          <input
+            type="number"
+            min={0}
+            step={100}
+            value={Number.isFinite(bankroll) ? bankroll : 0}
+            onChange={e => {
+              const n = Number.parseFloat(e.target.value);
+              setBankroll(Number.isFinite(n) ? Math.max(0, Math.min(1_000_000_000, n)) : 0);
+            }}
+            className="w-28 bg-white/[0.03] border border-white/10 rounded-md px-2 py-1 text-sm font-mono focus:outline-none focus:border-[#D4A843]/60"
+          />
+        </label>
+        <button
+          type="button"
+          onClick={copyToSimulator}
+          className="text-[11px] font-mono px-2 py-1 rounded-md border border-[#D4A843]/40 text-[#D4A843] hover:bg-[#D4A843]/10"
+        >
+          {copied ? "Copied ✓" : "Copy split to ROI Sim"}
+        </button>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-[10px] text-muted-foreground border-b border-white/5">
+              <th className="text-left px-3 py-1.5 font-normal">Engine</th>
+              <th className="text-right px-2 py-1.5 font-normal">Trades</th>
+              <th className="text-right px-2 py-1.5 font-normal">WR</th>
+              <th className="text-right px-2 py-1.5 font-normal">PF</th>
+              <th className="text-right px-2 py-1.5 font-normal">Total %</th>
+              <th className="text-right px-2 py-1.5 font-normal">Verdict</th>
+              <th className="text-right px-2 py-1.5 font-normal">Weight</th>
+              <th className="text-right px-3 py-1.5 font-normal">$ Split</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(r => {
+              const Icon = r.meta.icon;
+              const w = totalScore > 0 ? r.score / totalScore : 0;
+              return (
+                <tr key={r.id} className="border-b border-white/[0.03] hover:bg-white/[0.02]">
+                  <td className="px-3 py-2">
+                    <span className="flex items-center gap-2">
+                      <span className={`w-5 h-5 rounded flex items-center justify-center ${r.meta.bg}`}>
+                        <Icon className={`w-3 h-3 ${r.meta.color}`} />
+                      </span>
+                      <span className="font-medium text-[11px]">{r.meta.label}</span>
+                    </span>
+                  </td>
+                  <td className="text-right px-2 py-2 font-mono text-[11px]">{loading ? "…" : r.trades}</td>
+                  <td className={`text-right px-2 py-2 font-mono text-[11px] ${r.wr >= 50 ? "text-emerald-400" : "text-red-400"}`}>
+                    {loading ? "…" : `${r.wr.toFixed(1)}%`}
+                  </td>
+                  <td className="text-right px-2 py-2 font-mono text-[11px]">
+                    {loading ? "…" : r.trades === 0 ? "—" : r.pf === null ? "∞" : r.pf.toFixed(2)}
+                  </td>
+                  <td className={`text-right px-2 py-2 font-mono text-[11px] font-bold ${r.totalPct >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                    {loading ? "…" : `${r.totalPct >= 0 ? "+" : ""}${r.totalPct.toFixed(1)}%`}
+                  </td>
+                  <td className="text-right px-2 py-2">
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded font-mono uppercase ${verdictStyle[r.verdict]}`}>
+                      {r.verdict}
+                    </span>
+                  </td>
+                  <td className="text-right px-2 py-2 font-mono text-[11px]">{loading ? "…" : `${(w * 100).toFixed(0)}%`}</td>
+                  <td className="text-right px-3 py-2 font-mono text-[11px] font-bold">
+                    {loading ? "…" : `$${Math.round(potSafe * w).toLocaleString()}`}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="px-3 py-1.5 text-[10px] text-muted-foreground bg-white/[0.02] border-t border-white/5">
+        Trade = 30+ trades, positive total %, PF ≥ 1.3 · weight by total % with sample-size haircut (full credit at 200 trades) · copy writes the split into the ROI simulator — open its tab to apply.
+      </div>
+    </div>
+  );
+}
+
 export default function EnginesPerformancePage() {
   const [tab, setTab] = useState<TabId>("overview");
   const [equityUnit, setEquityUnit] = useState<"pct" | "points">("pct");
+  const [simCapital, setSimCapital, leverage, setLeverage] = useSimCapital();
+  const maxLevCap = useLive(
+    () => api.config().then(c => c.risk.maxLeverage ?? 500).catch(() => 500),
+    ["config"],
+  ) ?? 500;
+  const allowedLevs = LEVERAGES.filter(l => l <= maxLevCap);
+  const levels = allowedLevs.length > 0 ? allowedLevs : [1];
+  // A lowered cap demotes the stored leverage instead of simulating over it.
+  useEffect(() => {
+    if (!levels.includes(leverage)) setLeverage(levels[levels.length - 1]);
+  }, [levels.join(","), leverage]);
 
   return (
     <div className="flex flex-col gap-3 p-3 sm:p-4 max-w-[1440px] mx-auto w-full min-w-0">
@@ -786,6 +1612,8 @@ export default function EnginesPerformancePage() {
                 label: e.shortLabel,
                 icon: e.icon,
               })),
+              { id: "roi" as const, label: "ROI Sim", icon: Calculator },
+              { id: "rank" as const, label: "Rank", icon: Trophy },
             ] as const
           ).map(t => (
             <button
@@ -821,17 +1649,26 @@ export default function EnginesPerformancePage() {
 
       {tab === "overview" ? (
         <div className="space-y-3">
+          {/* Heartbeat — alive-but-quiet vs frozen, at a glance */}
+          <EngineHeartbeat />
+
+          {/* Simulation capital — one amount, $ profit on all 4 cards */}
+          <SimCapitalBox value={simCapital} onChange={setSimCapital} leverage={leverage} onLeverage={setLeverage} levels={levels} cap={levels.length < LEVERAGES.length ? maxLevCap : null} />
+
           {/* 4 headline cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
             {(["engine", "top10", "lse", "experimental"] as EngineId[]).map(
               id => (
-                <EngineHeadline key={id} source={id} />
+                <EngineHeadline key={id} source={id} simCapital={simCapital} leverage={leverage} />
               ),
             )}
           </div>
 
           {/* Comparison table */}
           <ComparisonTable />
+
+          {/* ROI simulator — capital + profit/ROI per engine */}
+          <RoiSimulator sharedCapital={simCapital} sharedLeverage={leverage} />
 
           {/* Per-engine equity strip + 7-day weekday performance for current month */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
@@ -864,6 +1701,16 @@ export default function EnginesPerformancePage() {
               },
             )}
           </div>
+        </div>
+      ) : tab === "roi" ? (
+        <div className="space-y-3">
+          <SimCapitalBox value={simCapital} onChange={setSimCapital} leverage={leverage} onLeverage={setLeverage} levels={levels} cap={levels.length < LEVERAGES.length ? maxLevCap : null} />
+          <RoiSimulator sharedCapital={simCapital} sharedLeverage={leverage} />
+        </div>
+      ) : tab === "rank" ? (
+        <div className="space-y-3">
+          <EngineHeartbeat />
+          <EngineRank pot={simCapital} />
         </div>
       ) : (
         <EnginePanel source={tab as EngineId} unit={equityUnit} />

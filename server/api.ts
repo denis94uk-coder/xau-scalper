@@ -232,7 +232,7 @@ export async function handleApi(
     }
     const ideas = db.listIdeas({
       asset,
-      limit: intParam(url, "limit", 100, 500),
+      limit: intParam(url, "limit", 100, 5000),
       source,
       excludeSource,
     });
@@ -599,6 +599,8 @@ export async function handleApi(
       experimental,
       disabled,
       adoptedAt,
+      allowLong,
+      allowShort,
     } = body as Record<string, unknown>;
     const aid = String(assetId ?? "");
     const fam = String(family ?? "");
@@ -632,6 +634,8 @@ export async function handleApi(
       relaxed: Boolean(relaxed),
       experimental: Boolean(experimental),
       disabled: Boolean(disabled),
+      allowLong: typeof allowLong === "boolean" ? allowLong : undefined,
+      allowShort: typeof allowShort === "boolean" ? allowShort : undefined,
     };
     store[aid] = upsertLseStrategy(list, entry);
     db.setSetting("lse:strategies", store);
@@ -661,7 +665,7 @@ export async function handleApi(
     return json({ ok: true, assetId: aid });
   }
 
-  // PATCH /api/lse/strategies/:assetId/:family/:interval — toggle experimental / disabled flags.
+  // PATCH /api/lse/strategies/:assetId/:family/:interval — toggle experimental / disabled / direction flags.
   const lsePatchMatch = path.match(
     /^\/api\/lse\/strategies\/([^/]+)\/([^/]+)\/([^/]+)$/,
   );
@@ -669,15 +673,19 @@ export async function handleApi(
     const [, aid, fam, intv] = lsePatchMatch;
     const body = await readOptionalBody(req);
     if (body instanceof Response) return body;
-    const { experimental, disabled } = body as {
+    const { experimental, disabled, allowLong, allowShort } = body as {
       experimental?: boolean;
       disabled?: boolean;
+      allowLong?: boolean;
+      allowShort?: boolean;
     };
     if (
       typeof experimental !== "boolean" &&
-      typeof disabled !== "boolean"
+      typeof disabled !== "boolean" &&
+      typeof allowLong !== "boolean" &&
+      typeof allowShort !== "boolean"
     )
-      return bad("experimental or disabled (boolean) required");
+      return bad("experimental, disabled, allowLong or allowShort (boolean) required");
     const store: Record<string, LseStrategy[]> = readLseStrategyStore(db);
     const list: LseStrategy[] = store[aid] ?? [];
     const idx = list.findIndex(e => e.family === fam && e.interval === intv);
@@ -686,6 +694,10 @@ export async function handleApi(
       list[idx] = { ...list[idx], experimental };
     if (typeof disabled === "boolean")
       list[idx] = { ...list[idx], disabled };
+    if (typeof allowLong === "boolean")
+      list[idx] = { ...list[idx], allowLong };
+    if (typeof allowShort === "boolean")
+      list[idx] = { ...list[idx], allowShort };
     store[aid] = list;
     db.setSetting("lse:strategies", store);
     publish("engine");
@@ -694,6 +706,8 @@ export async function handleApi(
       assetId: aid,
       experimental: list[idx].experimental,
       disabled: list[idx].disabled,
+      allowLong: list[idx].allowLong,
+      allowShort: list[idx].allowShort,
     });
   }
 

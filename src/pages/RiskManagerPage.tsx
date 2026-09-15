@@ -1,9 +1,174 @@
-import { Plus, Shield, Trash2, X } from "lucide-react";
-import { useState } from "react";
+import { AlertTriangle, Plus, Shield, Trash2, X } from "lucide-react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { PortfolioRisk } from "@/components/PortfolioRisk";
+import { Switch } from "@/components/ui/switch";
 import { useLive, useMutation } from "@/hooks/useLive";
-import { api } from "@/lib/api";
+import { ApiError, api, type RiskStatus } from "@/lib/api";
+
+/**
+ * The live-arm cockpit: enforcement switch, leverage cap, and kill-switch
+ * state. Same fields as Settings → Risk — this is the tab an operator
+ * watches, so the switch lives here too.
+ */
+function RiskArmPanel() {
+  const [armed, setArmed] = useState<boolean | null>(null);
+  const [maxLev, setMaxLev] = useState<string>("100");
+  const [saving, setSaving] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const risk = useLive(() => api.riskStatus().catch(() => null), ["journal"]);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .config()
+      .then(c => {
+        if (!alive) return;
+        setArmed(c.risk.liveArmed ?? false);
+        setMaxLev(String(c.risk.maxLeverage ?? 100));
+        setLoaded(true);
+      })
+      .catch(() => {
+        if (alive) toast.error("Could not load risk settings");
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const save = async () => {
+    const lev = Number.parseFloat(maxLev);
+    if (!Number.isFinite(lev) || lev < 1 || lev > 500 || !Number.isInteger(lev)) {
+      toast.error("Maximum leverage must be a whole number 1–500");
+      return;
+    }
+    setSaving(true);
+    try {
+      const fresh = await api.config();
+      fresh.risk.liveArmed = armed ?? false;
+      fresh.risk.maxLeverage = lev;
+      await api.saveConfig(fresh);
+      toast.success(
+        armed
+          ? "Risk limits ARMED — gates now refuse signals."
+          : "Paper mode — gates log RISK_WOULD_BLOCK but never refuse.",
+      );
+    } catch (e) {
+      if (e instanceof ApiError && e.issues.length > 0) {
+        toast.error(e.issues.map(i => `${i.path}: ${i.message}`).join("; "));
+      } else {
+        toast.error(e instanceof Error ? e.message : "Could not save");
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const resume = async () => {
+    if (!window.confirm("Resume signals intraday? The halt reason stays in the journal.")) return;
+    try {
+      await api.riskResume();
+      toast.success("Kill switch cleared — signals resume.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Resume failed");
+    }
+  };
+
+  return (
+    <div
+      className={`rounded-lg border p-3 space-y-3 ${
+        armed ? "border-red-500/40 bg-red-500/[0.04]" : "border-[#D4A843]/30 bg-[#D4A843]/[0.04]"
+      }`}
+    >
+      <div className="flex items-center gap-3 flex-wrap">
+        <Shield className={`w-5 h-5 ${armed ? "text-red-400" : "text-[#D4A843]"}`} />
+        <div className="min-w-0">
+          <div className="text-sm font-bold flex items-center gap-2">
+            Risk Enforcement
+            <span
+              className={`text-[10px] px-1.5 py-0.5 rounded font-mono font-bold ${
+                armed ? "bg-red-500/15 text-red-300" : "bg-amber-500/15 text-amber-300"
+              }`}
+            >
+              {armed ? "LIVE ARMED" : "PAPER"}
+            </span>
+          </div>
+          <div className="text-[11px] text-muted-foreground">
+            {armed
+              ? "Gates refuse signals. Disarm to return to data collection."
+              : "Paper-collect mode: gates log RISK_WOULD_BLOCK but every setup is recorded."}
+          </div>
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          {armed === null || !loaded ? (
+            <span className="text-xs text-muted-foreground">Loading…</span>
+          ) : (
+            <>
+              <Switch
+                aria-label="Enforce risk limits — live arm"
+                checked={armed}
+                onCheckedChange={setArmed}
+              />
+              <label className="flex items-center gap-1.5 text-xs">
+                <span className="text-muted-foreground">Max lev</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={500}
+                  step={1}
+                  value={maxLev}
+                  onChange={e => setMaxLev(e.target.value)}
+                  className="w-20 bg-[#0A0C10] border border-white/10 rounded-md px-2 py-1.5 text-sm font-mono focus:outline-none focus:border-[#D4A843]/60"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={save}
+                disabled={saving}
+                className="px-3 py-1.5 rounded-lg bg-[#D4A843] text-[#0A0C10] text-sm font-medium hover:bg-[#E5B954] transition-colors disabled:opacity-50"
+              >
+                {saving ? "Saving…" : "Save"}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+      <KillSwitchRow risk={risk} onResume={resume} />
+    </div>
+  );
+}
+
+function KillSwitchRow({ risk, onResume }: { risk: RiskStatus | null | undefined; onResume: () => void }) {
+  if (risk === undefined) {
+    return <div className="text-[11px] text-muted-foreground animate-pulse">Checking kill switch…</div>;
+  }
+  if (risk === null) {
+    return <div className="text-[11px] text-muted-foreground">Kill-switch status unavailable.</div>;
+  }
+  return (
+    <div className="flex items-center gap-2 flex-wrap text-[11px] font-mono border-t border-white/5 pt-2">
+      {risk.halted ? (
+        <>
+          <AlertTriangle className="w-3.5 h-3.5 text-red-400" />
+          <span className="text-red-300 font-bold">HALTED — {risk.haltReason ?? "kill switch tripped"}</span>
+          <button
+            type="button"
+            onClick={onResume}
+            className="ml-auto px-2 py-1 rounded-md border border-red-500/40 text-red-300 hover:bg-red-500/10"
+          >
+            Resume
+          </button>
+        </>
+      ) : (
+        <span className="text-muted-foreground">
+          Kill switch clear · day P&amp;L {risk.dailyLossPts >= 0 ? "+" : ""}
+          {risk.dailyLossPts.toFixed(1)} pts · {risk.openIdeas} open
+          {risk.limitsActive ? "" : " · no limits configured (env)"}
+        </span>
+      )}
+    </div>
+  );
+}
 
 export function RiskManagerPage() {
   const trades = useLive(
@@ -114,6 +279,9 @@ export function RiskManagerPage() {
           {showForm ? "Cancel" : "Log Trade"}
         </button>
       </div>
+
+      {/* Live-arm cockpit first — it governs everything below. */}
+      <RiskArmPanel />
 
       {/* Concentration across the engine's open book. Above the manual-trade
           stats because it is the risk a per-trade view cannot show. */}

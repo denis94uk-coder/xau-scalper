@@ -125,11 +125,18 @@ const OPEN_STATUSES = ["ACTIVE", "TP1_HIT"] as const;
 
 // Anchor the default DB so launching from any working directory finds the same
 // history instead of silently creating a fresh one: source runs use the repo's
-// data/, compiled binaries use data/ beside the executable (the .app launcher
-// overrides both via TEO_DB_PATH, which always wins).
+// data/, compiled binaries (including bare CLI and .app bundle) all share
+// ~/Library/Application Support/XAU Scalper/teo.db.
+const APP_SUPPORT_DB = join(
+  process.env.HOME ?? "~",
+  "Library",
+  "Application Support",
+  "XAU Scalper",
+  "teo.db",
+);
 const DEFAULT_DB_PATH =
   import.meta.dir.startsWith("/$bunfs") || import.meta.dir.startsWith("/BUNFS")
-    ? join(dirname(process.execPath), "data", "teo.db")
+    ? APP_SUPPORT_DB
     : join(import.meta.dir, "..", "data", "teo.db");
 
 export class Db {
